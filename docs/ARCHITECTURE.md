@@ -6,7 +6,7 @@
 
 - **Движок:** Godot 4.7 (последняя стабильная на ноябрь 2026 — 4.7.2). Стандартная сборка, не .NET.
 - **Язык:** GDScript со статической типизацией (`var x: int`, `-> Array[String]`) везде, где это возможно.
-- **Платформы:** Android (arm64) и ПК (Windows, Linux). Один проект, один интерфейс с адаптивной вёрсткой.
+- **Платформы:** Android (arm64; основное тестовое устройство — планшет) и Windows (x86_64). Linux и macOS не поддерживаются. Один проект, один интерфейс с адаптивной вёрсткой под сенсор и мышь (docs/UI_PROTOTYPE.md).
 - **Модель:** Gemini через REST (`generateContent`), подробности — `docs/LLM_PROTOCOL.md`.
 - **Без сторонних аддонов** на этапе прототипа (тесты — свой маленький раннер, см. раздел 8).
 
@@ -162,7 +162,7 @@ LLMResult  { ok: bool, json: Dictionary, raw_text: String,
 - `GeminiClient` использует узел `HTTPRequest`. Запрос: `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`, заголовки `x-goog-api-key` и `Content-Type: application/json`. Тело — в `docs/LLM_PROTOCOL.md`.
 - Ключ и модели читаются из `LLMConfig`. Порядок поиска:
   1. `user://config.cfg` — сюда пишет экран настроек.
-  2. Переменная окружения `GEMINI_API_KEY` (удобно на ПК).
+  2. Переменная окружения `GEMINI_API_KEY` (удобно для разработки на Windows).
   3. Только в отладочной сборке — `res://config/dev.cfg`. Этот файл в `.gitignore` и исключён из экспорта.
 - Обработка ошибок:
   - нет сети или DNS → `offline`;
@@ -260,10 +260,12 @@ func accuse(killer_id, motive_id, method_id) -> AccusationResult
 | 14 Противоречия | RulesEngine, Notebook |
 | 15 Условия открытия | Conditions |
 
-## 6. Сеть и Android
+## 6. Сеть, Android и Windows
 
 - В экспорте Android нужно включить разрешение `INTERNET`.
 - HTTPS работает встроенными сертификатами Godot. Проверять на реальном устройстве (этап 9 плана).
+- Настройки проекта для экрана: `display/window/stretch/mode = canvas_items`, `aspect = expand`, базовый размер 1280×800, ориентация Android — `sensor` (альбомная и книжная).
+- Windows: `user://` — это `%APPDATA%\Godot\app_userdata\Detective` (или своя папка при `use_custom_user_dir`). Ключ хранится там же в `config.cfg`.
 - На Android `user://` — личная папка приложения: ключ не виден другим приложениям, но доступен на рутованном устройстве. Для прототипа это приемлемо, для релиза нужен свой сервер (диздок, раздел 12).
 
 ## 7. Что не входит в прототип

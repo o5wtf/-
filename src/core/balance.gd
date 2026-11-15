@@ -1,6 +1,6 @@
 class_name Balance
 extends RefCounted
-## Числа давления из раздела 11 диздока. Полосы — для ремарок UI (UI§2.3).
+## Числа давления и полосы ремарок — раздел 11 диздока (0–24 / 25–49 / 50–74 / 75–100).
 
 const EVIDENCE_KEY := 10
 const EVIDENCE_NORMAL := 5

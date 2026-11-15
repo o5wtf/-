@@ -102,7 +102,7 @@ func apply_tone(agent_id: String, tone: int) -> Array[GameEvent]
 func set_emotion(agent_id: String, emotion: String) -> void
 func try_manual_contradiction(a: HeardRef, b: HeardRef) -> ManualContradictionResult
 func check_accusation(killer_id: String, motive_id: String, method_id: String) -> AccusationResult
-func pressure_band(agent_id: String) -> String            # calm | tense | nervous | breaking (для ремарок UI)
+func pressure_band(agent_id: String) -> String            # calm 0–24 | tense 25–49 | nervous 50–74 | breaking 75–100
 ```
 
 - `PacketEntry`: `{key: "k1", fact_id, mode, lie_text, content}`. `mode` — одно из `lie`, `lie_or_basic` (can_lie с оговоркой), `basic`, `full`. Ключи `k1…kn` назначаются при каждой сборке пакета, модель видит только их.

@@ -1,0 +1,122 @@
+class_name GameState
+extends RefCounted
+## Изменяемое состояние партии. Без правил.
+
+var pressure: Dictionary = {}
+var emotion: Dictionary = {}
+var fatigue: Dictionary = {}
+var unlocked_evidence: Array[String] = []
+var shown: Dictionary = {}
+var broken_lies: Array[String] = []
+var fact_levels: Dictionary = {}
+var heard: Array[Dictionary] = []
+var contradictions: Array[String] = []
+var talked_to: Array[String] = []
+var accusation: Dictionary = {
+	"killer_ok": false,
+	"motive_ok": false,
+	"method_ok": false,
+	"attempts": 0,
+}
+var dialogues: Dictionary = {}
+var turn: int = 0
+var case_id: String = ""
+var case_version_hash: String = ""
+
+
+func to_dict() -> Dictionary:
+	return {
+		"pressure": pressure.duplicate(true),
+		"emotion": emotion.duplicate(true),
+		"fatigue": fatigue.duplicate(true),
+		"unlocked_evidence": unlocked_evidence.duplicate(),
+		"shown": shown.duplicate(true),
+		"broken_lies": broken_lies.duplicate(),
+		"fact_levels": fact_levels.duplicate(true),
+		"heard": heard.duplicate(true),
+		"contradictions": contradictions.duplicate(),
+		"talked_to": talked_to.duplicate(),
+		"accusation": accusation.duplicate(true),
+		"dialogues": dialogues.duplicate(true),
+		"turn": turn,
+		"case_id": case_id,
+		"case_version_hash": case_version_hash,
+	}
+
+
+static func from_dict(data: Dictionary) -> GameState:
+	var state := GameState.new()
+	state.pressure = _int_map(data.get("pressure", {}))
+	state.emotion = _string_map(data.get("emotion", {}))
+	state.fatigue = _int_map(data.get("fatigue", {}))
+	state.unlocked_evidence = _string_list(data.get("unlocked_evidence", []))
+	state.shown = _shown_map(data.get("shown", {}))
+	state.broken_lies = _string_list(data.get("broken_lies", []))
+	state.fact_levels = _string_map(data.get("fact_levels", {}))
+	state.heard = _heard_list(data.get("heard", []))
+	state.contradictions = _string_list(data.get("contradictions", []))
+	state.talked_to = _string_list(data.get("talked_to", []))
+	state.accusation = _accusation(data.get("accusation", {}))
+	state.dialogues = (data.get("dialogues", {}) as Dictionary).duplicate(true)
+	state.turn = int(data.get("turn", 0))
+	state.case_id = str(data.get("case_id", ""))
+	state.case_version_hash = str(data.get("case_version_hash", ""))
+	return state
+
+
+static func _int_map(value: Variant) -> Dictionary:
+	var result := {}
+	if value is Dictionary:
+		for key in value:
+			result[str(key)] = int(value[key])
+	return result
+
+
+static func _string_map(value: Variant) -> Dictionary:
+	var result := {}
+	if value is Dictionary:
+		for key in value:
+			result[str(key)] = str(value[key])
+	return result
+
+
+static func _string_list(value: Variant) -> Array[String]:
+	var result: Array[String] = []
+	if value is Array:
+		for item in value:
+			result.append(str(item))
+	return result
+
+
+static func _shown_map(value: Variant) -> Dictionary:
+	var result := {}
+	if value is Dictionary:
+		for key in value:
+			result[str(key)] = _string_list(value[key])
+	return result
+
+
+static func _heard_list(value: Variant) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	if value is Array:
+		for item in value:
+			if item is not Dictionary:
+				continue
+			var body := item as Dictionary
+			result.append({
+				"agent_id": str(body.get("agent_id", "")),
+				"fact_id": str(body.get("fact_id", "")),
+				"form": str(body.get("form", "")),
+				"turn": int(body.get("turn", 0)),
+			})
+	return result
+
+
+static func _accusation(value: Variant) -> Dictionary:
+	var body: Dictionary = value if value is Dictionary else {}
+	return {
+		"killer_ok": body.get("killer_ok", false) == true,
+		"motive_ok": body.get("motive_ok", false) == true,
+		"method_ok": body.get("method_ok", false) == true,
+		"attempts": int(body.get("attempts", 0)),
+	}

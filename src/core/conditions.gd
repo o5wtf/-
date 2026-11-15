@@ -1,6 +1,40 @@
 class_name Conditions
 extends RefCounted
-## Синтаксис unlock_condition (Д§15). Вычисление условий — этап движка правил.
+## Синтаксис и вычисление unlock_condition (Д§15).
+
+
+static func evaluate(cond: Variant, state: GameState) -> bool:
+	if cond == null:
+		return true
+	if cond is not Dictionary:
+		return false
+	var body := cond as Dictionary
+	if body.has("AND"):
+		for sub in body["AND"] as Array:
+			if not evaluate(sub, state):
+				return false
+		return true
+	if body.has("OR"):
+		for sub in body["OR"] as Array:
+			if evaluate(sub, state):
+				return true
+		return false
+	var kind: Variant = body.get("type")
+	if kind == "pressure_on_agent":
+		return int(state.pressure.get(str(body.get("agent_id", "")), 0)) >= int(body.get("gte", 0))
+	if kind == "dialogue_with":
+		return state.talked_to.has(str(body.get("agent_id", "")))
+	if kind == "evidence_shown":
+		var evidence_id := str(body.get("evidence_id", ""))
+		var shown_to: Array = state.shown.get(evidence_id, [])
+		if body.has("agent_id"):
+			return shown_to.has(str(body["agent_id"]))
+		return not shown_to.is_empty()
+	if kind == "inconsistency_created":
+		if body.has("contradiction_id"):
+			return state.contradictions.has(str(body["contradiction_id"]))
+		return not state.contradictions.is_empty()
+	return false
 
 
 static func check(

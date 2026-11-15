@@ -1,0 +1,62 @@
+{
+  "id": "minimal",
+  "title": "Минимальное дело",
+  "briefing": "Короткий учебный брифинг.",
+  "killer_id": "a",
+  "true_motive_id": "m1",
+  "true_method_id": "w1",
+  "motive_options": [
+    {
+      "id": "m1",
+      "text": "мотив"
+    }
+  ],
+  "method_options": [
+    {
+      "id": "w1",
+      "text": "способ"
+    }
+  ],
+  "victory_condition": "correct_accusation",
+  "agents": [
+    {
+      "id": "a",
+      "name": "Аня",
+      "role": "свидетель",
+      "personality": "говорит коротко",
+      "prompt_background": "Живёт рядом.",
+      "background": "Заметки автора.",
+      "starting_pressure": 0,
+      "starting_emotion": "neutral",
+      "starting_fatigue": 0,
+      "facts": [
+        {
+          "id": "f1",
+          "content_basic": "Кратко.",
+          "content_full": "Полностью.",
+          "is_lie": true,
+          "lie_type": "must_lie",
+          "lie_text": "",
+          "related_evidence_ids": [],
+          "pressure_for_basic": 10,
+          "pressure_for_full": 10,
+          "requires_evidence": false,
+          "breaks_lie_on": "pressure"
+        }
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "title": "Записка",
+      "short_description": "Клочок бумаги.",
+      "full_text": "На бумаге одна строка.",
+      "type": "document",
+      "related_fact_ids": [],
+      "related_agent_ids": [],
+      "is_key": false
+    }
+  ],
+  "contradictions": []
+}

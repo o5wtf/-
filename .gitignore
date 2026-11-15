@@ -1,0 +1,30 @@
+# Godot 4
+.godot/
+.import/
+*.tmp
+export_credentials.cfg
+mono_crash.*.json
+
+# Сборки
+/builds/
+/export/
+*.apk
+*.aab
+*.pck
+*.exe
+*.x86_64
+/android/
+
+# Ключи и секреты — никогда не коммитить
+config/dev.cfg
+*.keystore
+*.jks
+.env
+
+# Python-инструменты
+__pycache__/
+*.pyc
+
+# Системные файлы
+.DS_Store
+Thumbs.db

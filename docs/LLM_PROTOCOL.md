@@ -69,7 +69,7 @@ Content-Type: application/json
   - `SAFETY`, `PROHIBITED_CONTENT`, `BLOCKLIST` — `blocked`;
   - любое другое значение — `bad_response`.
 - **`promptFeedback.blockReason`** задан — тоже `blocked`.
-- **HTTP-ошибки** — по `docs/ARCHITECTURE.md`, раздел 3.6. Коротко: 429 → ждать и повторить, потом запасная модель; 401/403 → `auth`; 5xx → повтор; нет сети → `offline`.
+- **HTTP-ошибки** — по `docs/ARCHITECTURE.md`, раздел 3.6. Коротко: 429 → ждать и повторить, потом запасная модель; 401/403 → `auth`; 400 с признаком неверного ключа (`API_KEY_INVALID`) → тоже `auth` (так Gemini часто отвечает вместо 401); 5xx → повтор; нет сети → `offline`.
 
 ## 3. Системный промпт (шаблон)
 

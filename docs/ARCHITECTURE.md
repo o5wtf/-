@@ -173,7 +173,7 @@ LLMResult  { ok: bool, json: Dictionary, raw_text: String,
   - нет сети или DNS → `offline`;
   - нет ответа за 30 с → `timeout`;
   - 429 → `rate_limited`: ждать `retry_after` или 2/4/8 с, максимум 3 попытки; потом, если задана, перейти на запасную модель;
-  - 401 и 403 → `auth`: предложить проверить ключ;
+  - 401 и 403 → `auth`: предложить проверить ключ; 400 с `API_KEY_INVALID` — тоже `auth`;
   - 5xx → `server`: 2 попытки с паузой;
   - `finishReason` `SAFETY` или блокировка промпта → `blocked`;
   - JSON не разобрался → `bad_response`.

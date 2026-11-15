@@ -1,0 +1,90 @@
+{
+  "broken_cannot_lie_with_text.json": {
+    "errors": 1,
+    "messages": [
+      "факт f1: cannot_lie, но lie_text заполнен"
+    ]
+  },
+  "broken_contradiction_break_without_pair.json": {
+    "errors": 1,
+    "messages": [
+      "факт f1: breaks_lie_on=contradiction, но нет противоречия с этим фактом в форме lie"
+    ]
+  },
+  "broken_emotion.json": {
+    "errors": 1,
+    "messages": [
+      "агент a: эмоция 'joyful' не из списка ['angry', 'calm', 'contemptuous', 'controlled', 'nervous', 'neutral', 'sad', 'scared']"
+    ]
+  },
+  "broken_empty_or.json": {
+    "errors": 1,
+    "messages": [
+      "улика e1: OR должен быть единственным ключом с непустым списком"
+    ]
+  },
+  "broken_key_evidence_no_facts.json": {
+    "errors": 1,
+    "messages": [
+      "ключевая улика e1 не связана ни с одним фактом"
+    ]
+  },
+  "broken_killer_missing.json": {
+    "errors": 1,
+    "messages": [
+      "убийца nobody не найден среди агентов"
+    ]
+  },
+  "broken_lie_form_without_lie.json": {
+    "errors": 1,
+    "messages": [
+      "противоречие c1: форма lie у факта f1 без лжи"
+    ]
+  },
+  "broken_lie_text_missing.json": {
+    "errors": 1,
+    "messages": [
+      "факт f1: lie_type=must_lie, но lie_text пуст"
+    ]
+  },
+  "broken_motive_missing.json": {
+    "errors": 1,
+    "messages": [
+      "true_motive_id nope нет в motive_options"
+    ]
+  },
+  "broken_no_prompt_background.json": {
+    "errors": 1,
+    "messages": [
+      "агент a: нет поля prompt_background"
+    ]
+  },
+  "broken_pressure_order.json": {
+    "errors": 1,
+    "messages": [
+      "факт f1: pressure_for_full (10) < pressure_for_basic (40)"
+    ]
+  },
+  "broken_unknown_agent_condition.json": {
+    "errors": 1,
+    "messages": [
+      "улика e1: агент nope не найден"
+    ]
+  },
+  "broken_unknown_contradiction_fact.json": {
+    "errors": 1,
+    "messages": [
+      "противоречие c1: факт missing не существует"
+    ]
+  },
+  "broken_unknown_evidence.json": {
+    "errors": 1,
+    "messages": [
+      "факт f1: улика no_such не существует"
+    ]
+  },
+  "valid_minimal.json": {
+    "errors": 0,
+    "messages": []
+  }
+}

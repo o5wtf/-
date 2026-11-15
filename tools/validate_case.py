@@ -1,16 +1,37 @@
 #!/usr/bin/env python3
-"""Проверка файла дела по правилам диздока (разделы 2, 7, 8, 13, 14, 15).
+"""Проверка файла дела по правилам диздока (разделы 2, 7, 8, 11, 13, 14, 15).
 
-Запуск: python3 tools/validate_case.py cases/<дело>.json
+Запуск: python3 tools/validate_case.py cases/<дело>.json [--simulate [ТОН]]
 Код возврата 0 — дело корректно, 1 — найдены ошибки.
+
+--simulate ТОН — грубая симуляция темпа (раздел 11): игрок поговорил со всеми,
+предъявил каждую открытую улику каждому агенту, поймал все доступные противоречия,
+а давление от тона вопросов даёт каждому агенту не больше ТОН (по умолчанию 0).
+Оговорки can_lie (раздел 8) не учитываются — это худший случай для игрока.
+Печатает порядок событий и итоговый уровень каждого факта.
 """
 import json
 import sys
 
 EMOTIONS = {"calm", "neutral", "nervous", "scared", "sad", "angry", "controlled", "contemptuous"}
 LIE_TYPES = {"must_lie", "can_lie", "cannot_lie"}
-BREAKS = {"pressure", "evidence", "contradiction", None}
-FORMS = {"truth", "lie"}
+BREAKS = {"pressure", "evidence", "contradiction"}
+FORMS = {"truth", "truth_full", "lie"}
+
+# Баланс давления — раздел 11 диздока. Держать в синхроне с ним.
+BALANCE = {
+    "evidence_key": 10,       # предъявлена ключевая улика, связанная с агентом
+    "evidence_normal": 5,     # предъявлена обычная улика, связанная с агентом
+    "contradiction_lie": 10,  # поймана ложь агента (за каждую несломанную ложь в паре)
+    "contradiction_plain": 5, # противоречие без лжи — обоим агентам
+}
+
+
+def breaks_list(f):
+    b = f.get("breaks_lie_on")
+    if b is None:
+        return []
+    return b if isinstance(b, list) else [b]
 
 
 def validate(case):
@@ -108,8 +129,13 @@ def validate(case):
             err(f"{p}: lie_type '{lt}' не из {sorted(LIE_TYPES)}")
         is_lie = f.get("is_lie")
         br = f.get("breaks_lie_on")
-        if br not in BREAKS:
-            err(f"{p}: breaks_lie_on '{br}' недопустим")
+        if isinstance(br, list):
+            if not br or len(set(br)) != len(br):
+                err(f"{p}: breaks_lie_on — пустой список или повторы")
+        bl = breaks_list(f)
+        for b in bl:
+            if b not in BREAKS:
+                err(f"{p}: breaks_lie_on '{b}' недопустим")
         if lt in ("must_lie", "can_lie"):
             if is_lie is not True:
                 err(f"{p}: lie_type={lt}, но is_lie не true")
@@ -120,11 +146,13 @@ def validate(case):
                 err(f"{p}: cannot_lie, но is_lie=true")
             if f.get("lie_text"):
                 err(f"{p}: cannot_lie, но lie_text заполнен")
-        if is_lie and not br:
+        if is_lie and not bl:
             err(f"{p}: is_lie=true, но breaks_lie_on не задан")
-        if br == "evidence" and not rel:
+        if not is_lie and bl:
+            err(f"{p}: у факта без лжи задан breaks_lie_on")
+        if "evidence" in bl and not rel:
             err(f"{p}: breaks_lie_on=evidence, но нет related_evidence_ids")
-        if br == "contradiction" and fid not in lie_facts_in_contradictions:
+        if "contradiction" in bl and fid not in lie_facts_in_contradictions:
             err(f"{p}: breaks_lie_on=contradiction, но нет противоречия с этим фактом в форме lie")
 
     # Противоречия
@@ -208,11 +236,128 @@ def validate(case):
     return errors, warnings
 
 
+def eval_cond(cond, st):
+    if cond is None:
+        return True
+    if "AND" in cond:
+        return all(eval_cond(c, st) for c in cond["AND"])
+    if "OR" in cond:
+        return any(eval_cond(c, st) for c in cond["OR"])
+    t = cond["type"]
+    if t == "pressure_on_agent":
+        return st["p"][cond["agent_id"]] >= cond["gte"]
+    if t == "dialogue_with":
+        return True  # игрок говорит со всеми
+    if t == "evidence_shown":
+        return cond["evidence_id"] in st["shown_any"]
+    if t == "inconsistency_created":
+        cid = cond.get("contradiction_id")
+        return bool(st["contr"]) if cid is None else cid in st["contr"]
+    return False
+
+
+def simulate(case, tone):
+    agents = {a["id"]: a for a in case["agents"]}
+    facts, owner = {}, {}
+    for a in case["agents"]:
+        for f in a["facts"]:
+            facts[f["id"]] = f
+            owner[f["id"]] = a["id"]
+    ev = {e["id"]: e for e in case["evidence"]}
+    ev_agents = {}
+    for eid, e in ev.items():
+        ev_agents[eid] = set(e.get("related_agent_ids", []))
+    st = {"p": {aid: min(100, a.get("starting_pressure", 0) + tone) for aid, a in agents.items()},
+          "shown_any": set(), "contr": set()}
+    shown = set()   # (evidence, agent)
+    unlocked, broken, level = set(), set(), {}
+    log = []
+
+    def bump(aid, n, why):
+        st["p"][aid] = min(100, st["p"][aid] + n)
+        log.append(f"  {aid}: +{n} ({why}) -> {st['p'][aid]}")
+
+    def ev_ok(fid):
+        f = facts[fid]
+        if not f.get("requires_evidence"):
+            return True
+        return any((e, owner[fid]) in shown for e in f.get("related_evidence_ids", []))
+
+    def heard(fid, form):
+        lv = level.get(fid)
+        if form == "lie":
+            return facts[fid].get("is_lie")  # ложь звучит с самого начала
+        if form == "truth_full":
+            return lv == "full"
+        return lv in ("basic", "full")
+
+    changed = True
+    while changed:
+        changed = False
+        for eid, e in ev.items():
+            if eid not in unlocked and eval_cond(e.get("unlock_condition"), st):
+                unlocked.add(eid)
+                log.append(f"улика открыта: {eid}")
+                changed = True
+        for eid in sorted(unlocked):
+            for aid in agents:
+                if (eid, aid) not in shown:
+                    shown.add((eid, aid))
+                    st["shown_any"].add(eid)
+                    if aid in ev_agents[eid]:
+                        bump(aid, BALANCE["evidence_key" if ev[eid].get("is_key") else "evidence_normal"],
+                             f"предъявлена {eid}")
+                    changed = True
+        for fid, f in facts.items():
+            aid = owner[fid]
+            p = st["p"][aid]
+            if f.get("is_lie") and fid not in broken:
+                bl = breaks_list(f)
+                hit = ("pressure" in bl and p >= f["pressure_for_full"]) or \
+                      ("evidence" in bl and any((e, aid) in shown for e in f.get("related_evidence_ids", []))) or \
+                      ("contradiction" in bl and any(
+                          c["id"] in st["contr"] and fid in (c["fact_a_id"], c["fact_b_id"])
+                          and "lie" in (c["fact_a_form"], c["fact_b_form"])
+                          for c in case.get("contradictions", [])))
+                if hit:
+                    broken.add(fid)
+                    log.append(f"ложь сломана: {fid}")
+                    changed = True
+                    continue
+                continue
+            new = None
+            if p >= f["pressure_for_full"] and ev_ok(fid):
+                new = "full"
+            elif (p >= f["pressure_for_basic"] and ev_ok(fid)) or fid in broken:
+                new = "basic"
+            if new and level.get(fid) != new and not (level.get(fid) == "full"):
+                level[fid] = new
+                log.append(f"факт {new}: {fid} (давление {aid} = {p})")
+                changed = True
+        for c in case.get("contradictions", []):
+            if c["id"] in st["contr"]:
+                continue
+            if heard(c["fact_a_id"], c["fact_a_form"]) and heard(c["fact_b_id"], c["fact_b_form"]):
+                st["contr"].add(c["id"])
+                log.append(f"противоречие: {c['id']}")
+                liars = [c[f"fact_{s}_id"] for s in "ab" if c[f"fact_{s}_form"] == "lie"]
+                if liars:
+                    for lf in liars:
+                        if lf not in broken:
+                            bump(owner[lf], BALANCE["contradiction_lie"], f"противоречие {c['id']}")
+                else:
+                    for s in "ab":
+                        bump(owner[c[f"fact_{s}_id"]], BALANCE["contradiction_plain"], f"противоречие {c['id']}")
+                changed = True
+    return log, level, broken, st, unlocked
+
+
 def main():
-    if len(sys.argv) != 2:
+    args = sys.argv[1:]
+    if not args or args[0].startswith("-"):
         print(__doc__)
         return 2
-    with open(sys.argv[1], encoding="utf-8") as fh:
+    with open(args[0], encoding="utf-8") as fh:
         case = json.load(fh)
     errors, warnings = validate(case)
     for w in warnings:
@@ -225,6 +370,24 @@ def main():
     print(f"Дело корректно. Агентов: {len(case['agents'])}, фактов: "
           f"{sum(len(a['facts']) for a in case['agents'])}, улик: {len(case['evidence'])}, "
           f"противоречий: {len(case.get('contradictions', []))}.")
+    if "--simulate" in args:
+        i = args.index("--simulate")
+        tone = int(args[i + 1]) if len(args) > i + 1 else 0
+        log, level, broken, st, unlocked = simulate(case, tone)
+        print(f"\nСимуляция, тон до +{tone} на агента:")
+        for line in log:
+            print(line)
+        print("\nИтог по фактам:")
+        for a in case["agents"]:
+            for f in a["facts"]:
+                lv = level.get(f["id"], "закрыт")
+                if f.get("is_lie") and f["id"] not in broken:
+                    lv = "ложь держится"
+                print(f"  {f['id']}: {lv}")
+        print("Давление:", st["p"])
+        print("Не открыты улики:", sorted({e["id"] for e in case["evidence"]} - unlocked) or "нет")
+        print("Не пойманы противоречия:",
+              sorted({c["id"] for c in case.get("contradictions", [])} - st["contr"]) or "нет")
     return 0
 
 

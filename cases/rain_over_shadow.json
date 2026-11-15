@@ -1,5 +1,5 @@
 {
-  "id": "test_case_rain_over_shadow_v4",
+  "id": "test_case_rain_over_shadow_v5",
   "title": "Дождь над «Тенью»",
   "briefing": "Ночь. Дождь заливает асфальт. В аллее за ночным клубом «Тень» найден труп владельца — Виктора Лебедева. Ножевое ранение в живот. Следы почти смыты.\nВы — следователь. Допросите всех, кто был в клубе в ту ночь. Найдите убийцу, мотив и способ.",
   "intro_atmosphere": "Неоновый свет клуба, мокрый асфальт, сигаретный дым, тени, джаз вдалеке. Современный нуар. Камера крупным планом на лицах. Голоса хриплые, напряжённые. Каждый врёт по-своему. Воздух пропитан деньгами, сексом, стыдом и страхом.",
@@ -50,7 +50,7 @@
       "text": "Тупой предмет"
     }
   ],
-  "truth_timeline": "Клуб закрылся в 01:00. Виктор остался. Аркадий Волков около 01:10 вызвал его в аллею. Виктор не просто хотел выкинуть его из дела из-за долга в 2,5 млн — он собирался сделать это публично и ещё рассказать, что Аркадий спит с Мирой и что она им манипулирует. Спор быстро перерос в ярость и стыд. Аркадий ранее взял с кухни нож «порезать лимон» и оставил его при себе. Нанёс удар около 01:15. Бросил нож в мусорный бак и ушёл через чёрный ход примерно в 01:18. Дождь начался в 01:25.\nМира знала про долги и предлагала Аркадию «решить вопрос» жёстче (шантаж или хуже). Он отказался. Она злилась на его слабость. В ночь убийства она спрашивала у Павла про нож на кухне — просто проверяла варианты. Убийство совершил именно Аркадий в панике и ярости.",
+  "truth_timeline": "Клуб закрылся в 01:00. Виктор остался. Аркадий Волков около 01:10 вызвал его в аллею. Виктор не просто хотел выкинуть его из дела из-за долга в 2,5 млн — он собирался сделать это публично и ещё рассказать, что Аркадий спит с Мирой и что она им манипулирует. Спор быстро перерос в ярость и стыд. Аркадий ранее взял с кухни нож «порезать лимон» и оставил его при себе. Нанёс удар около 01:15. Бросил нож в мусорный бак и ушёл через чёрный ход примерно в 01:18. Дождь начался в 01:25.\nМира знала про долги и предлагала Аркадию «решить вопрос» жёстче (шантаж или хуже). Он отказался. Она злилась на его слабость. В ночь убийства она спрашивала у Павла про нож на кухне — просто проверяла варианты. Около 01:05 Мира тайком вернулась через служебный вход за забытым блокнотом с записями и заплатила Роману, чтобы он не записывал её возвращение. Около 01:10, уходя, она видела, как Аркадий позвал Виктора к чёрному ходу, испугалась и ушла через главный вход. Убийство совершил именно Аркадий в панике и ярости.",
   "agents": [
     {
       "id": "irina_morozova",
@@ -80,14 +80,17 @@
           "pressure_for_basic": 40,
           "pressure_for_full": 50,
           "requires_evidence": false,
-          "breaks_lie_on": "pressure",
+          "breaks_lie_on": [
+            "pressure",
+            "contradiction"
+          ],
           "tags": [
             "alina"
           ]
         },
         {
           "id": "fact_irina_money",
-          "content_basic": "Аркадий был должен Виктору деньги.",
+          "content_basic": "У Виктора с Аркадием в последнее время были трения по делам клуба.",
           "content_full": "Виктор говорил, что Аркадий должен крупную сумму и собирался его выкинуть.",
           "is_lie": false,
           "lie_type": "cannot_lie",
@@ -96,7 +99,7 @@
             "ev_financial_docs"
           ],
           "pressure_for_basic": 0,
-          "pressure_for_full": 0,
+          "pressure_for_full": 35,
           "requires_evidence": false,
           "breaks_lie_on": null,
           "tags": [
@@ -162,7 +165,7 @@
       "role": "Бизнес-партнёр",
       "personality": "Нервный, многословный, постоянно пытается выглядеть спокойнее, чем есть. Говорит быстро, часто повторяет «ну ты понимаешь». Поправляет галстук, трогает часы, потеет. Под давлением сначала отмахивается, потом говорит слишком много и сам себя запутывает. При очень высоком давлении начинает выдавать правду вперемешку с попытками свалить вину на Миру.",
       "background": "Партнёр с самого начала. Хороший делец, плохой игрок. Залез в долги. Убил не только из страха банкротства, но и из стыда и ярости: Виктор собирался публично выкинуть его и рассказать про связь с Мирой. Спал с Мирой. Она знала про долги и предлагала «решить вопрос» жёстче. Он отказался, но боялся её. В ночь убийства паника и унижение взяли верх.",
-      "starting_pressure": 40,
+      "starting_pressure": 30,
       "starting_emotion": "nervous",
       "starting_fatigue": 10,
       "relationships": {
@@ -183,10 +186,13 @@
           "related_evidence_ids": [
             "ev_financial_docs"
           ],
-          "pressure_for_basic": 0,
-          "pressure_for_full": 0,
-          "requires_evidence": true,
-          "breaks_lie_on": "evidence",
+          "pressure_for_basic": 75,
+          "pressure_for_full": 75,
+          "requires_evidence": false,
+          "breaks_lie_on": [
+            "evidence",
+            "pressure"
+          ],
           "tags": [
             "money"
           ]
@@ -201,28 +207,34 @@
           "related_evidence_ids": [
             "ev_kitchen_knife"
           ],
-          "pressure_for_basic": 65,
-          "pressure_for_full": 65,
+          "pressure_for_basic": 70,
+          "pressure_for_full": 70,
           "requires_evidence": false,
-          "breaks_lie_on": "pressure",
+          "breaks_lie_on": [
+            "contradiction",
+            "pressure"
+          ],
           "tags": [
             "knife"
           ]
         },
         {
           "id": "fact_arkady_meeting",
-          "content_basic": "Был в клубе после закрытия и выходил к Виктору в аллею.",
-          "content_full": "Встретился с Виктором в аллее около 01:15.",
+          "content_basic": "Задержался в клубе после закрытия.",
+          "content_full": "Встретился с Виктором в аллее около 01:15, а примерно в 01:18 ушёл через чёрный ход.",
           "is_lie": true,
           "lie_type": "must_lie",
           "lie_text": "Ушёл домой в 00:30.",
           "related_evidence_ids": [
             "ev_security_log"
           ],
-          "pressure_for_basic": 0,
-          "pressure_for_full": 0,
-          "requires_evidence": true,
-          "breaks_lie_on": "evidence",
+          "pressure_for_basic": 75,
+          "pressure_for_full": 75,
+          "requires_evidence": false,
+          "breaks_lie_on": [
+            "contradiction",
+            "evidence"
+          ],
           "tags": [
             "time"
           ]
@@ -238,7 +250,10 @@
           "pressure_for_basic": 80,
           "pressure_for_full": 80,
           "requires_evidence": false,
-          "breaks_lie_on": "pressure",
+          "breaks_lie_on": [
+            "contradiction",
+            "pressure"
+          ],
           "tags": [
             "motive",
             "mira"
@@ -252,10 +267,13 @@
           "lie_type": "can_lie",
           "lie_text": "Мира тут ни при чём.",
           "related_evidence_ids": [],
-          "pressure_for_basic": 65,
-          "pressure_for_full": 75,
+          "pressure_for_basic": 60,
+          "pressure_for_full": 70,
           "requires_evidence": false,
-          "breaks_lie_on": "pressure",
+          "breaks_lie_on": [
+            "contradiction",
+            "pressure"
+          ],
           "tags": [
             "mira"
           ]
@@ -267,10 +285,12 @@
           "is_lie": true,
           "lie_type": "must_lie",
           "lie_text": "Я его не трогал.",
-          "related_evidence_ids": [],
-          "pressure_for_basic": 85,
-          "pressure_for_full": 85,
-          "requires_evidence": false,
+          "related_evidence_ids": [
+            "ev_kitchen_knife"
+          ],
+          "pressure_for_basic": 90,
+          "pressure_for_full": 90,
+          "requires_evidence": true,
           "breaks_lie_on": "pressure",
           "tags": [
             "motive"
@@ -306,7 +326,10 @@
           "pressure_for_basic": 40,
           "pressure_for_full": 50,
           "requires_evidence": false,
-          "breaks_lie_on": "pressure",
+          "breaks_lie_on": [
+            "contradiction",
+            "pressure"
+          ],
           "tags": [
             "arkady",
             "secret"
@@ -341,7 +364,10 @@
           "pressure_for_basic": 60,
           "pressure_for_full": 60,
           "requires_evidence": false,
-          "breaks_lie_on": "pressure",
+          "breaks_lie_on": [
+            "contradiction",
+            "pressure"
+          ],
           "tags": [
             "knife",
             "pavel"
@@ -360,7 +386,10 @@
           "pressure_for_basic": 70,
           "pressure_for_full": 70,
           "requires_evidence": false,
-          "breaks_lie_on": "pressure",
+          "breaks_lie_on": [
+            "evidence",
+            "pressure"
+          ],
           "tags": [
             "secret"
           ]
@@ -379,6 +408,29 @@
           "breaks_lie_on": null,
           "tags": [
             "time"
+          ]
+        },
+        {
+          "id": "fact_mira_return",
+          "content_basic": "Около 01:05 ненадолго возвращалась в клуб за забытым блокнотом и около 01:10 ушла.",
+          "content_full": "Вернулась около 01:05 через служебный вход за блокнотом с записями, который забыла в гримёрке. Заплатила Роману, чтобы он не записывал её возвращение. Около 01:10, уходя, видела, как Аркадий позвал Виктора к чёрному ходу в аллею; правую руку он держал в кармане пиджака. Испугалась и сразу ушла через главный вход. Молчала, потому что боялась, что подумают на неё, и не хотела, чтобы нашли её записи.",
+          "is_lie": true,
+          "lie_type": "must_lie",
+          "lie_text": "Ушла в 00:50 и больше не возвращалась.",
+          "related_evidence_ids": [
+            "ev_mira_notes"
+          ],
+          "pressure_for_basic": 50,
+          "pressure_for_full": 70,
+          "requires_evidence": false,
+          "breaks_lie_on": [
+            "contradiction",
+            "pressure"
+          ],
+          "tags": [
+            "time",
+            "arkady",
+            "secret"
           ]
         },
         {
@@ -462,7 +514,10 @@
           "pressure_for_basic": 40,
           "pressure_for_full": 50,
           "requires_evidence": false,
-          "breaks_lie_on": "pressure",
+          "breaks_lie_on": [
+            "evidence",
+            "pressure"
+          ],
           "tags": [
             "mira",
             "knife"
@@ -481,7 +536,10 @@
           "pressure_for_basic": 50,
           "pressure_for_full": 60,
           "requires_evidence": false,
-          "breaks_lie_on": "pressure",
+          "breaks_lie_on": [
+            "evidence",
+            "pressure"
+          ],
           "tags": [
             "arkady",
             "knife",
@@ -640,6 +698,22 @@
           ]
         },
         {
+          "id": "fact_alina_irina_call",
+          "content_basic": "Ирина знала про неё и Виктора.",
+          "content_full": "Месяц назад Ирина позвонила ей и ледяным тоном велела держаться подальше от Виктора.",
+          "is_lie": false,
+          "lie_type": "cannot_lie",
+          "lie_text": "",
+          "related_evidence_ids": [],
+          "pressure_for_basic": 35,
+          "pressure_for_full": 45,
+          "requires_evidence": false,
+          "breaks_lie_on": null,
+          "tags": [
+            "irina"
+          ]
+        },
+        {
           "id": "fact_alina_mira_hate",
           "content_basic": "Ненавидит Миру.",
           "content_full": "Ненавидит Миру сильнее, чем Ирину. Считает, что Мира могла подтолкнуть Аркадия.",
@@ -729,16 +803,21 @@
         },
         {
           "id": "fact_roman_bribe",
-          "content_basic": "Бывает, что не всё записывает в журнал.",
-          "content_full": "Иногда берёт деньги, чтобы не фиксировать поздние выходы. В ту ночь Мира дала ему деньги за свои выходы.",
+          "content_basic": "Иногда за деньги не записывает, кто приходит и уходит после закрытия. В ту ночь ему заплатила Мира.",
+          "content_full": "Иногда берёт деньги, чтобы не фиксировать поздние выходы. В ту ночь Мира вернулась около 01:05 через служебный вход, заплатила, чтобы он не записывал её возвращение, и около 01:10 ушла через главный вход.",
           "is_lie": true,
           "lie_type": "can_lie",
           "lie_text": "Никогда ничего такого не было.",
-          "related_evidence_ids": [],
-          "pressure_for_basic": 40,
-          "pressure_for_full": 50,
+          "related_evidence_ids": [
+            "ev_security_log"
+          ],
+          "pressure_for_basic": 30,
+          "pressure_for_full": 45,
           "requires_evidence": false,
-          "breaks_lie_on": "pressure",
+          "breaks_lie_on": [
+            "evidence",
+            "pressure"
+          ],
           "tags": [
             "secret",
             "mira"
@@ -757,9 +836,7 @@
       "related_fact_ids": [
         "fact_roman_alley"
       ],
-      "related_agent_ids": [
-        "roman_petrov"
-      ],
+      "related_agent_ids": [],
       "is_key": true,
       "unlock_condition": null
     },
@@ -792,7 +869,8 @@
       "type": "document",
       "related_fact_ids": [
         "fact_roman_log",
-        "fact_arkady_meeting"
+        "fact_arkady_meeting",
+        "fact_roman_bribe"
       ],
       "related_agent_ids": [
         "roman_petrov",
@@ -827,6 +905,10 @@
           {
             "type": "inconsistency_created",
             "contradiction_id": "arkady_alibi"
+          },
+          {
+            "type": "inconsistency_created",
+            "contradiction_id": "arkady_alibi_mira"
           },
           {
             "type": "pressure_on_agent",
@@ -878,19 +960,28 @@
       "id": "ev_mira_notes",
       "title": "Записи Миры",
       "short_description": "Блокнот с именами клиентов и их предпочтениями.",
-      "full_text": "Личные записи Миры о клиентах, включая интимные детали и секреты.",
+      "full_text": "Личные записи Миры о клиентах, включая интимные детали и секреты. Блокнот нашли в её сумочке; на последней странице запись, сделанная в ночь убийства: «01:05 — вернулась за этим. Р. — 5000».",
       "type": "document",
       "related_fact_ids": [
-        "fact_mira_notes"
+        "fact_mira_notes",
+        "fact_mira_return"
       ],
       "related_agent_ids": [
         "mira_belova"
       ],
       "is_key": false,
       "unlock_condition": {
-        "type": "pressure_on_agent",
-        "agent_id": "mira_belova",
-        "gte": 70
+        "OR": [
+          {
+            "type": "inconsistency_created",
+            "contradiction_id": "mira_return"
+          },
+          {
+            "type": "pressure_on_agent",
+            "agent_id": "mira_belova",
+            "gte": 60
+          }
+        ]
       }
     }
   ],
@@ -912,28 +1003,12 @@
       "description": "Аркадий говорит, что ушёл в 00:30, но Мира видела его в клубе, когда уходила около 00:50."
     },
     {
-      "id": "arkady_alibi_late",
-      "fact_a_id": "fact_arkady_meeting",
-      "fact_a_form": "lie",
-      "fact_b_id": "fact_pavel_arkady_late",
-      "fact_b_form": "truth",
-      "description": "Аркадий говорит, что ушёл в 00:30, но Павел говорит, что он ушёл позже всех, около 01:20."
-    },
-    {
-      "id": "arkady_alibi_log",
-      "fact_a_id": "fact_arkady_meeting",
-      "fact_a_form": "lie",
-      "fact_b_id": "fact_roman_log",
-      "fact_b_form": "truth",
-      "description": "Аркадий говорит, что ушёл в 00:30, но в журнале охраны его выход записан в 01:18."
-    },
-    {
       "id": "arkady_debt",
       "fact_a_id": "fact_arkady_debt",
       "fact_a_form": "lie",
       "fact_b_id": "fact_irina_money",
-      "fact_b_form": "truth",
-      "description": "Аркадий говорит, что долгов нет, но Ирина знает от Виктора о его крупном долге."
+      "fact_b_form": "truth_full",
+      "description": "Аркадий говорит, что долгов нет, но Виктор говорил жене о его крупном долге."
     },
     {
       "id": "arkady_kitchen",
@@ -949,14 +1024,14 @@
       "fact_a_form": "lie",
       "fact_b_id": "fact_alina_viktor_threat",
       "fact_b_form": "truth",
-      "description": "Аркадий говорит, что с Виктором всё было спокойно, но Виктор говорил Алине, что собирается публично выгнать Аркадия."
+      "description": "Аркадий говорит, что с Виктором всё было спокойно, но Виктор говорил Алине, что собирается выгнать Аркадия из дела."
     },
     {
       "id": "arkady_mira_blame",
       "fact_a_id": "fact_arkady_mira_blame",
       "fact_a_form": "lie",
       "fact_b_id": "fact_alina_saw",
-      "fact_b_form": "truth",
+      "fact_b_form": "truth_full",
       "description": "Аркадий говорит, что Мира ни при чём, но Алина слышала, как Мира сказала ему: «если ты не решишь, я решу сама»."
     },
     {
@@ -972,16 +1047,24 @@
       "fact_a_id": "fact_mira_arkady",
       "fact_a_form": "lie",
       "fact_b_id": "fact_alina_saw",
-      "fact_b_form": "truth",
-      "description": "Мира говорит, что с Аркадием у неё ничего не было, но Алина видела их напряжённый разговор и слышала угрозу."
+      "fact_b_form": "truth_full",
+      "description": "Мира говорит, что с Аркадием у неё ничего не было, но Алина слышала их разговор и угрозу."
     },
     {
-      "id": "irina_unaware",
+      "id": "mira_return",
+      "fact_a_id": "fact_mira_return",
+      "fact_a_form": "lie",
+      "fact_b_id": "fact_roman_bribe",
+      "fact_b_form": "truth",
+      "description": "Мира говорит, что ушла в 00:50 и не возвращалась, но Роман говорит, что в ту ночь она платила ему, чтобы он не записывал её поздний приход."
+    },
+    {
+      "id": "irina_knew",
       "fact_a_id": "fact_irina_affair",
       "fact_a_form": "lie",
-      "fact_b_id": "fact_alina_affair",
+      "fact_b_id": "fact_alina_irina_call",
       "fact_b_form": "truth",
-      "description": "Ирина говорит, что ни о чём не знала, но роман Виктора с Алиной длился 8 месяцев прямо в клубе."
+      "description": "Ирина говорит, что ни о чём не знала, но Алина говорит, что Ирина знала о романе и звонила ей."
     }
   ],
   "victory_condition": "correct_accusation"

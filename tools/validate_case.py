@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Проверка файла дела по правилам диздока (разделы 2, 7, 8, 11, 13, 14, 15).
 
-Запуск: python3 tools/validate_case.py cases/<дело>.json [--simulate [ТОН]]
+Запуск: python3 tools/validate_case.py cases/<дело>.json [--simulate [ТОН]] [--json]
 Код возврата 0 — дело корректно, 1 — найдены ошибки.
 
 --simulate ТОН — грубая симуляция темпа (раздел 11): игрок поговорил со всеми,
@@ -9,6 +9,7 @@
 а давление от тона вопросов даёт каждому агенту не больше ТОН (по умолчанию 0).
 Оговорки can_lie (раздел 8) не учитываются — это худший случай для игрока.
 Печатает порядок событий и итоговый уровень каждого факта.
+С --json вместо текста печатает итог симуляции в JSON (эталон для тестов RulesEngine).
 """
 import json
 import sys
@@ -82,13 +83,16 @@ def validate(case):
         err(f"true_motive_id {case.get('true_motive_id')} нет в motive_options")
     if case.get("true_method_id") not in method_ids:
         err(f"true_method_id {case.get('true_method_id')} нет в method_options")
+    vc = case.get("victory_condition", "correct_accusation")
+    if vc != "correct_accusation":
+        err(f"victory_condition '{vc}' не поддерживается (только correct_accusation)")
     if case.get("starting_agent_id") and case["starting_agent_id"] not in agent_ids:
         err(f"starting_agent_id {case['starting_agent_id']} не найден")
 
     # Агенты
     for a in agents:
         aid = a.get("id")
-        for key in ("name", "role", "personality", "background", "facts"):
+        for key in ("name", "role", "personality", "prompt_background", "background", "facts"):
             if key not in a or a[key] in ("", None):
                 err(f"агент {aid}: нет поля {key}")
         emo = a.get("starting_emotion", "neutral")
@@ -299,7 +303,7 @@ def simulate(case, tone):
                 unlocked.add(eid)
                 log.append(f"улика открыта: {eid}")
                 changed = True
-        for eid in sorted(unlocked):
+        for eid in [e for e in ev if e in unlocked]:  # порядок файла дела
             for aid in agents:
                 if (eid, aid) not in shown:
                     shown.add((eid, aid))
@@ -369,11 +373,22 @@ def main():
         return 1
     print(f"Дело корректно. Агентов: {len(case['agents'])}, фактов: "
           f"{sum(len(a['facts']) for a in case['agents'])}, улик: {len(case['evidence'])}, "
-          f"противоречий: {len(case.get('contradictions', []))}.")
+          f"противоречий: {len(case.get('contradictions', []))}.", file=sys.stderr if "--json" in args else sys.stdout)
     if "--simulate" in args:
         i = args.index("--simulate")
         tone = int(args[i + 1]) if len(args) > i + 1 else 0
         log, level, broken, st, unlocked = simulate(case, tone)
+        if "--json" in args:
+            out = {"tone": tone,
+                   "fact_levels": {f["id"]: ("lie" if f.get("is_lie") and f["id"] not in broken
+                                             else level.get(f["id"], "closed"))
+                                   for a in case["agents"] for f in a["facts"]},
+                   "pressure": st["p"],
+                   "unlocked_evidence": sorted(unlocked),
+                   "contradictions": sorted(st["contr"]),
+                   "broken_lies": sorted(broken)}
+            print(json.dumps(out, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
         print(f"\nСимуляция, тон до +{tone} на агента:")
         for line in log:
             print(line)

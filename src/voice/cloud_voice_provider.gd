@@ -3,8 +3,14 @@ extends VoiceProvider
 ## Gemini TTS и расшифровка речи тем же ключом. Запросы синтеза идут по одному.
 
 var speech: GeminiSpeech
+var live: GeminiLive
 var mic: Object = null
 var speaker: PcmSpeaker
+var _live_input: bool = false
+var _live_streaming: bool = false
+var _live_pitch: float = 1.0
+var _live_volume: float = 1.0
+var _listen_pump: Variant = null
 var _queue: Array = []
 var _draining: bool = false
 var _pending_wav: PackedByteArray = PackedByteArray()
@@ -21,6 +27,10 @@ func _ready() -> void:
 		speech.tts_model = _tts_model()
 	if speech.get_parent() == null:
 		add_child(speech)
+	if live == null:
+		live = GeminiLive.new()
+	if live.get_parent() == null:
+		add_child(live)
 	if speaker == null:
 		speaker = PcmSpeaker.new()
 	if speaker.get_parent() == null:
@@ -79,12 +89,56 @@ func start_listening(language: String = "ru-RU") -> void:
 		voice_error.emit("permission", str(started.get("message", "Не удалось включить микрофон.")))
 		return
 	_listening = true
+	Callable(self, "_open_live_input").call_deferred()
 
 
 func stop_listening() -> void:
 	if not _listening:
 		return
 	_listening = false
+	if _live_input:
+		Callable(self, "_finish_live_input").call_deferred()
+		return
+	_finish_recorded_input()
+
+
+func _open_live_input() -> void:
+	if not _listening:
+		return
+	if not GeminiLive.network_enabled or speech.api_key.strip_edges() == "":
+		return
+	var opened: Dictionary = await live.listen_open(speech.api_key)
+	if not _listening:
+		live._close()
+		return
+	_live_input = opened.get("ok", false)
+	if _live_input:
+		await _pump_live_input()
+
+
+func _pump_live_input() -> void:
+	while _listening and _live_input:
+		if mic.has_method("pull_new"):
+			var fresh: Dictionary = mic.call("pull_new")
+			var chunk: PackedByteArray = fresh.get("pcm", PackedByteArray())
+			var ready := VoiceAudio.to_pcm16k(chunk, int(fresh.get("mix_rate", 16000)), bool(fresh.get("stereo", false)))
+			if ready.size() >= 2:
+				live.listen_audio(ready)
+		await get_tree().create_timer(0.08).timeout
+
+
+func _finish_live_input() -> void:
+	var heard: String = await live.listen_finish()
+	_live_input = false
+	if heard.strip_edges() != "":
+		if mic.has_method("stop"):
+			mic.call("stop")
+		transcript_ready.emit(heard, true)
+		return
+	_finish_recorded_input()
+
+
+func _finish_recorded_input() -> void:
 	var clip: Dictionary = mic.call("stop")
 	if not clip.get("ok", false):
 		voice_error.emit("unsupported", "Не удалось записать звук.")
@@ -133,7 +187,16 @@ func _speak_one(job: Dictionary) -> String:
 		pcm = cached["pcm"]
 		mix_rate = int(cached["mix_rate"])
 	else:
-		var result: Dictionary = await speech.synthesize(line, profile.voice_name, emotion, remark, -1.0, style_mode)
+		var streamed := await _speak_live(line, profile.voice_name, profile.pitch * VoiceProfiles.playback_rate(emotion, user_rate), VoiceProfiles.playback_volume(emotion, user_volume))
+		if streamed.get("ok", false):
+			pcm = streamed["pcm"]
+			mix_rate = int(streamed.get("mix_rate", 24000))
+			VoiceCache.store(cache_key, pcm, mix_rate)
+			return ""
+		if str(streamed.get("error", "")) == "auth":
+			voice_error.emit("auth", str(streamed.get("message", "")))
+			return "auth"
+		var result: Dictionary = await speech.synthesize(line, profile.voice_name, emotion, remark, -1.0, VoiceProfiles.STYLE_PLAIN)
 		if not result.get("ok", false):
 			var kind := str(result.get("error", "unsupported"))
 			voice_error.emit(kind, str(result.get("message", "")))
@@ -147,6 +210,30 @@ func _speak_one(job: Dictionary) -> String:
 	var volume := VoiceProfiles.playback_volume(emotion, user_volume)
 	await speaker.play(pcm, mix_rate, pitch, volume)
 	return ""
+
+
+func _speak_live(line: String, voice_name: String, pitch: float, volume_linear: float) -> Dictionary:
+	if not GeminiLive.network_enabled or speech.api_key.strip_edges() == "":
+		return {"ok": false, "error": "unavailable", "message": "", "pcm": PackedByteArray(), "mix_rate": 0}
+	_live_pitch = pitch
+	_live_volume = volume_linear
+	_live_streaming = false
+	if not live.audio_chunk.is_connected(_on_live_chunk):
+		live.audio_chunk.connect(_on_live_chunk)
+	var result: Dictionary = await live.speak_line(speech.api_key, line, voice_name)
+	if result.get("ok", false):
+		await speaker.end_stream()
+		return result
+	if _live_streaming:
+		speaker.stop()
+	return result
+
+
+func _on_live_chunk(chunk: PackedByteArray, rate: int) -> void:
+	if not _live_streaming:
+		_live_streaming = true
+		speaker.begin_stream(rate, _live_pitch, _live_volume)
+	speaker.push_stream(chunk)
 
 
 func _tts_model() -> String:
@@ -172,6 +259,9 @@ class PcmSpeaker:
 	var instant: bool = false
 	var played: Array = []
 	var _player: AudioStreamPlayer
+	var _stream_rate: int = 0
+	var _stream_frames: int = 0
+	var _pending_frames: PackedVector2Array = PackedVector2Array()
 
 	func play(pcm: PackedByteArray, mix_rate: int, pitch: float, volume_linear: float) -> void:
 		played.append({"bytes": pcm.size(), "mix_rate": mix_rate})
@@ -188,9 +278,77 @@ class PcmSpeaker:
 		_player.play()
 		await playback_finished
 
+	func begin_stream(mix_rate: int, pitch: float, volume_linear: float) -> void:
+		played.append({"stream": true, "mix_rate": mix_rate})
+		if instant:
+			return
+		if _player == null:
+			_player = AudioStreamPlayer.new()
+			add_child(_player)
+		var generator := AudioStreamGenerator.new()
+		generator.mix_rate = mix_rate
+		generator.buffer_length = 0.4
+		_player.stop()
+		_player.stream = generator
+		_player.pitch_scale = clampf(pitch, 0.5, 1.6)
+		_player.volume_db = linear_to_db(maxf(volume_linear, 0.001))
+		_player.play()
+		_stream_rate = mix_rate
+		_stream_frames = 0
+		_pending_frames = PackedVector2Array()
+
+	func push_stream(pcm: PackedByteArray) -> void:
+		if instant:
+			played.append({"bytes": pcm.size()})
+			return
+		var frames := _frames_from_pcm(pcm)
+		if frames.is_empty():
+			return
+		var merged := _pending_frames
+		merged.append_array(frames)
+		_pending_frames = merged
+		_flush_stream()
+
+	func _process(_delta: float) -> void:
+		if not instant:
+			_flush_stream()
+
+	func _flush_stream() -> void:
+		if _player == null or _pending_frames.is_empty():
+			return
+		var playback := _player.get_stream_playback() as AudioStreamGeneratorPlayback
+		if playback == null:
+			return
+		var available := playback.get_frames_available()
+		if available <= 0:
+			return
+		var count := mini(available, _pending_frames.size())
+		playback.push_buffer(_pending_frames.slice(0, count))
+		_stream_frames += count
+		_pending_frames = _pending_frames.slice(count)
+
+	func end_stream() -> void:
+		if instant or _stream_rate <= 0:
+			return
+		var seconds := float(_stream_frames) / float(_stream_rate)
+		if seconds > 0.0:
+			await get_tree().create_timer(seconds).timeout
+
 	func stop() -> void:
 		if _player != null:
 			_player.stop()
+
+	func _frames_from_pcm(pcm: PackedByteArray) -> PackedVector2Array:
+		var frames := PackedVector2Array()
+		var count := pcm.size() / 2
+		frames.resize(count)
+		for index in count:
+			var value := int(pcm[index * 2]) | (int(pcm[index * 2 + 1]) << 8)
+			if value >= 32768:
+				value -= 65536
+			var sample := float(value) / 32768.0
+			frames[index] = Vector2(sample, sample)
+		return frames
 
 
 class MicRecorder:
@@ -199,13 +357,28 @@ class MicRecorder:
 	var _effect: AudioEffectRecord
 	var _player: AudioStreamPlayer
 	var _bus := "VoiceRecord"
+	var _read: int = 0
 
 	func start() -> Dictionary:
 		_ensure()
+		_read = 0
 		_effect.set_recording_active(false)
 		_effect.set_recording_active(true)
 		_player.play()
 		return {"ok": true}
+
+	func pull_new() -> Dictionary:
+		if _effect == null:
+			return {"ok": false, "pcm": PackedByteArray(), "mix_rate": 16000, "stereo": false}
+		var recorded: AudioStreamWAV = _effect.get_recording()
+		if recorded == null:
+			return {"ok": true, "pcm": PackedByteArray(), "mix_rate": 16000, "stereo": false}
+		var data := recorded.data
+		if data.size() < _read:
+			_read = 0
+		var fresh := data.slice(_read, data.size())
+		_read = data.size()
+		return {"ok": true, "pcm": fresh, "mix_rate": recorded.mix_rate, "stereo": recorded.stereo}
 
 	func stop() -> Dictionary:
 		if _effect == null:

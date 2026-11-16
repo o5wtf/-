@@ -265,9 +265,9 @@ func _style_mode_to_save() -> String:
 	if not _intonation.button_pressed:
 		return VoiceProfiles.STYLE_PLAIN
 	var current := SettingsStore.load_current().style_mode
-	if current == VoiceProfiles.STYLE_ENGLISH_TAGS:
+	if current == VoiceProfiles.STYLE_ENGLISH_TAGS or current == VoiceProfiles.STYLE_ENGLISH_PREFIX:
 		return current
-	return VoiceProfiles.DEFAULT_STYLE_MODE
+	return VoiceProfiles.STYLE_ENGLISH_PREFIX
 
 
 func _stt_index(mode: String) -> int:

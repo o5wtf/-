@@ -386,7 +386,6 @@ func _speak_model(api_key: String, model: String, line: String, voice_name: Stri
 	var started := Time.get_ticks_msec()
 	var limit := FIRST_AUDIO_MS
 	var done := false
-	var played := false
 	while Time.get_ticks_msec() - started < limit:
 		for event in _drain_packets():
 			var kind := str(event.get("kind", ""))
@@ -395,15 +394,11 @@ func _speak_model(api_key: String, model: String, line: String, voice_name: Stri
 				pcm.append_array(chunk)
 				rate = int(event.get("mix_rate", 24000))
 				limit = maxi(limit, 12000)
-				audio_chunk.emit(chunk, rate)
-				played = true
 			elif kind == "output_transcript":
 				heard = str(event.get("text", ""))
 			elif kind == "turn_complete":
 				done = true
 			elif kind == "error":
-				if played:
-					playback_reset.emit()
 				_drop_session()
 				return _fail(str(event.get("error", "server")), str(event.get("message", "")))
 		if done:
@@ -413,8 +408,6 @@ func _speak_model(api_key: String, model: String, line: String, voice_name: Stri
 			return _fail_closed(model)
 		await get_tree().process_frame
 	if not accept_spoken(pcm.size(), rate, done, heard, spoken_line):
-		if played:
-			playback_reset.emit()
 		_drop_session()
 		return _fail("bad_response", "Модель «%s» не повторила реплику." % model)
 	if _go_away:

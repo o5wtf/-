@@ -24,6 +24,8 @@ var _stream_reply: String = ""
 var _voiced_len: int = 0
 var _send_ms: int = 0
 var _voice_stream: bool = false
+var _speech_id: int = 0
+var _voiced_text: String = ""
 var _speculating: bool = false
 var _spec_epoch: int = 0
 var _spec_agent: String = ""
@@ -307,7 +309,9 @@ func _begin_stream(agent_id: String, emotion: String) -> void:
 	_stream_emotion = emotion
 	_stream_reply = ""
 	_voiced_len = 0
+	_voiced_text = ""
 	_voice_stream = true
+	_speech_id = 0
 	_send_ms = Time.get_ticks_msec()
 	if LLM.client != null and LLM.client.has_signal("reply_text") and not LLM.client.reply_text.is_connected(_on_reply_text):
 		LLM.client.reply_text.connect(_on_reply_text)
@@ -325,9 +329,12 @@ func _on_reply_text(text: String) -> void:
 	var fresh := text.substr(_voiced_len)
 	var taken := GeminiClient.take_sentences(fresh)
 	var ready: PackedStringArray = taken["ready"]
+	var consumed := fresh.length() - str(taken.get("rest", "")).length()
 	for sentence in ready:
-		_queue_speech(sentence, _stream_emotion, "")
-	_voiced_len += fresh.length() - str(taken.get("rest", "")).length()
+		_queue_speech(sentence, _stream_emotion, "", false)
+	if consumed > 0:
+		_voiced_text = text.substr(0, _voiced_len + consumed)
+	_voiced_len += consumed
 
 
 func _abort_stream() -> void:
@@ -338,23 +345,23 @@ func _abort_stream() -> void:
 
 
 func _speak_unsaid(agent: CaseData.Agent, reply: String, remark: String, emotion: String) -> void:
-	var aligned := _voiced_len > 0 and _stream_reply != "" and reply.begins_with(_stream_reply.substr(0, mini(_voiced_len, _stream_reply.length())))
-	if _voiced_len > 0 and not aligned:
-		Voice.stop_speaking()
-		_voiced_len = 0
-	var tail := reply.substr(_voiced_len).strip_edges() if _voiced_len > 0 and aligned else reply
-	if tail != "":
-		_queue_speech(tail, emotion, remark)
-	_voiced_len = reply.length()
-
-
-func _queue_speech(text: String, emotion: String, remark: String) -> void:
-	if _stream_agent == "" or text.strip_edges() == "":
+	var tail := SpeechGate.unsaid(reply, _voiced_text)
+	if tail == "":
 		return
+	_queue_speech(tail, emotion, remark, true)
+
+
+func _queue_speech(text: String, emotion: String, remark: String, committed: bool) -> void:
+	if _speculating or _stream_agent == "" or text.strip_edges() == "":
+		return
+	if not committed and not _voice_stream:
+		return
+	if _speech_id <= 0:
+		_speech_id = Voice.open_line()
 	var agent: CaseData.Agent = case_data.agent_by_id.get(_stream_agent) as CaseData.Agent
 	if agent == null:
 		return
-	Voice.speak_agent(agent, text, remark, emotion)
+	Voice.speak_agent(agent, text, remark, emotion, _speech_id)
 
 
 func _arm_speculation() -> void:

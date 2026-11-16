@@ -11,6 +11,7 @@ var volume: float = 1.0
 var rate: float = 1.0
 var stt_mode: String = "gemini_audio"
 var style_mode: String = VoiceProfiles.DEFAULT_STYLE_MODE
+var _gate := SpeechGate.new()
 
 
 func _ready() -> void:
@@ -41,12 +42,21 @@ func prepare_speech() -> void:
 		provider.prepare_connection()
 
 
-func speak_agent(agent: CaseData.Agent, reply: String, remark: String, emotion: String) -> int:
+func open_line() -> int:
+	return _gate.open()
+
+
+func speak_agent(agent: CaseData.Agent, reply: String, remark: String, emotion: String, line_id: int = -1) -> int:
 	if not enabled or provider == null:
+		return -1
+	var id := line_id if line_id > 0 else _gate.open()
+	if not _gate.accept(id, reply):
 		return -1
 	provider.user_volume = volume
 	provider.user_rate = rate
 	provider.style_mode = style_mode
+	if provider.has_method("speak_with_line"):
+		return int(provider.call("speak_with_line", reply, VoiceProfiles.for_agent(agent), emotion, remark, id))
 	return provider.speak(reply, VoiceProfiles.for_agent(agent), emotion, remark)
 
 

@@ -1,0 +1,102 @@
+extends Node
+## Какой VoiceProvider сейчас говорит и слушает. Смена в настройках без перезапуска.
+
+signal voice_error(kind: String, message: String)
+signal transcript_ready(text: String, is_final: bool)
+signal speech_finished(utterance_id: int)
+
+var enabled: bool = true
+var provider: VoiceProvider
+var volume: float = 1.0
+var rate: float = 1.0
+var stt_mode: String = "gemini_audio"
+
+
+func _ready() -> void:
+	reload()
+
+
+func reload() -> void:
+	var settings := SettingsStore.load_current()
+	enabled = settings.voice_enabled
+	volume = settings.voice_volume
+	rate = settings.voice_rate
+	stt_mode = settings.stt_mode
+	var next := _make(settings.voice_provider)
+	_detach()
+	provider = next
+	provider.user_volume = volume
+	provider.user_rate = rate
+	add_child(provider)
+	provider.voice_error.connect(_on_error)
+	provider.transcript_ready.connect(_on_transcript)
+	provider.speech_finished.connect(_on_finished)
+
+
+func speak_agent(agent: CaseData.Agent, reply: String, remark: String, emotion: String) -> int:
+	if not enabled or provider == null:
+		return -1
+	provider.user_volume = volume
+	provider.user_rate = rate
+	return provider.speak(reply, VoiceProfiles.for_agent(agent), emotion, remark)
+
+
+func speak_sample() -> int:
+	if provider == null:
+		return -1
+	provider.user_volume = volume
+	provider.user_rate = rate
+	var profile := VoiceProfiles.for_person("sample", "Анна", "female", 40)
+	return provider.speak(UiStrings.VOICE_SAMPLE, profile, "neutral", "")
+
+
+func start_listening() -> void:
+	if provider == null:
+		return
+	if stt_mode == "builtin" or not provider.is_stt_available():
+		voice_error.emit("unsupported", "Голосовой ввод недоступен на этом устройстве.")
+		return
+	provider.start_listening("ru-RU")
+
+
+func stop_listening() -> void:
+	if provider == null:
+		return
+	provider.stop_listening()
+
+
+func stop() -> void:
+	if provider != null:
+		provider.stop_speaking()
+
+
+func _make(which: String) -> VoiceProvider:
+	if which == "builtin":
+		return BuiltinVoiceProvider.new()
+	return CloudVoiceProvider.new()
+
+
+func _detach() -> void:
+	if provider == null or not is_instance_valid(provider):
+		provider = null
+		return
+	if provider.voice_error.is_connected(_on_error):
+		provider.voice_error.disconnect(_on_error)
+	if provider.transcript_ready.is_connected(_on_transcript):
+		provider.transcript_ready.disconnect(_on_transcript)
+	if provider.speech_finished.is_connected(_on_finished):
+		provider.speech_finished.disconnect(_on_finished)
+	provider.queue_free()
+	provider = null
+
+
+func _on_error(kind: String, message: String) -> void:
+	voice_error.emit(kind, message)
+
+
+func _on_transcript(text: String, is_final: bool) -> void:
+	transcript_ready.emit(text, is_final)
+
+
+func _on_finished(utterance_id: int) -> void:
+	speech_finished.emit(utterance_id)

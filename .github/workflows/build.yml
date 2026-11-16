@@ -128,6 +128,7 @@ jobs:
           aapt="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort | tail -1)"
           "$aapt" dump permissions builds/Detective.apk | tee "$RUNNER_TEMP/permissions.txt"
           grep -q android.permission.INTERNET "$RUNNER_TEMP/permissions.txt"
+          grep -q android.permission.RECORD_AUDIO "$RUNNER_TEMP/permissions.txt"
           "$aapt" dump xmltree builds/Detective.apk AndroidManifest.xml > "$RUNNER_TEMP/manifest.txt"
           if ! grep -q xlargeScreens "$RUNNER_TEMP/manifest.txt"; then
             echo "В манифесте нет больших экранов"

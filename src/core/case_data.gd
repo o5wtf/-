@@ -52,6 +52,9 @@ class Agent:
 	var id: String = ""
 	var name: String = ""
 	var role: String = ""
+	## Необязательные поля: пустые, если автор их не задал. На сюжет не влияют.
+	var gender: String = ""
+	var age: int = 0
 	var personality: String = ""
 	var prompt_background: String = ""
 	var background: String = ""

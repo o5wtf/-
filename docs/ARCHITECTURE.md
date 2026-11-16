@@ -48,14 +48,18 @@ src/
     llm_config.gd         # LLMConfig: ключ, модели, таймауты (из user://config.cfg)
   save/
     save_state.gd         # SaveState: сохранение и загрузка партии
-  voice/                  # этап «Голос», после текстового прототипа (раздел 3.12)
+  voice/                  # этап 10, раздел 3.12
     voice_provider.gd     # VoiceProvider: общий интерфейс синтеза и распознавания
-    cloud_voice_provider.gd    # облачная реализация (поставщик — через адаптер)
-    builtin_voice_provider.gd  # встроенная: DisplayServer.tts_* + системный STT, если есть
-    voice_profiles.gd     # голос и манера для каждого агента, связь с эмоцией
+    cloud_voice_provider.gd    # Gemini TTS и расшифровка тем же ключом
+    builtin_voice_provider.gd  # DisplayServer.tts_*; распознавание на устройстве пока недоступно
+    voice_profiles.gd     # голос по полу и возрасту, подача по эмоции
+    gemini_speech.gd      # запросы TTS и расшифровки, цепочка моделей
+    voice_cache.gd        # кэш PCM в user:// без ключа
+    voice_audio.gd        # PCM L16 и WAV
   autoload/
     game.gd               # автозагрузка Game: сессия, порядок хода, сигналы для UI
     llm.gd                # автозагрузка LLM: создаёт и отдаёт клиента по настройкам
+    voice.gd              # автозагрузка Voice: текущий VoiceProvider, смена без перезапуска
 ui/
   theme/                  # общая тема (шрифты, цвета)
   screens/                # сцены экранов (docs/UI_PROTOTYPE.md)
@@ -67,7 +71,7 @@ tests/
   golden/                 # эталоны (например, результат tools/validate_case.py --simulate --json)
 ```
 
-Правило зависимостей: `src/core` ничего не знает о `dialogue`, `llm`, `ui`. `dialogue` знает о `core`. `autoload/game.gd` склеивает всё. UI общается только с автозагрузкой `Game` (сигналы и методы), а не с движком правил напрямую.
+Правило зависимостей: `src/core` ничего не знает о `dialogue`, `llm`, `ui`, `voice`. `dialogue` знает о `core`. `autoload/game.gd` склеивает ход. UI для хода общается с `Game`, для озвучки и микрофона — с `Voice`. Ошибка голоса не меняет ход.
 
 ## 3. Модули и интерфейсы
 
@@ -240,14 +244,13 @@ func start_listening(language := "ru-RU") -> void
 func stop_listening() -> void              # после остановки приходит итоговый transcript_ready
 ```
 
-- **`CloudVoiceProvider`**:
-  - Синтез: HTTP-запрос к выбранному поставщику, полученный звук (обычно PCM или WAV) переводится в `AudioStreamWAV` и играется через `AudioStreamPlayer`.
-  - Распознавание: запись с микрофона (`AudioStreamMicrophone` + `AudioEffectRecord` на отдельной шине), WAV отправляется поставщику.
-  - Поставщик подключается адаптером, конкретный не зафиксирован (открытый вопрос диздока, раздел 12).
-  - Режим `stt_mode = gemini_audio`: отдельного STT нет, аудио вопроса уходит в запрос хода к Gemini (`docs/LLM_PROTOCOL.md`). Модель возвращает расшифровку вопроса отдельным полем, оно попадает в историю диалога.
+- **`CloudVoiceProvider`** — поставщик Gemini (тот же ключ, заголовок `x-goog-api-key`):
+  - Синтез: `generateContent` у TTS-модели, звук `audio/L16` (PCM 24 кГц) переводится в `AudioStreamWAV`. Цепочка при таймауте, 429, 503 и 404: выбранная модель → `gemini-3.8-flash-lite-tts` → `gemini-3.8-flash-tts` → `gemini-3.1-flash-tts-preview` → `gemini-2.5-flash-preview-tts`. Запросы стоят в очереди по одному.
+  - Озвучивается только `reply`. Эмоция и ремарка задают стиль и не читаются вслух. Готовый звук кэшируется в `user://voice_cache` без ключа: повторное нажатие на реплику не делает новый запрос.
+  - Распознавание: микрофон (`AudioStreamMicrophone` + `AudioEffectRecord`), WAV уходит inline в отдельный запрос Gemini. Ответ — поле `transcript`. Текст попадает в поле ввода, игрок правит его и отправляет; в историю диалога идёт уже отправленная строка. Так игрок успевает поправить речь до хода. Режимы `gemini_audio` и `cloud` используют этот запрос.
 - **`BuiltinVoiceProvider`**:
-  - Синтез через `DisplayServer.tts_speak()`, голос выбирается из `DisplayServer.tts_get_voices_for_language("ru")`. Нужно включить `audio/general/text_to_speech` в настройках проекта. Работает на Android и Windows без сети и без ключа.
-  - Распознавание: в Godot встроенного STT нет. Варианты — плагин Android (`SpeechRecognizer`) и расширение GDExtension для Windows (`Windows.Media.SpeechRecognition`, нужен русский языковой пакет). Если STT недоступен, `is_stt_available()` возвращает false, и UI оставляет только текстовый ввод.
+  - Синтез через `DisplayServer.tts_speak()`, голос выбирается из `DisplayServer.tts_get_voices_for_language("ru")`. Включены `audio/general/text_to_speech` и `audio/driver/enable_input`. Работает на Android и Windows без сети и без ключа.
+  - Распознавания на устройстве пока нет: `is_stt_available()` возвращает false, пункт в настройках подписан «недоступно на этом устройстве». Офлайн Vosk не подключён.
 - **Профиль голоса агента:** тембр и высота, скорость; эмоция меняет скорость и громкость, у облачного поставщика — и стиль подачи, если он это умеет. Озвучивается только `reply`, а не ремарка.
 - **Ошибки голоса** не влияют на ход: текст ответа уже показан, озвучка просто не звучит, а вместо голосового ввода остаётся текстовый.
 - **Разрешения:** Android — `RECORD_AUDIO` (запрашивается при первом нажатии на микрофон); проект — `audio/driver/enable_input = true`.
@@ -306,7 +309,7 @@ func stop_listening() -> void              # после остановки пр�
 
 ## 7. Что не входит в прототип
 
-Голос (этап 10 плана, модуль из раздела 3.12) и 3D-модели (этап 11) — следующие этапы после текстового прототипа, см. `docs/IMPLEMENTATION_PLAN.md`. Архитектура к ним готова: эмоция и ремарка в ответе модели — это данные для интонации и анимации.
+Голос подключён (этап 10): синтез и расшифровка не меняют правила хода. 3D-модели (этап 11) — следующий этап, см. `docs/IMPLEMENTATION_PLAN.md`. Эмоция и ремарка в ответе модели задают подачу голоса.
 
 ## 8. Тесты
 

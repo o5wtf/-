@@ -9,9 +9,17 @@ var _key: LineEdit
 var _model: LineEdit
 var _scale: HSlider
 var _mock: CheckBox
+var _voice_on: CheckBox
+var _source: OptionButton
+var _stt: OptionButton
+var _volume: HSlider
+var _rate: HSlider
 var _status: Label
 var _show: Button
 var _testing: bool = false
+var _voice_done: bool = false
+var _voice_failed: bool = false
+var _voice_message: String = ""
 
 
 func _ready() -> void:
@@ -71,6 +79,47 @@ func _ready() -> void:
 	_mock.text = UiStrings.MOCK_LABEL
 	_mock.custom_minimum_size = Vector2(0, 48)
 	scroll_box.add_child(_mock)
+	scroll_box.add_child(UiWidgets.label(UiStrings.VOICE_NOTICE))
+	_voice_on = CheckBox.new()
+	_voice_on.name = "VoiceToggle"
+	_voice_on.text = UiStrings.VOICE_TOGGLE
+	_voice_on.custom_minimum_size = Vector2(0, 48)
+	scroll_box.add_child(_voice_on)
+	scroll_box.add_child(UiWidgets.label(UiStrings.VOICE_SOURCE))
+	_source = OptionButton.new()
+	_source.name = "VoiceSource"
+	_source.custom_minimum_size = Vector2(0, 48)
+	_source.add_item(UiStrings.VOICE_CLOUD, 0)
+	_source.add_item(UiStrings.VOICE_BUILTIN, 1)
+	scroll_box.add_child(_source)
+	scroll_box.add_child(UiWidgets.label(UiStrings.VOICE_INPUT))
+	_stt = OptionButton.new()
+	_stt.name = "VoiceInput"
+	_stt.custom_minimum_size = Vector2(0, 48)
+	_stt.add_item(UiStrings.VOICE_STT_GEMINI, 0)
+	_stt.add_item(UiStrings.VOICE_STT_CLOUD, 1)
+	_stt.add_item(UiStrings.VOICE_STT_BUILTIN, 2)
+	_stt.set_item_disabled(2, true)
+	scroll_box.add_child(_stt)
+	var test_voice := UiWidgets.button(UiStrings.TEST_VOICE, "TestVoiceButton")
+	test_voice.pressed.connect(_test_voice)
+	scroll_box.add_child(test_voice)
+	scroll_box.add_child(UiWidgets.label(UiStrings.VOICE_VOLUME))
+	_volume = HSlider.new()
+	_volume.name = "VoiceVolume"
+	_volume.min_value = 0.0
+	_volume.max_value = 1.0
+	_volume.step = 0.05
+	_volume.custom_minimum_size = Vector2(0, 48)
+	scroll_box.add_child(_volume)
+	scroll_box.add_child(UiWidgets.label(UiStrings.VOICE_RATE))
+	_rate = HSlider.new()
+	_rate.name = "VoiceRate"
+	_rate.min_value = 0.8
+	_rate.max_value = 1.3
+	_rate.step = 0.05
+	_rate.custom_minimum_size = Vector2(0, 48)
+	scroll_box.add_child(_rate)
 	_status = UiWidgets.label("", "StatusLabel")
 	scroll_box.add_child(_status)
 	var save := UiWidgets.button(UiStrings.SAVE, "SaveButton")
@@ -89,6 +138,11 @@ func _load_fields() -> void:
 	_model.text = store.dialogue_model
 	_scale.value = store.text_scale
 	_mock.button_pressed = store.provider == "mock"
+	_voice_on.button_pressed = store.voice_enabled
+	_source.select(1 if store.voice_provider == "builtin" else 0)
+	_stt.select(_stt_index(store.stt_mode))
+	_volume.value = store.voice_volume
+	_rate.value = store.voice_rate
 
 
 func _toggle_key() -> void:
@@ -108,7 +162,8 @@ func _save() -> void:
 	if key == "":
 		key = previous.api_key
 	var provider := "mock" if _mock.button_pressed else "gemini"
-	SettingsStore.save_values(provider, key, _model.text, _scale.value)
+	SettingsStore.save_values(provider, key, _model.text, _scale.value, _voice_payload())
+	Voice.reload()
 	_key.text = ""
 	_key.secret = true
 	_show.text = UiStrings.SHOW_KEY
@@ -134,7 +189,8 @@ func _test_connection() -> void:
 	var model := _model.text.strip_edges()
 	if model == "":
 		model = LLMConfig.DEFAULT_DIALOGUE_MODEL
-	SettingsStore.save_values(provider, key, model, _scale.value)
+	SettingsStore.save_values(provider, key, model, _scale.value, _voice_payload())
+	Voice.reload()
 	LLM.reload_client()
 	var message := UiStrings.LINK_MOCK
 	if provider != "mock":
@@ -143,6 +199,74 @@ func _test_connection() -> void:
 		message = _without_secret(message, key)
 	_status.text = message
 	_testing = false
+
+
+func _test_voice() -> void:
+	if _testing:
+		return
+	_testing = true
+	_save()
+	_status.text = UiStrings.CHECKING
+	var secret := SettingsStore.load_current().api_key
+	_voice_done = false
+	_voice_failed = false
+	_voice_message = ""
+	if not Voice.voice_error.is_connected(_on_voice_probe_error):
+		Voice.voice_error.connect(_on_voice_probe_error)
+		Voice.speech_finished.connect(_on_voice_probe_spoken)
+	var utterance_id := Voice.speak_sample()
+	if utterance_id < 0 and not _voice_done:
+		_voice_message = "Синтез речи недоступен."
+		_voice_done = true
+	while not _voice_done:
+		await get_tree().process_frame
+	if Voice.voice_error.is_connected(_on_voice_probe_error):
+		Voice.voice_error.disconnect(_on_voice_probe_error)
+		Voice.speech_finished.disconnect(_on_voice_probe_spoken)
+	_status.text = _without_secret(_voice_message, secret)
+	_testing = false
+
+
+func _on_voice_probe_error(kind: String, text: String) -> void:
+	_voice_failed = true
+	_voice_message = UiStrings.VOICE_SKIPPED if kind == "rate_limited" else text
+	if _voice_message.strip_edges() == "":
+		_voice_message = kind
+	_voice_done = true
+
+
+func _on_voice_probe_spoken(_utterance_id: int) -> void:
+	if _voice_failed:
+		return
+	_voice_message = "Голос ответил."
+	_voice_done = true
+
+
+func _voice_payload() -> Dictionary:
+	return {
+		"enabled": _voice_on.button_pressed,
+		"provider": "builtin" if _source.selected == 1 else "cloud",
+		"stt_mode": _stt_mode(_stt.selected),
+		"volume": _volume.value,
+		"rate": _rate.value,
+		"tts_model": SettingsStore.load_current().tts_model,
+	}
+
+
+func _stt_index(mode: String) -> int:
+	if mode == "cloud":
+		return 1
+	if mode == "builtin":
+		return 2
+	return 0
+
+
+func _stt_mode(index: int) -> String:
+	if index == 1:
+		return "cloud"
+	if index == 2:
+		return "builtin"
+	return "gemini_audio"
 
 
 func _ping_timeout() -> float:

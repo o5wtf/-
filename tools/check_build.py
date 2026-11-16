@@ -48,7 +48,7 @@ def pck_paths(data: bytes) -> list[str]:
         pos += 4
         if length > 4096 or pos + length > len(data):
             fail("путь в PCK повреждён")
-        path = data[pos : pos + length].decode("utf-8", "replace")
+        path = data[pos : pos + length].split(b"\x00", 1)[0].decode("utf-8", "replace")
         pos += length + 8 + 8 + 16 + 4
         paths.append(path.replace("\\", "/"))
     return paths

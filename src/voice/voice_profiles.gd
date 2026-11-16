@@ -85,7 +85,7 @@ static func style_prompt(reply: String, emotion: String, _remark: String, mode: 
 
 
 static func live_instruction(emotion: String, remark: String) -> String:
-	var text := "Ты озвучиваешь персонажа. Произнеси реплику пользователя дословно, ничего не добавляя и не комментируя. Тон: %s." % live_tone(emotion)
+	var text := "Respond in Russian. Output only the words between <<< and >>>. Never answer the line, never add words. Ты озвучиваешь персонажа. Произнеси реплику пользователя дословно, ничего не добавляя и не комментируя. Тон: %s." % live_tone(emotion)
 	var stage := remark.strip_edges().replace("\n", " ")
 	if stage.length() > 80:
 		stage = stage.substr(0, 80).strip_edges()
@@ -110,6 +110,28 @@ static func live_tone(emotion: String) -> String:
 			return "медленно, презрительно (slow, contemptuous)"
 		_:
 			return "спокойно (calm)"
+
+
+static func marked_line(line: String) -> String:
+	return "<<<%s>>>" % spoken_text(line)
+
+
+static func vocabulary_from_case(case_data: CaseData) -> PackedStringArray:
+	var found := PackedStringArray()
+	if case_data == null:
+		return found
+	for agent in case_data.agents:
+		_push_term(found, agent.name)
+	for item in case_data.evidence:
+		_push_term(found, item.title)
+	return found
+
+
+static func _push_term(found: PackedStringArray, text: String) -> void:
+	var clean := text.strip_edges()
+	if clean == "" or clean.length() > 40 or found.size() >= 100 or found.has(clean):
+		return
+	found.append(clean)
 
 
 static func _english_tone(emotion: String) -> String:

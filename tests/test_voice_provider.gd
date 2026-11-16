@@ -125,10 +125,10 @@ func test_live_instruction_carries_tone_outside_the_line() -> void:
 func test_live_vad_verbatim_and_resumption() -> void:
 	var listen: Dictionary = GeminiLive.setup_message("gemini-3.5-transcribe-live", "", true)
 	var activity: Dictionary = listen["setup"]["realtimeInputConfig"]["automaticActivityDetection"]
-	assert_eq(activity, GeminiLive.ACTIVITY)
-	assert_eq(activity["silenceDurationMs"], 500)
-	assert_eq(activity["endOfSpeechSensitivity"], "END_SENSITIVITY_HIGH")
-	assert_eq(activity["startOfSpeechSensitivity"], "START_SENSITIVITY_HIGH")
+	assert_eq(activity["disabled"], true)
+	assert_true(GeminiLive.SILENCE_DURATION_MS >= 500)
+	assert_eq(GeminiLive.activity_start()["realtimeInput"]["activityStart"], {})
+	assert_eq(GeminiLive.activity_end()["realtimeInput"]["activityEnd"], {})
 	var speak: Dictionary = GeminiLive.setup_message("gemini-3.8-live", "Kore", false, "controlled", "молчит", "handle-1")
 	assert_true(speak["setup"].has("outputAudioTranscription"))
 	assert_eq(speak["setup"]["sessionResumption"]["handle"], "handle-1")
@@ -158,6 +158,49 @@ func test_live_vad_verbatim_and_resumption() -> void:
 	assert_true(GeminiLive.can_resume(same, same, handle))
 	var other := GeminiLive.session_key("gemini-3.8-live", "Kore", false, "angry", "")
 	assert_false(GeminiLive.can_resume(same, other, handle))
+
+
+func test_live_review_fixes() -> void:
+	assert_eq(GeminiLive.LISTEN_MODELS.size(), 1)
+	assert_false(GeminiLive.LISTEN_MODELS.has("gemini-3.8-live"))
+	assert_false(GeminiLive.socket_url().contains("key="))
+	assert_false(GeminiLive.socket_url().contains("secret-key"))
+	var auth := GeminiLive.classify_close(1008, "API key not valid")
+	assert_eq(auth["error"], "auth")
+	var quota := GeminiLive.classify_close(1000, "RESOURCE_EXHAUSTED quota")
+	assert_eq(quota["error"], "rate_limited")
+	var bad := GeminiLive.classify_close(1007, "invalid argument")
+	assert_eq(bad["error"], "unavailable")
+	var collected: Dictionary = GeminiLive.collect_transcript(PackedStringArray(), [
+		{"kind": "transcript", "text": "Во"},
+		{"kind": "transcript", "text": "сколько"},
+		{"kind": "transcript", "text": "это было"},
+		{"kind": "turn_complete"},
+	])
+	assert_eq(collected["text"], "Во сколько это было")
+	assert_true(collected["done"])
+	var events := GeminiLive.parse_server("{\"serverContent\":{\"generationComplete\":true}}")
+	assert_eq(events[0]["kind"], "generation_complete")
+	assert_true(GeminiLive.should_fallback(false, true, "", "Хватит."))
+	var terms := PackedStringArray(["Анна", "Архив"])
+	var setup: Dictionary = GeminiLive.setup_message("gemini-3.5-transcribe-live", "", true, "", "", "", "ru-RU", terms)
+	var transcription: Dictionary = setup["setup"]["inputAudioTranscription"]
+	assert_eq(transcription["languageCodes"][0], "ru-RU")
+	assert_eq(transcription["customVocabulary"][0], "Анна")
+	var marked := VoiceProfiles.marked_line("Хватит.")
+	assert_true(marked.begins_with("<<<"))
+	assert_true(marked.ends_with(">>>"))
+	assert_false(GeminiLive.line_message(marked)["clientContent"]["turns"][0]["parts"][0]["text"].contains("Тон"))
+	var case_data := CaseData.new()
+	var agent := CaseData.Agent.new()
+	agent.name = "Анна"
+	case_data.agents.append(agent)
+	var evidence := CaseData.EvidenceItem.new()
+	evidence.title = "Архив"
+	case_data.evidence.append(evidence)
+	var vocab := VoiceProfiles.vocabulary_from_case(case_data)
+	assert_true(vocab.has("Анна"))
+	assert_true(vocab.has("Архив"))
 
 
 func test_l16_and_wav_roundtrip() -> void:

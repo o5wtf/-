@@ -112,6 +112,7 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 		llm_error.emit("no_case", "Дело не открыто.")
 		return
 	busy_changed.emit(true)
+	Voice.prepare_speech()
 	last_mentioned_evidence = []
 	last_requested_evidence = ""
 	_sync_dialogues()

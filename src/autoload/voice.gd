@@ -36,6 +36,11 @@ func reload() -> void:
 	provider.speech_finished.connect(_on_finished)
 
 
+func prepare_speech() -> void:
+	if provider != null and provider.has_method("prepare_connection"):
+		provider.prepare_connection()
+
+
 func speak_agent(agent: CaseData.Agent, reply: String, remark: String, emotion: String) -> int:
 	if not enabled or provider == null:
 		return -1

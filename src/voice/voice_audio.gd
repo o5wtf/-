@@ -30,6 +30,31 @@ const UPLOAD_RATE := 16000
 const SILENCE_THRESHOLD := 400
 
 
+class RateState:
+	extends RefCounted
+	var phase: float = 0.0
+	var low: float = 0.0
+
+
+static func feed_16k(state: RateState, pcm: PackedByteArray, from_rate: int) -> PackedByteArray:
+	if state == null or from_rate <= 0 or from_rate == UPLOAD_RATE:
+		return pcm
+	var alpha := clampf(float(UPLOAD_RATE) / float(from_rate), 0.05, 1.0)
+	var out := PackedByteArray()
+	var frames := pcm.size() / 2
+	for index in frames:
+		var sample := float(_sample(pcm, index))
+		state.low = state.low + alpha * (sample - state.low)
+		state.phase += float(UPLOAD_RATE) / float(from_rate)
+		while state.phase >= 1.0:
+			state.phase -= 1.0
+			var value := clampi(int(round(state.low)), -32768, 32767)
+			var stored := value if value >= 0 else value + 65536
+			out.append(stored & 255)
+			out.append((stored >> 8) & 255)
+	return out
+
+
 static func to_pcm16k(pcm: PackedByteArray, mix_rate: int, stereo: bool) -> PackedByteArray:
 	var single := mono(pcm, stereo)
 	var rate := mix_rate if mix_rate > 0 else UPLOAD_RATE

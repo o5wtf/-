@@ -61,7 +61,7 @@ static func validate(resp: Variant, packet: Array, context: Dictionary) -> Dicti
 			"fact_id": str(entry.get("fact_id", "")),
 			"form": form,
 		})
-	var reply := _strip_markup(VoiceProfiles.spoken_text(str(body["reply"])))
+	var reply := _strip_markup(str(body["reply"]))
 	report["reply"] = reply
 	report["remark"] = str(body["remark"])
 	if reply.length() < 1 or reply.length() > REPLY_MAX:

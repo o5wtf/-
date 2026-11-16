@@ -39,9 +39,7 @@ static func build_turn(
 		"schema": _turn_schema(_packet_keys(packet), evidence_keys),
 		"model_role": "dialogue",
 		"temperature": 0.9,
-		"max_output_tokens": 2048,
-		"stream": true,
-		"thinking_level": "MINIMAL",
+		"max_output_tokens": 8192,
 	}
 
 
@@ -69,8 +67,6 @@ static func _system_prompt(case_data: CaseData, agent: CaseData.Agent) -> String
 		relations.append("- %s: %s" % [other.name, str(agent.relationships[other_id])])
 	var relation_block := "\n".join(relations)
 	var head := "Ты играешь персонажа в детективной игре-допросе. Игрок — следователь.\n\n"
-	head += RULES
-	head += "\n\n"
 	head += "КТО ТЫ: %s, %s.\n" % [agent.name, agent.role]
 	head += "О СЕБЕ: %s\n" % agent.prompt_background
 	head += "ХАРАКТЕР И МАНЕРА РЕЧИ: %s\n" % agent.personality
@@ -79,9 +75,10 @@ static func _system_prompt(case_data: CaseData, agent: CaseData.Agent) -> String
 		head += relation_block + "\n"
 	head += "ЧТО СЛУЧИЛОСЬ (это знают все): %s\n" % case_data.briefing
 	head += "АТМОСФЕРА: %s\n\n" % case_data.intro_atmosphere
-	head += "ПОЛЯ ОТВЕТА:\n"
+	head += RULES
+	head += "\n\nПОЛЯ ОТВЕТА:\n"
 	head += "- player_tone: оцени последний вопрос следователя: −3 очень мягкий и сочувственный, 0 нейтральный, +5 жёсткое обвинение, угроза или давление.\n"
-	head += "- reply: только слова, которые ты произносишь вслух. Без ремарок, скобок, звёздочек и подписей вроде «холодно» или «сдержанно». Ремарка и эмоция пишутся только в своих полях.\n"
+	head += "- reply: твоя реплика.\n"
 	head += "- remark: короткая ремарка о тебе от третьего лица, до 12 слов, без новых фактов. Например: «отводит взгляд».\n"
 	head += "- emotion: твоё состояние после ответа, одно значение из списка.\n"
 	head += "- stated: ключи записей, содержание которых ты действительно сказал в reply, с формой: lie — сказал свою ложь; basic — сказал полуправду или краткую правду; full — сказал полную правду. Ничего из записей не сказал — пустой список.\n"
@@ -120,7 +117,7 @@ static func _turn_prompt(
 	parts.append("РАНЕЕ В РАЗГОВОРЕ: %s" % (dialogue.summary if dialogue.summary != "" else "—"))
 	parts.append("")
 	parts.append("ПОСЛЕДНИЕ РЕПЛИКИ:")
-	var recent := dialogue.recent(4)
+	var recent := dialogue.recent(6)
 	if recent.is_empty():
 		parts.append("—")
 	else:
@@ -164,10 +161,7 @@ static func _shown_block(case_data: CaseData, state: GameState, agent_id: String
 		var shown: Array = state.shown.get(evidence.id, [])
 		if not shown.has(agent_id):
 			continue
-		var body := evidence.full_text.strip_edges()
-		if body.length() > 480:
-			body = body.substr(0, 480).strip_edges()
-		lines.append("- %s: %s" % [evidence.title, body])
+		lines.append("- %s: %s" % [evidence.title, evidence.full_text])
 	if lines.is_empty():
 		return "нет"
 	return "\n".join(lines)
@@ -238,7 +232,7 @@ static func _turn_schema(packet_keys: PackedStringArray, evidence_keys: PackedSt
 				"type": "integer",
 				"description": "Тон последнего вопроса: от -3 (мягкий) до 5 (жёсткое обвинение)",
 			},
-			"reply": {"type": "string", "description": "Только произносимые слова, без ремарок, скобок и подписей эмоции"},
+			"reply": {"type": "string", "description": "Реплика персонажа, 1–4 предложения, по-русски"},
 			"remark": {"type": "string", "description": "Ремарка от третьего лица, до 12 слов"},
 			"emotion": {"type": "string", "enum": emotion_enum},
 			"stated": {

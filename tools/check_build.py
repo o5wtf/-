@@ -54,39 +54,53 @@ def pck_paths(data: bytes) -> list[str]:
     return paths
 
 
-def pck_bytes(path: Path) -> list[tuple[str, bytes]]:
+def forbidden(path: str) -> bool:
+    lowered = path.lower().replace("\\", "/")
+    if any(lowered.startswith(prefix) or f"/{prefix.removeprefix('res://')}" in lowered for prefix in FORBIDDEN_PREFIXES):
+        return True
+    return lowered.endswith("dev.cfg") or lowered.endswith(".keystore") or "export_credentials" in lowered
+
+
+def check_paths(label: str, paths: list[str], blobs: list[bytes]) -> None:
+    for blob in blobs:
+        if KEY_RE.search(blob) or FILLED_KEY_RE.search(blob):
+            fail(f"{label}: в пакете найден ключ API")
+    for packed in paths:
+        if forbidden(packed):
+            fail(f"в сборку попал запрещённый путь: {packed}")
+    cases = [packed for packed in paths if "/cases/" in packed.replace("\\", "/") and packed.endswith(".json")]
+    if not cases:
+        fail(f"{label}: в пакете нет json дела")
+    print(f"{label}: файлов {len(paths)}, дел {len(cases)}")
+
+
+def check_apk(path: Path) -> None:
     raw = path.read_bytes()
-    if path.suffix.lower() == ".apk":
-        found: list[tuple[str, bytes]] = []
-        with zipfile.ZipFile(path) as archive:
-            names = [name for name in archive.namelist() if name.endswith(".pck")]
-            if not names:
-                fail("в APK нет файла .pck")
-            for name in names:
-                found.append((name, archive.read(name)))
-        if b"android.permission.INTERNET" not in raw:
-            fail("в APK нет разрешения INTERNET")
-        if b"supports-screens" not in raw and "supports-screens".encode("utf-16le") not in raw:
-            fail("в манифесте APK нет supports-screens")
-        return found
-    return [(path.name, raw)]
+    if b"android.permission.INTERNET" not in raw:
+        fail("в APK нет разрешения INTERNET")
+    if b"supports-screens" not in raw and "supports-screens".encode("utf-16le") not in raw:
+        fail("в манифесте APK нет supports-screens")
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+        pcks = [name for name in names if name.endswith(".pck")]
+        if pcks:
+            for name in pcks:
+                blob = archive.read(name)
+                check_paths(name, pck_paths(blob), [blob])
+            return
+        assets = [name for name in names if name.startswith("assets/") and not name.endswith("/")]
+        if not assets:
+            fail("в APK нет ни .pck, ни assets проекта")
+        blobs = [archive.read(name) for name in assets if name.startswith("assets/cases/") or name.endswith(".cfg")]
+        check_paths(path.name, assets, blobs)
 
 
 def check_file(path: Path) -> None:
-    for label, blob in pck_bytes(path):
-        if KEY_RE.search(blob) or FILLED_KEY_RE.search(blob):
-            fail(f"{label}: в пакете найден ключ API")
-        paths = pck_paths(blob)
-        for packed in paths:
-            lowered = packed.lower()
-            if any(lowered.startswith(prefix) for prefix in FORBIDDEN_PREFIXES):
-                fail(f"в сборку попал запрещённый путь: {packed}")
-            if lowered.endswith("dev.cfg") or lowered.endswith(".keystore") or "export_credentials" in lowered:
-                fail(f"в сборку попал запрещённый путь: {packed}")
-        cases = [packed for packed in paths if "/cases/" in packed and packed.endswith(".json")]
-        if not cases:
-            fail(f"{label}: в PCK нет json дела")
-        print(f"{path.name}: файлов {len(paths)}, дел {len(cases)}")
+    if path.suffix.lower() == ".apk":
+        check_apk(path)
+        return
+    blob = path.read_bytes()
+    check_paths(path.name, pck_paths(blob), [blob])
 
 
 def main() -> None:

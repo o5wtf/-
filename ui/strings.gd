@@ -1,0 +1,164 @@
+class_name UiStrings
+extends RefCounted
+## Все подписи интерфейса. Тексты дела сюда не входят.
+
+const NEW_CASE := "Новое дело"
+const CONTINUE := "Продолжить"
+const SETTINGS := "Настройки"
+const BACK := "Назад"
+const SAVE := "Сохранить"
+const START := "Начать расследование"
+const ACCUSE := "Обвинить"
+const MENU := "Меню"
+const SEND := "➤"
+const EVIDENCE := "Улики"
+const NOTEBOOK := "Блокнот"
+const CONTRADICTION := "Противоречие!"
+const CHECK := "Проверить"
+const YES := "Да"
+const DISMISS := "×"
+const RETRY := "Повторить"
+const SHOW_KEY := "Показать"
+const HIDE_KEY := "Скрыть"
+const TEST_LINK := "Проверить связь"
+const KEY_LABEL := "Ключ Gemini API"
+const MODEL_LABEL := "Модель диалога"
+const SCALE_LABEL := "Масштаб текста"
+const MOCK_LABEL := "Офлайн-отладка (без модели)"
+const KEY_HINT := "Ключ нужен для живого допроса. Его берут в Google AI Studio → Get API key. Ключ не пишется в журнал."
+const KEY_PLACEHOLDER := "Вставьте ключ"
+const KEY_SAVED_PLACEHOLDER := "Ключ сохранён"
+const MODEL_PLACEHOLDER := "по умолчанию gemini-3.8-flash"
+const QUESTION_PLACEHOLDER := "Ваш вопрос…"
+const ALL_AGENTS := "все"
+const NO_EVIDENCE := "Открытых улик пока нет."
+const NO_NOTES := "Пока ничего не услышано."
+const CONTRADICTIONS := "Противоречия:"
+const NO_CONTRADICTION := "Здесь нет противоречия"
+const CONTRADICTION_FOUND := "Противоречие зафиксировано"
+const PICK_TWO := "Отметьте две записи"
+const SHOWN_TO := "Кому показана: "
+const NOBODY := "пока никому"
+const PRESENT := "Предъявить"
+const REQUIRES := "требует доказательств"
+const THINKING := "думает…"
+const DAMAGED := "Дело повреждено"
+const VICTORY := "Дело раскрыто"
+const TO_MENU := "В меню"
+const TO_CHAT := "К допросу"
+const WRONG_KILLER := "Неверный подозреваемый"
+const WRONG_MOTIVE := "Неверный мотив"
+const WRONG_METHOD := "Неверный способ"
+const PICK_ALL := "Выберите, кто, мотив и способ."
+const CHOOSE := "выбрать…"
+const NEWS := "есть новое"
+const LINK_OK := "Связь есть."
+const LINK_MOCK := "Офлайн-отладка включена, сеть не нужна."
+const LINK_NEED_KEY := "Сначала укажите ключ."
+const LINK_FAIL := "Проверка не удалась."
+const CHECKING := "Проверяем…"
+const SAVED := "Настройки сохранены."
+
+
+static func state_remark(band_name: String, emotion: String) -> String:
+	var band_text := "держится уверенно"
+	match band_name:
+		"tense":
+			band_text = "напряжён"
+		"nervous":
+			band_text = "заметно нервничает"
+		"breaking":
+			band_text = "на грани"
+	var emotion_text := emotion_word(emotion)
+	if emotion_text == "" or emotion == "neutral":
+		return "«%s»" % band_text
+	return "«%s», %s" % [band_text, emotion_text]
+
+
+static func emotion_word(emotion: String) -> String:
+	match emotion:
+		"calm":
+			return "спокоен"
+		"neutral":
+			return "нейтрален"
+		"nervous":
+			return "нервничает"
+		"scared":
+			return "напуган"
+		"sad":
+			return "подавлен"
+		"angry":
+			return "злится"
+		"controlled":
+			return "холоден"
+		"contemptuous":
+			return "презрителен"
+		_:
+			return ""
+
+
+static func error_text(kind: String) -> String:
+	match kind:
+		"offline", "timeout":
+			return "Нет связи с сервером"
+		"rate_limited":
+			return "Модель перегружена, подождите немного"
+		"auth":
+			return "Проверьте ключ в настройках"
+		"server":
+			return "Сервис временно недоступен"
+		_:
+			return "Ход не получился. Попробуйте ещё раз"
+
+
+static func connection_message(provider: String, result: Dictionary) -> String:
+	if provider == "mock":
+		return LINK_MOCK
+	if not result.get("ok", false):
+		var kind := str(result.get("error", ""))
+		if kind == "auth":
+			return "Проверьте ключ."
+		if kind == "":
+			return LINK_FAIL
+		return error_text(kind)
+	return LINK_OK
+
+
+static func present_hint(title: String) -> String:
+	return "Предъявить: «%s»?" % title
+
+
+static func presented_line(title: String) -> String:
+	return "[предъявлена улика: %s]" % title
+
+
+static func evidence_opened(title: String) -> String:
+	return "Открыта улика: %s" % title
+
+
+static func contradiction_line(description: String) -> String:
+	return "Противоречие зафиксировано: %s" % description
+
+
+static func lie_broken(agent_name: String) -> String:
+	return "%s больше не может это отрицать" % agent_name
+
+
+static func demands(agent_name: String) -> String:
+	return "%s требует доказательств" % agent_name
+
+
+static func thinking(agent_name: String) -> String:
+	return "%s думает…" % agent_name
+
+
+static func evidence_kind(type_name: String) -> String:
+	match type_name:
+		"document", "документ":
+			return "документ"
+		"item", "object", "предмет":
+			return "предмет"
+		"place", "location", "место":
+			return "место"
+		_:
+			return type_name

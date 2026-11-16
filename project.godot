@@ -28,6 +28,10 @@ window/stretch/aspect="expand"
 ; SCREEN_SENSOR: альбомная и книжная ориентация (А§6).
 window/handheld/orientation=6
 
+[gui]
+
+theme/custom="res://ui/theme/main_theme.tres"
+
 [rendering]
 
 ; Рендер в диздоке и А§1 не задан: стандарт нового проекта Godot 4.7.

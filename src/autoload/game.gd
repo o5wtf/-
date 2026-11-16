@@ -14,6 +14,8 @@ var _engine: RulesEngine = null
 var _dialogues: Dictionary = {}
 var _leak_max_stems: int = 1
 var _log_leaks: bool = true
+var last_mentioned_evidence: Array[String] = []
+var last_requested_evidence: String = ""
 
 
 func open_case(path: String) -> CaseLoader.Result:
@@ -84,6 +86,8 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 		llm_error.emit("no_case", "Дело не открыто.")
 		return
 	busy_changed.emit(true)
+	last_mentioned_evidence = []
+	last_requested_evidence = ""
 	_sync_dialogues()
 	var snapshot := state.to_dict()
 	var turn_events: Array = []
@@ -130,6 +134,9 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 		tone = int(report["tone"])
 		emotion = str(report["emotion"])
 		statements = report["statements"]
+		for item in report["mentioned_evidence"]:
+			last_mentioned_evidence.append(str(item))
+		last_requested_evidence = str(report.get("requested_evidence", ""))
 	else:
 		reply = ResponseValidator.fallback_reply(int(state.pressure.get(agent_id, 0)))
 		remark = "молчит"

@@ -81,11 +81,16 @@ func _generate_body(request: Dictionary) -> Dictionary:
 		while not next_model:
 			await _pace()
 			var call_started := Time.get_ticks_msec()
+			var thinking_sent := "off" if disable_thinking else thinking_level
 			var outcome: Dictionary = await _post(model, request, schema_field, not disable_thinking, raise_tokens)
+			var response_ms := Time.get_ticks_msec() - call_started
+			var total_ms := Time.get_ticks_msec() - started
 			var transport_error := str(outcome.get("error", ""))
 			if transport_error == "offline":
+				_emit_request(model, thinking_sent, 0, response_ms, total_ms, "", "offline")
 				return _with_meta(_failure("offline", "Нет сети. Проверьте подключение и повторите."), model, call_started)
 			if transport_error == "timeout":
+				_emit_request(model, thinking_sent, 0, response_ms, total_ms, "", "timeout")
 				last = _failure("timeout", "Модель «%s» не ответила за %d с." % [model, int(_timeout_for(request))])
 				next_model = true
 				break
@@ -96,45 +101,59 @@ func _generate_body(request: Dictionary) -> Dictionary:
 			if status == 200:
 				var parsed := _parse_success(body)
 				if parsed.get("ok", false):
+					_emit_request(model, thinking_sent, status, response_ms, total_ms, body, "none")
 					session_model = model
 					return _with_meta(parsed, model, call_started)
 				if str(parsed.get("error", "")) == "truncated" and not disable_thinking:
+					_emit_request(model, thinking_sent, status, response_ms, total_ms, body, "truncated")
 					disable_thinking = true
 					raise_tokens = true
 					continue
 				if str(parsed.get("error", "")) == "blocked" or str(parsed.get("error", "")) == "bad_response":
+					_emit_request(model, thinking_sent, status, response_ms, total_ms, body, str(parsed.get("error", "")))
 					return _with_meta(parsed, model, call_started)
+				_emit_request(model, thinking_sent, status, response_ms, total_ms, body, str(parsed.get("error", "bad_response")))
 				last = parsed
 				next_model = true
 				break
 			if status == 400 and schema_field == "responseJsonSchema" and _is_schema_rejection(body):
+				_emit_request(model, thinking_sent, status, response_ms, total_ms, body, "schema")
 				schema_field = "responseSchema"
 				continue
 			if _is_auth(status, google, reason):
+				_emit_request(model, thinking_sent, status, response_ms, total_ms, body, "auth")
 				return _with_meta(_failure("auth", _with_reason("Ключ API отклонён.", reason)), model, call_started)
 			if status == 404 or google == "NOT_FOUND":
+				_emit_request(model, thinking_sent, status, response_ms, total_ms, body, "unavailable")
 				last = _failure("unavailable", _with_reason("Модель «%s» недоступна." % model, reason))
 				next_model = true
 				break
 			if status == 429:
+				_emit_request(model, thinking_sent, status, response_ms, total_ms, body, "rate_limited")
 				last = _failure("rate_limited", _with_reason("Слишком много запросов к «%s»." % model, reason))
 				next_model = true
 				break
 			if status == 503 or status == 502 or status == 504:
+				_emit_request(model, thinking_sent, status, response_ms, total_ms, body, "overloaded")
 				last = _failure("overloaded", _with_reason("Модель «%s» перегружена." % model, reason))
 				next_model = true
 				break
 			if status >= 500:
 				server_attempts += 1
 				if server_attempts < SERVER_ATTEMPTS:
+					_emit_request(model, thinking_sent, status, response_ms, total_ms, body, "server")
 					await _wait(SERVER_PAUSE_S)
 					continue
+				_emit_request(model, thinking_sent, status, response_ms, total_ms, body, "server")
 				return _with_meta(_failure("server", _with_reason("Сервис Gemini временно недоступен.", reason)), model, call_started)
 			if status == 400:
 				if not disable_thinking and reason.to_lower().contains("thinking"):
+					_emit_request(model, thinking_sent, status, response_ms, total_ms, body, "thinking")
 					disable_thinking = true
 					continue
+				_emit_request(model, thinking_sent, status, response_ms, total_ms, body, "rejected")
 				return _with_meta(_failure("rejected", _with_reason("Запрос отклонён.", reason)), model, call_started)
+			_emit_request(model, thinking_sent, status, response_ms, total_ms, body, "bad_response")
 			last = _failure("bad_response", _with_reason("Неожиданный ответ сервиса.", reason))
 			next_model = true
 			break
@@ -348,6 +367,22 @@ func _with_reason(lead: String, reason: String) -> String:
 	if reason == "":
 		return lead
 	return "%s %s" % [lead, reason]
+
+
+func _emit_request(model: String, thinking_sent: String, status: int, response_ms: int, total_ms: int, body: String, retry: String) -> void:
+	var usage := LlmTiming.usage_from_body(body)
+	print(LlmTiming.request_line({
+		"model": model,
+		"thinking": thinking_sent,
+		"http": status,
+		"response_ms": response_ms,
+		"total_ms": total_ms,
+		"prompt_tokens": usage["prompt_tokens"],
+		"thought_tokens": usage["thought_tokens"],
+		"output_tokens": usage["output_tokens"],
+		"finish": usage["finish"],
+		"retry": retry if retry != "" else "none",
+	}))
 
 
 func _with_meta(result: Dictionary, model: String, started_ms: int) -> Dictionary:

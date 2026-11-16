@@ -3,10 +3,10 @@ extends TestCase
 const SCENES := {
 	"res://src/main.tscn": ["NewCaseButton", "ContinueButton", "RestartButton", "SettingsButton"],
 	"res://ui/screens/main_menu.tscn": ["NewCaseButton", "ContinueButton", "RestartButton", "SettingsButton"],
-	"res://ui/screens/settings.tscn": ["KeyField", "ShowKeyButton", "TestConnectionButton", "ModelField", "ScaleSlider", "MockCheck", "SaveButton", "BackButton"],
+	"res://ui/screens/settings.tscn": ["KeyField", "ShowKeyButton", "TestConnectionButton", "ModelField", "ScaleSlider", "MockCheck", "TimingDebug", "SaveButton", "BackButton"],
 	"res://ui/screens/briefing.tscn": ["TitleLabel", "BriefingLabel", "StartButton"],
 	"res://ui/screens/suspects.tscn": ["List"],
-	"res://ui/screens/interrogation.tscn": ["SendButton", "PromptField", "EvidenceButton", "NotebookButton", "ContradictionButton", "HintYesButton", "RetryButton"],
+	"res://ui/screens/interrogation.tscn": ["SendButton", "PromptField", "EvidenceButton", "NotebookButton", "ContradictionButton", "HintYesButton", "RetryButton", "TurnTimingLabel"],
 	"res://ui/screens/notebook.tscn": ["FilterButton", "CheckButton"],
 	"res://ui/screens/evidence_board.tscn": ["Grid", "PresentButton"],
 	"res://ui/screens/accusation.tscn": ["KillerOption", "MotiveOption", "MethodOption", "AccuseButton", "BackButton", "TimelineLabel"],

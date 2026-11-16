@@ -9,6 +9,7 @@ var _key: LineEdit
 var _model: LineEdit
 var _scale: HSlider
 var _mock: CheckBox
+var _timing: CheckBox
 var _status: Label
 var _show: Button
 var _testing: bool = false
@@ -71,6 +72,11 @@ func _ready() -> void:
 	_mock.text = UiStrings.MOCK_LABEL
 	_mock.custom_minimum_size = Vector2(0, 48)
 	scroll_box.add_child(_mock)
+	_timing = CheckBox.new()
+	_timing.name = "TimingDebug"
+	_timing.text = UiStrings.TIMING_DEBUG
+	_timing.custom_minimum_size = Vector2(0, 48)
+	scroll_box.add_child(_timing)
 	_status = UiWidgets.label("", "StatusLabel")
 	scroll_box.add_child(_status)
 	var save := UiWidgets.button(UiStrings.SAVE, "SaveButton")
@@ -89,6 +95,7 @@ func _load_fields() -> void:
 	_model.text = store.dialogue_model
 	_scale.value = store.text_scale
 	_mock.button_pressed = store.provider == "mock"
+	_timing.button_pressed = store.timing_debug
 
 
 func _toggle_key() -> void:
@@ -108,7 +115,7 @@ func _save() -> void:
 	if key == "":
 		key = previous.api_key
 	var provider := "mock" if _mock.button_pressed else "gemini"
-	SettingsStore.save_values(provider, key, _model.text, _scale.value)
+	SettingsStore.save_values(provider, key, _model.text, _scale.value, _timing.button_pressed)
 	_key.text = ""
 	_key.secret = true
 	_show.text = UiStrings.SHOW_KEY

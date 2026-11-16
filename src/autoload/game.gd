@@ -17,6 +17,8 @@ var _leak_max_stems: int = 1
 var _log_leaks: bool = true
 var last_mentioned_evidence: Array[String] = []
 var last_requested_evidence: String = ""
+var last_turn_line: String = ""
+var last_turn_stats: Dictionary = {}
 
 
 func open_case(path: String) -> CaseLoader.Result:
@@ -114,6 +116,9 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 	busy_changed.emit(true)
 	last_mentioned_evidence = []
 	last_requested_evidence = ""
+	var turn_started := Time.get_ticks_msec()
+	var tally := LlmTiming.empty_tally()
+	var turn_model := ""
 	_sync_dialogues()
 	var snapshot := state.to_dict()
 	var turn_events: Array = []
@@ -122,18 +127,25 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 	turn_events.append_array(_engine.note_question(agent_id))
 	var dialogue: DialogueState = _dialogues[agent_id]
 	if dialogue.needs_summary():
+		LlmTiming.note_request(tally, "summary", "summary")
 		await _refresh_summary(agent_id, dialogue)
 	var packet: Array = _engine.get_packet(agent_id)
 	var request := PromptBuilder.build_turn(case_data, state, agent_id, packet, dialogue, player_text, event_note)
+	LlmTiming.note_request(tally, "reply", "reply")
 	var result := await _generate(request)
+	turn_model = str(result.get("model", turn_model))
 	if _is_network_error(result):
+		_publish_turn_timing(turn_started, turn_model, tally)
 		_restore(snapshot)
 		llm_error.emit(str(result.get("error", "")), str(result.get("message", "")))
 		busy_changed.emit(false)
 		return
 	if str(result.get("error", "")) == "blocked":
+		LlmTiming.note_request(tally, "regen", "blocked")
 		result = await _generate(_with_suffix(request, "Отвечай сдержаннее, без откровенных подробностей."))
+		turn_model = str(result.get("model", turn_model))
 		if _is_network_error(result):
+			_publish_turn_timing(turn_started, turn_model, tally)
 			_restore(snapshot)
 			llm_error.emit(str(result.get("error", "")), str(result.get("message", "")))
 			busy_changed.emit(false)
@@ -141,9 +153,12 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 	var agent: CaseData.Agent = case_data.agent_by_id[agent_id]
 	var report := _validate_result(result, packet, agent_id, dialogue, player_text)
 	if not report["ok"]:
+		LlmTiming.note_request(tally, "regen", "validation")
 		var retry := _with_suffix(request, ResponseValidator.repair_note(report["violations"]))
 		result = await _generate(retry)
+		turn_model = str(result.get("model", turn_model))
 		if _is_network_error(result):
+			_publish_turn_timing(turn_started, turn_model, tally)
 			_restore(snapshot)
 			llm_error.emit(str(result.get("error", "")), str(result.get("message", "")))
 			busy_changed.emit(false)
@@ -178,6 +193,9 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 	dialogue.append_message("agent", reply, state.turn, remark)
 	_sync_dialogues()
 	_autosave()
+	if turn_model == "":
+		turn_model = str(result.get("model", ""))
+	_publish_turn_timing(turn_started, turn_model, tally)
 	agent_replied.emit(agent_id, reply, remark)
 	events.emit(turn_events)
 	busy_changed.emit(false)
@@ -236,6 +254,21 @@ func _validate_result(result: Dictionary, packet: Array, agent_id: String, dialo
 		"log_leaks": _log_leaks,
 		"evidence_keys": PromptBuilder.evidence_keys(case_data, state),
 	})
+
+
+func _publish_turn_timing(started_ms: int, model: String, tally: Dictionary) -> void:
+	var elapsed := Time.get_ticks_msec() - started_ms
+	var shown := model if model != "" else "-"
+	last_turn_stats = {
+		"ask_to_text_ms": elapsed,
+		"model": shown,
+		"requests": int(tally.get("requests", 0)),
+		"summary": int(tally.get("summary", 0)),
+		"regen": int(tally.get("regen", 0)),
+		"reasons": LlmTiming.reasons_text(tally),
+	}
+	last_turn_line = LlmTiming.screen_line(elapsed, int(tally.get("requests", 0)), shown)
+	print(LlmTiming.turn_line(elapsed, shown, tally))
 
 
 func _generate(request: Dictionary) -> Dictionary:

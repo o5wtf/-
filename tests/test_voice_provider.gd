@@ -33,6 +33,8 @@ func test_profile_follows_gender_age_and_name() -> void:
 
 
 func test_style_prompt_is_only_the_spoken_line() -> void:
+	assert_eq(VoiceProfiles.DEFAULT_STYLE_MODE, VoiceProfiles.STYLE_PLAIN)
+	assert_eq(VoiceProfiles.style_prompt("Только это.", "angry", "отводит взгляд"), "Только это.")
 	var emotions := ["calm", "neutral", "nervous", "scared", "sad", "angry", "controlled", "contemptuous"]
 	for emotion in emotions:
 		for mode in [VoiceProfiles.STYLE_ENGLISH_PREFIX, VoiceProfiles.STYLE_ENGLISH_TAGS]:
@@ -57,6 +59,41 @@ func test_style_prompt_is_only_the_spoken_line() -> void:
 	assert_eq(VoiceProfiles.spoken_text("— тихо — Я был дома."), "Я был дома.")
 	assert_eq(VoiceProfiles.spoken_text("[холодно, сдержанно] Хватит."), "Хватит.")
 	assert_eq(VoiceProfiles.style_prompt("[холодно, сдержанно] Хватит.", "controlled", "молчит", VoiceProfiles.STYLE_PLAIN), "Хватит.")
+
+
+func test_live_messages_carry_transcript_and_audio() -> void:
+	var pcm := PackedByteArray([1, 0, 2, 0])
+	var audio := {
+		"serverContent": {
+			"modelTurn": {"parts": [{
+				"inlineData": {"mimeType": "audio/pcm;rate=24000", "data": Marshalls.raw_to_base64(pcm)},
+			}]},
+			"turnComplete": true,
+		},
+	}
+	var events := GeminiLive.parse_server(JSON.stringify(audio))
+	assert_eq(events.size(), 2)
+	assert_eq(events[0]["kind"], "audio")
+	assert_eq(events[0]["pcm"], pcm)
+	assert_eq(events[0]["mix_rate"], 24000)
+	assert_eq(events[1]["kind"], "turn_complete")
+	var heard := {
+		"serverContent": {
+			"interimInputTranscription": {"text": "во сколь"},
+			"inputTranscription": {"text": "Во сколько"},
+		},
+	}
+	var text_events := GeminiLive.parse_server(JSON.stringify(heard))
+	assert_eq(text_events[0]["kind"], "interim")
+	assert_eq(text_events[0]["text"], "во сколь")
+	assert_eq(text_events[1]["kind"], "transcript")
+	assert_eq(text_events[1]["text"], "Во сколько")
+	var setup := GeminiLive.setup_message("gemini-3.8-live", "Kore", false)
+	assert_eq(setup["setup"]["model"], "models/gemini-3.8-live")
+	assert_false(JSON.stringify(setup).contains("systemInstruction") == false)
+	var line := GeminiLive.line_message("Хватит.")
+	assert_eq(line["clientContent"]["turns"][0]["parts"][0]["text"], "Хватит.")
+	assert_false(str(line["clientContent"]["turns"][0]["parts"][0]["text"]).contains("["))
 
 
 func test_l16_and_wav_roundtrip() -> void:
@@ -346,6 +383,7 @@ func _until(provider: VoiceProvider, need: int) -> void:
 
 
 func _cloud() -> Dictionary:
+	GeminiLive.network_enabled = false
 	VoiceCache.directory = "user://voice_cache_test"
 	_wipe_cache()
 	var transport := FakeTransport.new()
@@ -368,6 +406,7 @@ func _cloud() -> Dictionary:
 
 
 func _free(fixture: Dictionary) -> void:
+	GeminiLive.network_enabled = true
 	(fixture["provider"] as Node).queue_free()
 	_wipe_cache()
 

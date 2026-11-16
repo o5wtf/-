@@ -49,9 +49,9 @@ const MOOD_WORDS: PackedStringArray = [
 const STYLE_PLAIN := "plain"
 const STYLE_ENGLISH_PREFIX := "english_prefix"
 const STYLE_ENGLISH_TAGS := "english_tags"
-## По умолчанию английская инструкция: её живая проверка на gemini-3.8-flash-tts
-## не зачитывала, в отличие от русских скобок. plain — запасной режим без подачи.
-const DEFAULT_STYLE_MODE := STYLE_ENGLISH_PREFIX
+## По умолчанию только реплика: текстовая подача на планшете зачитывалась вслух.
+## Английские режимы остаются для переключателя «Интонация».
+const DEFAULT_STYLE_MODE := STYLE_PLAIN
 
 
 static func spoken_text(reply: String) -> String:

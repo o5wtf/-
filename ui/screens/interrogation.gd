@@ -280,10 +280,10 @@ func _on_voice_error(kind: String, message: String) -> void:
 
 
 func _on_transcript(text: String, is_final: bool) -> void:
+	_prompt.placeholder_text = UiStrings.QUESTION_PLACEHOLDER if is_final else UiStrings.RECOGNIZING
+	_prompt.text = text
 	if not is_final:
 		return
-	_prompt.placeholder_text = UiStrings.QUESTION_PLACEHOLDER
-	_prompt.text = text
 	_voice_notice.visible = false
 	_refresh_hint_from_text()
 

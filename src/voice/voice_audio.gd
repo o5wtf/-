@@ -30,6 +30,14 @@ const UPLOAD_RATE := 16000
 const SILENCE_THRESHOLD := 400
 
 
+static func to_pcm16k(pcm: PackedByteArray, mix_rate: int, stereo: bool) -> PackedByteArray:
+	var single := mono(pcm, stereo)
+	var rate := mix_rate if mix_rate > 0 else UPLOAD_RATE
+	if rate == UPLOAD_RATE:
+		return single
+	return resample(single, rate, UPLOAD_RATE)
+
+
 static func prepare_for_upload(pcm: PackedByteArray, mix_rate: int, stereo: bool) -> PackedByteArray:
 	var single := mono(pcm, stereo)
 	single = trim_silence(single)

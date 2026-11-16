@@ -33,6 +33,9 @@ func show_menu() -> void:
 	_swap(screen)
 	screen.new_case_pressed.connect(_on_new_case)
 	screen.settings_pressed.connect(func() -> void: show_settings(false))
+	screen.continue_pressed.connect(_on_continue)
+	screen.restart_pressed.connect(_on_restart)
+	screen.refresh_for(BUILTIN_CASE)
 
 
 func show_settings(explain_key: bool) -> void:
@@ -59,7 +62,22 @@ func show_investigation() -> void:
 func show_accusation() -> void:
 	var screen := preload("res://ui/screens/accusation.tscn").instantiate()
 	screen.menu_pressed.connect(show_menu)
+	screen.back_pressed.connect(show_investigation)
 	_swap(screen)
+
+
+func _on_continue() -> void:
+	var result := Game.continue_case(BUILTIN_CASE)
+	if result.get("ok", false):
+		show_investigation()
+		return
+	if _screen != null and _screen.has_method("show_save_problem"):
+		_screen.show_save_problem(str(result.get("reason", "")))
+
+
+func _on_restart() -> void:
+	SaveState.discard(SaveState.case_id_from_path(BUILTIN_CASE))
+	_on_new_case()
 
 
 func show_damaged(errors: Array) -> void:

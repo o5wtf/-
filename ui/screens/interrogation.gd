@@ -96,8 +96,35 @@ func _ready() -> void:
 
 func open_agent(next_id: String) -> void:
 	agent_id = next_id
+	if not _feeds.has(next_id):
+		_feeds[next_id] = _saved_lines(next_id)
 	_render_header()
 	_render_feed()
+
+
+func _saved_lines(id: String) -> Array:
+	var lines: Array = []
+	if Game.state == null:
+		return lines
+	var saved: Variant = Game.state.dialogues.get(id, {})
+	if saved is not Dictionary:
+		return lines
+	var messages: Variant = (saved as Dictionary).get("messages", [])
+	if messages is not Array:
+		return lines
+	for message in messages:
+		if message is not Dictionary:
+			continue
+		var role := str((message as Dictionary).get("role", ""))
+		if role == "player":
+			lines.append({"kind": "player", "text": str((message as Dictionary).get("text", ""))})
+		elif role == "agent":
+			lines.append({
+				"kind": "agent",
+				"text": str((message as Dictionary).get("text", "")),
+				"remark": str((message as Dictionary).get("remark", "")),
+			})
+	return lines
 
 
 func set_back_visible(show_back: bool) -> void:

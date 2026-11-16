@@ -16,6 +16,20 @@ func _initialize() -> void:
 	await process_frame
 	await process_frame
 	await _shot(folder, "menu")
+	var game := root.get_node(^"Game")
+	var opened: Object = game.call("open_case", FIXTURE)
+	if bool(opened.get("ok")):
+		var played: Object = game.get("state")
+		SaveState.write_state(played)
+		var menu := main.find_child("MainMenu", true, false)
+		if menu != null:
+			menu.refresh_for(FIXTURE)
+			await process_frame
+			await _shot(folder, "menu-continue")
+			menu.show_save_problem("hash")
+			await process_frame
+			await _shot(folder, "menu-restart")
+		SaveState.discard(str(played.get("case_id")))
 	main.show_settings(true)
 	await process_frame
 	var key := main.find_child("KeyField", true, false) as LineEdit
@@ -23,7 +37,6 @@ func _initialize() -> void:
 		key.text = ""
 		key.secret = true
 	await _shot(folder, "settings")
-	var game := root.get_node(^"Game")
 	var loaded: Object = game.call("open_case", FIXTURE)
 	if not bool(loaded.get("ok")):
 		print("CAPTURE_FAIL open")

@@ -16,6 +16,9 @@ var _speak_started_ms: int = 0
 var _logged_audio: bool = false
 var _audio_engine: String = VoiceRoute.LIVE
 var _measure_audio: bool = false
+var _active_line_id: int = 0
+var _engine_lock: Dictionary = {}
+var _logged_lines: Dictionary = {}
 var _route := VoiceRoute.new()
 var _listen_pump: Variant = null
 var _queue: Array = []
@@ -38,10 +41,8 @@ func _ready() -> void:
 		live = GeminiLive.new()
 	if live.get_parent() == null:
 		add_child(live)
-	if not live.partial_text.is_connected(_on_partial):
-		live.partial_text.connect(_on_partial)
-	if not live.playback_reset.is_connected(_on_playback_reset):
-		live.playback_reset.connect(_on_playback_reset)
+	SpeechGate.connect_once(live.partial_text, Callable(self, "_on_partial"))
+	SpeechGate.connect_once(live.playback_reset, Callable(self, "_on_playback_reset"))
 	if speaker == null:
 		speaker = PcmSpeaker.new()
 	if speaker.get_parent() == null:
@@ -65,6 +66,14 @@ func is_listening() -> bool:
 
 
 func speak(text: String, profile: VoiceProfiles.Profile, emotion: String, remark: String = "") -> int:
+	return _enqueue(text, profile, emotion, remark, -1)
+
+
+func speak_with_line(text: String, profile: VoiceProfiles.Profile, emotion: String, remark: String, line_id: int) -> int:
+	return _enqueue(text, profile, emotion, remark, line_id)
+
+
+func _enqueue(text: String, profile: VoiceProfiles.Profile, emotion: String, remark: String, line_id: int) -> int:
 	var line := VoiceProfiles.spoken_text(text)
 	if line == "":
 		return -1
@@ -72,6 +81,7 @@ func speak(text: String, profile: VoiceProfiles.Profile, emotion: String, remark
 	_next_id += 1
 	_queue.append({
 		"id": utterance_id,
+		"line_id": line_id if line_id > 0 else utterance_id,
 		"text": line,
 		"profile": profile,
 		"emotion": emotion,
@@ -208,6 +218,7 @@ func _speak_one(job: Dictionary) -> String:
 	var emotion := str(job["emotion"])
 	var remark := str(job["remark"])
 	var line := str(job["text"])
+	_active_line_id = int(job.get("line_id", job["id"]))
 	var cache_key := VoiceCache.key_for(profile.voice_name, emotion, line, style_mode, remark)
 	var cached := VoiceCache.load(cache_key)
 	var pcm: PackedByteArray = PackedByteArray()
@@ -215,6 +226,7 @@ func _speak_one(job: Dictionary) -> String:
 	if cached.get("ok", false):
 		pcm = cached["pcm"]
 		mix_rate = int(cached["mix_rate"])
+		_audio_engine = "cache"
 	else:
 		var pitch_now := profile.pitch * VoiceProfiles.playback_rate(emotion, user_rate)
 		var volume_now := VoiceProfiles.playback_volume(emotion, user_volume)
@@ -238,8 +250,22 @@ func _speak_one(job: Dictionary) -> String:
 	return ""
 
 
+func _engine_for_line() -> String:
+	if _engine_lock.has(_active_line_id):
+		return str(_engine_lock[_active_line_id])
+	var chosen := _route.choose()
+	_engine_lock[_active_line_id] = chosen
+	return chosen
+
+
+func _halt_audio() -> void:
+	_live_streaming = false
+	if speaker != null:
+		speaker.stop()
+
+
 func _speak_routed(line: String, voice_name: String, pitch: float, volume_linear: float, emotion: String, remark: String) -> Dictionary:
-	var engine := _route.choose()
+	var engine := _engine_for_line()
 	if engine == VoiceRoute.READER:
 		_begin_audio(VoiceRoute.READER)
 		var fast: Dictionary = await speech.synthesize(line, voice_name, emotion, remark, -1.0, VoiceProfiles.STYLE_PLAIN, true)
@@ -248,6 +274,7 @@ func _speak_routed(line: String, voice_name: String, pitch: float, volume_linear
 		if str(fast.get("error", "")) == "auth":
 			voice_error.emit("auth", str(fast.get("message", "")))
 			return {"ready": false, "stop": "auth"}
+		_halt_audio()
 		engine = VoiceRoute.LIVE
 	if engine == VoiceRoute.LIVE:
 		_begin_audio(VoiceRoute.LIVE)
@@ -257,6 +284,7 @@ func _speak_routed(line: String, voice_name: String, pitch: float, volume_linear
 		if str(streamed.get("error", "")) == "auth":
 			voice_error.emit("auth", str(streamed.get("message", "")))
 			return {"ready": false, "stop": "auth"}
+		_halt_audio()
 	_begin_audio(VoiceRoute.READER)
 	var result: Dictionary = await speech.synthesize(line, voice_name, emotion, remark, -1.0, VoiceProfiles.STYLE_PLAIN, true)
 	if not result.get("ok", false):
@@ -282,8 +310,7 @@ func _speak_live(line: String, voice_name: String, pitch: float, volume_linear: 
 	_live_pitch = pitch
 	_live_volume = volume_linear
 	_live_streaming = false
-	if not live.audio_chunk.is_connected(_on_live_chunk):
-		live.audio_chunk.connect(_on_live_chunk)
+	SpeechGate.connect_once(live.audio_chunk, Callable(self, "_on_live_chunk"))
 	var result: Dictionary = await live.speak_line(speech.api_key, line, voice_name, emotion, remark)
 	if result.get("ok", false):
 		if _live_streaming:
@@ -325,6 +352,14 @@ func _note_audio() -> void:
 	if _measure_audio:
 		_route.record(_audio_engine, Time.get_ticks_msec() - _speak_started_ms)
 	TurnTiming.span_engine("text_to_audio", _speak_started_ms, _audio_engine)
+	_log_start()
+
+
+func _log_start() -> void:
+	if _logged_lines.has(_active_line_id):
+		return
+	_logged_lines[_active_line_id] = true
+	print("озвучка начата id=%d движок=%s" % [_active_line_id, _audio_engine])
 
 
 func _on_live_chunk(chunk: PackedByteArray, rate: int) -> void:

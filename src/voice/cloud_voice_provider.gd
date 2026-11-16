@@ -179,7 +179,7 @@ func _speak_one(job: Dictionary) -> String:
 	var emotion := str(job["emotion"])
 	var remark := str(job["remark"])
 	var line := str(job["text"])
-	var cache_key := VoiceCache.key_for(profile.voice_name, emotion, line, style_mode)
+	var cache_key := VoiceCache.key_for(profile.voice_name, emotion, line, style_mode, remark)
 	var cached := VoiceCache.load(cache_key)
 	var pcm: PackedByteArray = PackedByteArray()
 	var mix_rate := 24000
@@ -187,7 +187,7 @@ func _speak_one(job: Dictionary) -> String:
 		pcm = cached["pcm"]
 		mix_rate = int(cached["mix_rate"])
 	else:
-		var streamed := await _speak_live(line, profile.voice_name, profile.pitch * VoiceProfiles.playback_rate(emotion, user_rate), VoiceProfiles.playback_volume(emotion, user_volume))
+		var streamed := await _speak_live(line, profile.voice_name, profile.pitch * VoiceProfiles.playback_rate(emotion, user_rate), VoiceProfiles.playback_volume(emotion, user_volume), emotion, remark)
 		if streamed.get("ok", false):
 			pcm = streamed["pcm"]
 			mix_rate = int(streamed.get("mix_rate", 24000))
@@ -212,7 +212,7 @@ func _speak_one(job: Dictionary) -> String:
 	return ""
 
 
-func _speak_live(line: String, voice_name: String, pitch: float, volume_linear: float) -> Dictionary:
+func _speak_live(line: String, voice_name: String, pitch: float, volume_linear: float, emotion: String, remark: String) -> Dictionary:
 	if not GeminiLive.network_enabled or speech.api_key.strip_edges() == "":
 		return {"ok": false, "error": "unavailable", "message": "", "pcm": PackedByteArray(), "mix_rate": 0}
 	_live_pitch = pitch
@@ -220,7 +220,7 @@ func _speak_live(line: String, voice_name: String, pitch: float, volume_linear: 
 	_live_streaming = false
 	if not live.audio_chunk.is_connected(_on_live_chunk):
 		live.audio_chunk.connect(_on_live_chunk)
-	var result: Dictionary = await live.speak_line(speech.api_key, line, voice_name)
+	var result: Dictionary = await live.speak_line(speech.api_key, line, voice_name, emotion, remark)
 	if result.get("ok", false):
 		await speaker.end_stream()
 		return result

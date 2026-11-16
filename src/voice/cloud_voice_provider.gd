@@ -4,6 +4,7 @@ extends VoiceProvider
 
 var speech: GeminiSpeech
 var live: GeminiLive
+var ear: GeminiLive
 var mic: Object = null
 var speaker: PcmSpeaker
 var _live_input: bool = false
@@ -11,6 +12,11 @@ var _live_streaming: bool = false
 var _live_pitch: float = 1.0
 var _live_volume: float = 1.0
 var _listen_language: String = "ru-RU"
+var _pause_ms: int = Handsfree.DEFAULT_PAUSE_MS
+var _hold_until_ms: int = 0
+var _ring: PackedByteArray = PackedByteArray()
+var _last_phrase: String = ""
+var _last_phrase_ms: int = 0
 var _mic_released_ms: int = 0
 var _speak_started_ms: int = 0
 var _logged_audio: bool = false
@@ -19,6 +25,7 @@ var _measure_audio: bool = false
 var _active_line_id: int = 0
 var _engine_lock: Dictionary = {}
 var _logged_lines: Dictionary = {}
+var speech_end_ms: int = 0
 var _route := VoiceRoute.new()
 var _listen_pump: Variant = null
 var _queue: Array = []
@@ -43,6 +50,12 @@ func _ready() -> void:
 		add_child(live)
 	SpeechGate.connect_once(live.partial_text, Callable(self, "_on_partial"))
 	SpeechGate.connect_once(live.playback_reset, Callable(self, "_on_playback_reset"))
+	if ear == null:
+		ear = GeminiLive.new()
+	if ear.get_parent() == null:
+		add_child(ear)
+	SpeechGate.connect_once(ear.partial_text, Callable(self, "_on_ear_partial"))
+	SpeechGate.connect_once(ear.phrase_ready, Callable(self, "_on_phrase"))
 	if speaker == null:
 		speaker = PcmSpeaker.new()
 	if speaker.get_parent() == null:
@@ -88,6 +101,7 @@ func _enqueue(text: String, profile: VoiceProfiles.Profile, emotion: String, rem
 		"remark": remark,
 	})
 	if not _draining:
+		hold_input(true)
 		_draining = true
 		Callable(self, "_drain").call_deferred()
 	_speak_started_ms = Time.get_ticks_msec()
@@ -108,6 +122,23 @@ func prepare_connection() -> void:
 	live.prepare_socket(speech.api_key)
 
 
+func set_pause_ms(ms: int) -> void:
+	_pause_ms = Handsfree.clamp_pause(ms)
+
+
+func hold_input(active: bool) -> void:
+	if active:
+		_hold_until_ms = -1
+		return
+	_hold_until_ms = Time.get_ticks_msec() + Handsfree.ECHO_TAIL_MS
+
+
+func input_held() -> bool:
+	if _hold_until_ms < 0:
+		return true
+	return Time.get_ticks_msec() < _hold_until_ms
+
+
 func start_listening(language: String = "ru-RU") -> void:
 	if _listening:
 		return
@@ -120,6 +151,7 @@ func start_listening(language: String = "ru-RU") -> void:
 		return
 	_listening = true
 	_listen_language = language if language != "" else "ru-RU"
+	_ring = PackedByteArray()
 	Callable(self, "_open_live_input").call_deferred()
 
 
@@ -129,7 +161,11 @@ func stop_listening() -> void:
 	_listening = false
 	_mic_released_ms = Time.get_ticks_msec()
 	if _live_input:
-		Callable(self, "_finish_live_input").call_deferred()
+		_live_input = false
+		if ear != null:
+			ear._close()
+		if mic.has_method("stop"):
+			mic.call("stop")
 		return
 	_finish_recorded_input()
 
@@ -139,24 +175,52 @@ func _open_live_input() -> void:
 		return
 	if not GeminiLive.network_enabled or speech.api_key.strip_edges() == "":
 		return
-	var opened: Dictionary = await live.listen_open(speech.api_key, _listen_language, _vocabulary())
+	var opened: Dictionary = await ear.listen_open(speech.api_key, _listen_language, _vocabulary(), _pause_ms)
 	if not _listening:
-		live._close()
+		ear._close()
 		return
 	_live_input = opened.get("ok", false)
+	if str(opened.get("error", "")) == "auth":
+		voice_error.emit("auth", str(opened.get("message", "")))
+		_listening = false
+		if mic.has_method("stop"):
+			mic.call("stop")
+		return
 	if _live_input:
 		await _pump_live_input()
 
 
 func _pump_live_input() -> void:
+	var resume_ring := false
 	while _listening and _live_input:
+		if ear == null or not ear.accepts_input():
+			if not Handsfree.should_reconnect(true, true, false):
+				break
+			var again: Dictionary = await ear.listen_open(speech.api_key, _listen_language, _vocabulary(), _pause_ms)
+			if not _listening:
+				break
+			if not again.get("ok", false):
+				if str(again.get("error", "")) == "auth":
+					voice_error.emit("auth", str(again.get("message", "")))
+					_listening = false
+					break
+				await get_tree().create_timer(0.4).timeout
+				continue
+			resume_ring = true
 		if mic.has_method("pull_new"):
 			var fresh: Dictionary = mic.call("pull_new")
 			var chunk: PackedByteArray = fresh.get("pcm", PackedByteArray())
 			var ready := VoiceAudio.to_pcm16k(chunk, int(fresh.get("mix_rate", 16000)), bool(fresh.get("stereo", false)))
-			if ready.size() >= 2:
-				live.listen_audio(ready)
-		await get_tree().create_timer(0.08).timeout
+			if input_held():
+				_ring = PackedByteArray()
+			elif ready.size() >= 2:
+				_ring = Handsfree.push_ring(_ring, ready, 16000)
+				var payload: PackedByteArray = _ring if resume_ring else ready
+				if resume_ring:
+					resume_ring = false
+				for piece in Handsfree.slice_pcm(payload, 16000):
+					ear.listen_audio(piece)
+		await get_tree().create_timer(0.03).timeout
 
 
 func _finish_live_input() -> void:
@@ -208,6 +272,7 @@ func _drain() -> void:
 			_queue.clear()
 			break
 	_draining = false
+	hold_input(false)
 	if not _queue.is_empty():
 		_draining = true
 		Callable(self, "_drain").call_deferred()
@@ -327,6 +392,25 @@ func _speak_live(line: String, voice_name: String, pitch: float, volume_linear: 
 	return result
 
 
+func _on_ear_partial(text: String) -> void:
+	if input_held() or GeminiLive.is_clock_label(text):
+		return
+	transcript_ready.emit(text, false)
+
+
+func _on_phrase(text: String) -> void:
+	if input_held():
+		return
+	var elapsed := Time.get_ticks_msec() - _last_phrase_ms if _last_phrase_ms > 0 else 10000
+	var decided := Handsfree.commit(text, _last_phrase, elapsed)
+	_last_phrase = str(decided.get("previous", _last_phrase))
+	if not bool(decided.get("send", false)):
+		return
+	_last_phrase_ms = Time.get_ticks_msec()
+	speech_end_ms = _last_phrase_ms
+	transcript_ready.emit(text, true)
+
+
 func _on_partial(text: String) -> void:
 	if live == null or not live.accepts_input() or GeminiLive.is_clock_label(text):
 		return
@@ -360,6 +444,8 @@ func _log_start() -> void:
 		return
 	_logged_lines[_active_line_id] = true
 	print("озвучка начата id=%d движок=%s" % [_active_line_id, _audio_engine])
+	if speech_end_ms > 0:
+		TurnTiming.span("speech_end_to_audio", speech_end_ms)
 
 
 func _on_live_chunk(chunk: PackedByteArray, rate: int) -> void:

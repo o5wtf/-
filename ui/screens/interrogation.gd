@@ -95,8 +95,9 @@ func _ready() -> void:
 	contradiction.pressed.connect(func() -> void: contradiction_requested.emit())
 	tools.add_child(contradiction)
 	_mic = UiWidgets.button(UiStrings.MIC, "MicButton")
-	_mic.button_down.connect(_mic_down)
-	_mic.button_up.connect(_mic_up)
+	_mic.toggle_mode = true
+	_mic.custom_minimum_size = Vector2(180, 48)
+	_mic.toggled.connect(_on_mic_toggled)
 	tools.add_child(_mic)
 	if not Game.agent_replied.is_connected(_on_replied):
 		Game.agent_replied.connect(_on_replied)
@@ -112,6 +113,8 @@ func open_agent(next_id: String) -> void:
 	agent_id = next_id
 	if not _feeds.has(next_id):
 		_feeds[next_id] = _saved_lines(next_id)
+	if _holding_mic:
+		Game.begin_hearing(next_id)
 	_render_header()
 	_render_feed()
 
@@ -243,30 +246,19 @@ func _unhandled_input(event: InputEvent) -> void:
 	var key := event as InputEventKey
 	if key.echo or key.keycode != KEY_SPACE or _prompt.has_focus():
 		return
-	if key.pressed:
-		_mic_down()
-	else:
-		_mic_up()
+	if key.pressed and not key.echo:
+		_mic.button_pressed = not _mic.button_pressed
 	get_viewport().set_input_as_handled()
 
 
-func _mic_down() -> void:
-	if _busy or _holding_mic:
+func _on_mic_toggled(on: bool) -> void:
+	_holding_mic = on
+	_mic.text = UiStrings.MIC_LIVE if on else UiStrings.MIC
+	if on:
+		Game.begin_hearing(agent_id)
+		Voice.set_pause_ms(SettingsStore.load_current().pause_ms)
+		Voice.start_listening()
 		return
-	_holding_mic = true
-	_mic.text = UiStrings.MIC_LIVE
-	Game.begin_hearing(agent_id)
-	Voice.start_listening()
-
-
-func _mic_up() -> void:
-	if not _holding_mic:
-		return
-	_holding_mic = false
-	_mic.text = UiStrings.MIC
-	var recognizing := Voice.listening()
-	if recognizing:
-		_prompt.placeholder_text = UiStrings.RECOGNIZING
 	Voice.stop_listening()
 
 
@@ -282,13 +274,25 @@ func _on_voice_error(kind: String, message: String) -> void:
 
 
 func _on_transcript(text: String, is_final: bool) -> void:
-	_prompt.placeholder_text = UiStrings.QUESTION_PLACEHOLDER if is_final else UiStrings.RECOGNIZING
-	_prompt.text = text
-	if not is_final:
-		Game.note_hearing(agent_id, text)
+	if Handsfree.route(is_final) == "partial":
+		if not Voice.input_held():
+			Game.note_hearing(agent_id, text)
+		return
+	if not Handsfree.should_forward(text, Voice.input_held()):
 		return
 	_voice_notice.visible = false
-	_refresh_hint_from_text()
+	_submit_heard(text)
+
+
+func _submit_heard(text: String) -> void:
+	if _busy or agent_id == "" or not _holding_mic:
+		return
+	var ended := Voice.speech_end_ms()
+	if ended > 0:
+		TurnTiming.span("speech_end_to_send", ended)
+	_last = {"kind": "ask", "text": text}
+	_push({"kind": "player", "text": text})
+	await Game.ask(agent_id, text)
 
 
 func _on_preview(reply_agent: String, text: String) -> void:

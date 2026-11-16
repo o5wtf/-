@@ -11,6 +11,9 @@ var _live_streaming: bool = false
 var _live_pitch: float = 1.0
 var _live_volume: float = 1.0
 var _listen_language: String = "ru-RU"
+var _mic_released_ms: int = 0
+var _speak_started_ms: int = 0
+var _logged_audio: bool = false
 var _listen_pump: Variant = null
 var _queue: Array = []
 var _draining: bool = false
@@ -74,6 +77,8 @@ func speak(text: String, profile: VoiceProfiles.Profile, emotion: String, remark
 	if not _draining:
 		_draining = true
 		Callable(self, "_drain").call_deferred()
+	_speak_started_ms = Time.get_ticks_msec()
+	_logged_audio = false
 	return utterance_id
 
 
@@ -108,6 +113,7 @@ func stop_listening() -> void:
 	if not _listening:
 		return
 	_listening = false
+	_mic_released_ms = Time.get_ticks_msec()
 	if _live_input:
 		Callable(self, "_finish_live_input").call_deferred()
 		return
@@ -147,6 +153,8 @@ func _finish_live_input() -> void:
 			live.listen_audio(ready)
 	var heard: String = await live.listen_finish()
 	_live_input = false
+	if _mic_released_ms > 0:
+		TurnTiming.span("mic_to_text", _mic_released_ms)
 	if heard.strip_edges() != "":
 		if mic.has_method("stop"):
 			mic.call("stop")
@@ -227,6 +235,7 @@ func _speak_one(job: Dictionary) -> String:
 	if pcm.is_empty():
 		voice_error.emit("unsupported", "Не удалось озвучить реплику.")
 		return "unsupported"
+	_note_audio()
 	var pitch := profile.pitch * VoiceProfiles.playback_rate(emotion, user_rate)
 	var volume := VoiceProfiles.playback_volume(emotion, user_volume)
 	await speaker.play(pcm, mix_rate, pitch, volume)
@@ -274,7 +283,15 @@ func _vocabulary() -> PackedStringArray:
 	return VoiceProfiles.vocabulary_from_case(Game.case_data)
 
 
+func _note_audio() -> void:
+	if _logged_audio or _speak_started_ms <= 0:
+		return
+	_logged_audio = true
+	TurnTiming.span("text_to_audio", _speak_started_ms)
+
+
 func _on_live_chunk(chunk: PackedByteArray, rate: int) -> void:
+	_note_audio()
 	if not _live_streaming:
 		_live_streaming = true
 		speaker.begin_stream(rate, _live_pitch, _live_volume)

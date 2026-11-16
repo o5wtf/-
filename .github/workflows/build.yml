@@ -76,41 +76,41 @@ jobs:
           echo "JAVA_HOME=$JAVA_HOME"
           echo "ANDROID_HOME=$ANDROID_HOME"
 
-      - name: Отладочный keystore
+      - name: Подпись Android и номер сборки
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -euo pipefail
-          keystore="$RUNNER_TEMP/debug.keystore"
-          keytool -genkeypair -keystore "$keystore" \
-            -storepass android -keypass android \
-            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Android Debug,O=Godot,C=US"
-          mkdir -p .godot "$HOME/.config/godot"
-          cat > .godot/export_credentials.cfg << EOF
-          [preset.0]
-
-          keystore/debug="${keystore}"
-          keystore/debug_user="androiddebugkey"
-          keystore/debug_password="android"
-          keystore/release="${keystore}"
-          keystore/release_user="androiddebugkey"
-          keystore/release_password="android"
-          EOF
-          cat > "$HOME/.config/godot/editor_settings-4.7.tres" << EOF
-          [gd_resource type="EditorSettings" format=3]
-
-          [resource]
-          "export/android/java_sdk_path" = "${JAVA_HOME}"
-          "export/android/android_sdk_path" = "${ANDROID_HOME}"
-          "export/android/debug_keystore" = "${keystore}"
-          "export/android/debug_keystore_user" = "androiddebugkey"
-          "export/android/debug_keystore_pass" = "android"
-          EOF
+          keystore="$RUNNER_TEMP/detective.keystore"
+          alias="androiddebugkey"
+          storepass="android"
+          keypass="android"
+          if [ -n "${ANDROID_KEYSTORE_BASE64}" ] && [ -n "${ANDROID_KEYSTORE_PASSWORD}" ] && [ -n "${ANDROID_KEY_PASSWORD}" ] && [ -n "${ANDROID_KEY_ALIAS}" ]; then
+            printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "$keystore"
+            alias="${ANDROID_KEY_ALIAS}"
+            storepass="${ANDROID_KEYSTORE_PASSWORD}"
+            keypass="${ANDROID_KEY_PASSWORD}"
+          else
+            echo "::warning::Секреты подписи не заданы. Этот APK подписан одноразовым ключом и не встанет поверх установленной игры."
+            keytool -genkeypair -keystore "$keystore" \
+              -storepass "$storepass" -keypass "$keypass" \
+              -alias "$alias" -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Godot,C=US"
+          fi
+          keytool -list -keystore "$keystore" -storepass "$storepass" -alias "$alias" >/dev/null
+          python3 tools/stamp_android_version.py export_presets.cfg "${GITHUB_RUN_NUMBER}"
+          grep -q "version/code=${GITHUB_RUN_NUMBER}" export_presets.cfg
+          grep -q 'package/unique_name="com.o5wtf.detective"' export_presets.cfg
+          KS_PATH="$keystore" KS_ALIAS="$alias" KS_STORE="$storepass" KS_KEY="$keypass" \
+            JAVA_HOME="${JAVA_HOME:-}" ANDROID_HOME="${ANDROID_HOME:-}" \
+            python3 tools/write_android_signing.py
           echo "GODOT_ANDROID_KEYSTORE_DEBUG_PATH=${keystore}" >> "$GITHUB_ENV"
-          echo "GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey" >> "$GITHUB_ENV"
-          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android" >> "$GITHUB_ENV"
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_USER=${alias}" >> "$GITHUB_ENV"
           echo "GODOT_ANDROID_KEYSTORE_RELEASE_PATH=${keystore}" >> "$GITHUB_ENV"
-          echo "GODOT_ANDROID_KEYSTORE_RELEASE_USER=androiddebugkey" >> "$GITHUB_ENV"
-          echo "GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD=android" >> "$GITHUB_ENV"
+          echo "GODOT_ANDROID_KEYSTORE_RELEASE_USER=${alias}" >> "$GITHUB_ENV"
 
       - name: Экспорт
         run: |

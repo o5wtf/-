@@ -12,8 +12,10 @@ const SPEAK_MODELS: PackedStringArray = [
 const LISTEN_MODELS: PackedStringArray = [
 	"gemini-3.5-transcribe-live",
 ]
-const CONNECT_MS := 4000
-const FIRST_AUDIO_MS := 12000
+const CONNECT_MS := 2500
+const FIRST_AUDIO_MS := 8000
+const LISTEN_WAIT_MS := 2200
+const LISTEN_GRACE_MS := 700
 ## Автоопределение конца фразы. Короче 500 мс сервер обрывает речь.
 const ACTIVITY := {
 	"startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
@@ -40,6 +42,8 @@ var _go_away: bool = false
 var _setup_sent: bool = false
 var _segments: PackedStringArray = PackedStringArray()
 var _turn_done: bool = false
+var _caption: String = ""
+var _caption_ms: int = 0
 var _listen_language: String = "ru-RU"
 var _listen_vocab: PackedStringArray = PackedStringArray()
 var _mode: String = ""
@@ -236,6 +240,12 @@ static func min_speech_bytes(mix_rate: int) -> int:
 	return maxi(2, int(float(rate) * float(MIN_SPEECH_MS) / 1000.0) * 2)
 
 
+static func should_finish_listen(turn_done: bool, has_text: bool, idle_ms: int) -> bool:
+	if turn_done:
+		return true
+	return has_text and idle_ms >= LISTEN_GRACE_MS
+
+
 static func accept_spoken(byte_count: int, mix_rate: int, _turn_done: bool, heard: String, expected: String) -> bool:
 	if byte_count < min_speech_bytes(mix_rate):
 		return false
@@ -299,6 +309,8 @@ func listen_open(api_key: String, language: String = "ru-RU", vocabulary: Packed
 	_listen_vocab = vocabulary
 	_segments = PackedStringArray()
 	_turn_done = false
+	_caption = ""
+	_caption_ms = 0
 	var last := _fail("unavailable", "Live-сессия не открылась.")
 	for model in LISTEN_MODELS:
 		var opened := await _open(api_key, model, "", true)
@@ -327,11 +339,12 @@ func listen_finish() -> String:
 		return _usable_join()
 	_send(audio_stream_end())
 	var started := Time.get_ticks_msec()
-	while not _turn_done and Time.get_ticks_msec() - started < 4000:
+	while Time.get_ticks_msec() - started < LISTEN_WAIT_MS:
 		if _socket_closed():
 			break
 		_absorb(_drain_packets())
-		if _turn_done:
+		var idle := Time.get_ticks_msec() - _caption_ms if _caption_ms > 0 else 0
+		if should_finish_listen(_turn_done, _usable_join() != "", idle):
 			break
 		await get_tree().process_frame
 	var text := _usable_join()
@@ -355,6 +368,9 @@ func _absorb(events: Array) -> void:
 	var caption := str(collected["caption"])
 	if caption == "" or _mode != "listen" or is_clock_label(caption):
 		return
+	if caption != _caption:
+		_caption = caption
+		_caption_ms = Time.get_ticks_msec()
 	partial_text.emit(caption)
 
 
@@ -370,6 +386,7 @@ func _speak_model(api_key: String, model: String, line: String, voice_name: Stri
 	var started := Time.get_ticks_msec()
 	var limit := FIRST_AUDIO_MS
 	var done := false
+	var played := false
 	while Time.get_ticks_msec() - started < limit:
 		for event in _drain_packets():
 			var kind := str(event.get("kind", ""))
@@ -377,12 +394,16 @@ func _speak_model(api_key: String, model: String, line: String, voice_name: Stri
 				var chunk: PackedByteArray = event.get("pcm", PackedByteArray())
 				pcm.append_array(chunk)
 				rate = int(event.get("mix_rate", 24000))
-				limit = maxi(limit, 20000)
+				limit = maxi(limit, 12000)
+				audio_chunk.emit(chunk, rate)
+				played = true
 			elif kind == "output_transcript":
 				heard = str(event.get("text", ""))
 			elif kind == "turn_complete":
 				done = true
 			elif kind == "error":
+				if played:
+					playback_reset.emit()
 				_drop_session()
 				return _fail(str(event.get("error", "server")), str(event.get("message", "")))
 		if done:
@@ -392,14 +413,10 @@ func _speak_model(api_key: String, model: String, line: String, voice_name: Stri
 			return _fail_closed(model)
 		await get_tree().process_frame
 	if not accept_spoken(pcm.size(), rate, done, heard, spoken_line):
+		if played:
+			playback_reset.emit()
 		_drop_session()
 		return _fail("bad_response", "Модель «%s» не повторила реплику." % model)
-	var offset := 0
-	var piece := 4800
-	while offset < pcm.size():
-		var count := mini(piece, pcm.size() - offset)
-		audio_chunk.emit(pcm.slice(offset, offset + count), rate)
-		offset += count
 	if _go_away:
 		var kept_handle := _resume_handle
 		var kept_key := _session_key

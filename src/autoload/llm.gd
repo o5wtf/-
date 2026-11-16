@@ -1,3 +1,10 @@
 extends Node
-## Клиент языковой модели по настройкам.
-## На этом этапе заглушка. Сеть и выбор провайдера — следующие этапы.
+## Автозагрузка LLM: mock или Gemini по настройкам. Ключ не печатается.
+
+var client: LLMClient
+
+
+func _ready() -> void:
+	var config := LLMConfig.load_settings()
+	client = LLMConfig.create_client(config)
+	add_child(client)

@@ -20,9 +20,6 @@ func test_config_key_order() -> void:
 	assert_eq(release.key_source, "none")
 	assert_eq(release.api_key, "")
 	assert_eq(release.dialogue_model, LLMConfig.DEFAULT_DIALOGUE_MODEL)
-	assert_eq(LLMConfig.DEFAULT_DIALOGUE_MODEL, "gemini-3.5-flash-lite")
-	assert_eq(release.thinking_level, "MINIMAL")
-	assert_eq(release.min_interval_s, 0.0)
 	var gemini := LLMConfig.create_client(user_key)
 	assert_true(gemini is GeminiClient)
 	gemini.free()
@@ -331,35 +328,6 @@ func test_probe_uses_a_short_timeout_without_thinking() -> void:
 	assert_eq(transport.seen[0]["timeout"], 12.0)
 	var body: Dictionary = JSON.parse_string(transport.seen[0]["body"])
 	assert_false(body["generationConfig"].has("thinkingConfig"))
-	client.free()
-
-
-func test_stream_extracts_reply_without_waiting_for_the_tail() -> void:
-	var first_event := {"candidates": [{"content": {"parts": [{"text": "{\"player_tone\":0,\"reply\":\"Хватит. "}]}}]}
-	var partial := GeminiClient.push_sse({"pending": "", "text": ""}, "data: %s\n" % JSON.stringify(first_event))
-	assert_eq(GeminiClient.reply_so_far(str(partial["text"])), "Хватит. ")
-	var second_event := {"candidates": [{"content": {"parts": [{"text": "Ещё.\"}"}]}}]}
-	var more := GeminiClient.push_sse(partial, "data: %s\n\n" % JSON.stringify(second_event))
-	assert_eq(GeminiClient.reply_so_far(str(more["text"])), "Хватит. Ещё.")
-	var taken: Dictionary = GeminiClient.take_sentences("Хватит. Ещё")
-	assert_eq((taken["ready"] as PackedStringArray)[0], "Хватит.")
-	assert_eq(taken["rest"], " Ещё")
-	var client := await _client()
-	var transport: FakeTransport = client._transport
-	var model_json := JSON.stringify({"reply": "Да."})
-	var envelope := {"candidates": [{"content": {"parts": [{"text": model_json}]}}]}
-	var sse := "data: %s\n\n" % JSON.stringify(envelope)
-	transport.push({"ok": true, "status": 200, "body": sse, "headers": {}, "error": ""})
-	var request := _request("dialogue")
-	request["stream"] = true
-	var heard: Array = []
-	client.reply_text.connect(func(text: String) -> void: heard.append(text))
-	var result: Dictionary = await client.generate(request)
-	assert_true(result["ok"])
-	assert_eq(result["json"]["reply"], "Да.")
-	assert_eq(heard[0], "Да.")
-	assert_true(str(transport.seen[0]["url"]).contains(":streamGenerateContent"))
-	assert_false(str(transport.seen[0]["url"]).contains(SECRET))
 	client.free()
 
 

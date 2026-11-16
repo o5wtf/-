@@ -4,7 +4,7 @@ extends LLMClient
 
 const BASE_URL := "https://generativelanguage.googleapis.com/v1beta/models"
 const RATE_DELAYS: Array[float] = [2.0, 4.0, 8.0]
-const SERVER_PAUSE_S := 0.25
+const SERVER_PAUSE_S := 2.0
 const RATE_ATTEMPTS := 3
 const SERVER_ATTEMPTS := 2
 
@@ -28,10 +28,6 @@ var _last_request_s: float = -1.0
 var waits: Array[float] = []
 
 signal _released
-signal reply_text(text: String)
-
-var _sse: Dictionary = {}
-var _sse_reply: String = ""
 
 
 func apply_config(config: LLMConfig) -> void:
@@ -98,7 +94,7 @@ func _generate_body(request: Dictionary) -> Dictionary:
 			var google := _google_status(body)
 			var reason := _google_reason(body)
 			if status == 200:
-				var parsed := _parsed_body(body, bool(request.get("stream", false)))
+				var parsed := _parse_success(body)
 				if parsed.get("ok", false):
 					session_model = model
 					return _with_meta(parsed, model, call_started)
@@ -168,65 +164,16 @@ func _push_model(chain: PackedStringArray, model: String) -> void:
 
 
 func _post(model: String, request: Dictionary, schema_field: String, use_thinking: bool, raise_tokens: bool) -> Dictionary:
-	var stream := bool(request.get("stream", false))
-	var action := "streamGenerateContent?alt=sse" if stream else "generateContent"
-	var url := "%s/%s:%s" % [base_url.trim_suffix("/"), model, action]
+	var url := "%s/%s:generateContent" % [base_url.trim_suffix("/"), model]
 	var headers := {
 		"Content-Type": "application/json",
 		"x-goog-api-key": api_key,
 	}
 	var payload := JSON.stringify(_body(request, schema_field, use_thinking, raise_tokens))
-	_sse = {"pending": "", "text": ""}
-	_sse_reply = ""
-	if stream and _transport.has_method("request_stream"):
-		var streamed: Variant = _transport.call("request_stream", url, headers, payload, _timeout_for(request), Callable(self, "_on_sse_piece"))
-		if streamed is Dictionary:
-			return streamed
-		return await streamed
 	var pending: Variant = _transport.call("request", url, headers, payload, _timeout_for(request))
 	if pending is Dictionary:
 		return pending
 	return await pending
-
-
-func _on_sse_piece(piece: String) -> void:
-	_sse = push_sse(_sse, piece)
-	_emit_reply(str(_sse.get("text", "")))
-
-
-func _parsed_body(body: String, stream: bool) -> Dictionary:
-	if not stream:
-		return _parse_success(body)
-	var model_text := str(_sse.get("text", ""))
-	if model_text == "":
-		var fed := push_sse({"pending": "", "text": ""}, body)
-		model_text = str(fed.get("text", ""))
-	if model_text == "":
-		return _parse_success(body)
-	_emit_reply(model_text)
-	return _success_from_model_text(model_text)
-
-
-func _emit_reply(model_text: String) -> void:
-	var reply := reply_so_far(model_text)
-	if reply == "" or reply == _sse_reply:
-		return
-	_sse_reply = reply
-	reply_text.emit(reply)
-
-
-func _success_from_model_text(text: String) -> Dictionary:
-	var parsed: Variant = _parse_model_json(text)
-	if parsed == null or parsed is not Dictionary:
-		return _failure("bad_response", "Текст ответа не является JSON-объектом.")
-	return {
-		"ok": true,
-		"json": _normalize_reply(parsed),
-		"raw_text": _redact(text),
-		"error": "",
-		"retry_after_s": 0.0,
-		"message": "",
-	}
 
 
 func _timeout_for(request: Dictionary) -> float:
@@ -249,11 +196,7 @@ func _body(request: Dictionary, schema_field: String, use_thinking: bool, raise_
 		"maxOutputTokens": tokens,
 	}
 	if use_thinking:
-		var level := str(request.get("thinking_level", "")).strip_edges()
-		if level == "" or level == "OFF":
-			level = thinking_level
-		if level != "OFF":
-			generation["thinkingConfig"] = {"thinkingLevel": level}
+		generation["thinkingConfig"] = {"thinkingLevel": thinking_level}
 	return {
 		"systemInstruction": {"parts": [{"text": str(request.get("system", ""))}]},
 		"contents": [{"role": "user", "parts": [{"text": str(request.get("user", ""))}]}],
@@ -462,102 +405,6 @@ func _redact(text: String) -> String:
 	return text.replace(secret, "[redacted]")
 
 
-static func push_sse(state: Dictionary, chunk: String) -> Dictionary:
-	var pending := str(state.get("pending", "")) + chunk.replace("\r", "")
-	var text := str(state.get("text", ""))
-	while true:
-		var newline := pending.find("\n")
-		if newline < 0:
-			break
-		var line := pending.substr(0, newline)
-		pending = pending.substr(newline + 1)
-		text += _sse_delta(line)
-	return {"pending": pending, "text": text}
-
-
-static func _sse_delta(line: String) -> String:
-	var trimmed := line.strip_edges()
-	if not trimmed.begins_with("data:"):
-		return ""
-	var data := trimmed.substr(5).strip_edges()
-	if data == "" or data == "[DONE]":
-		return ""
-	var parsed: Variant = JSON.parse_string(data)
-	if parsed is not Dictionary:
-		return ""
-	var candidates: Array = (parsed as Dictionary).get("candidates", [])
-	if candidates.is_empty() or candidates[0] is not Dictionary:
-		return ""
-	var content: Dictionary = (candidates[0] as Dictionary).get("content", {})
-	var parts: Array = content.get("parts", [])
-	var piece := ""
-	for part in parts:
-		if part is not Dictionary or (part as Dictionary).get("thought", false) == true:
-			continue
-		piece += str((part as Dictionary).get("text", ""))
-	return piece
-
-
-static func reply_so_far(text: String) -> String:
-	var marker := "\"reply\""
-	var at := text.find(marker)
-	if at < 0:
-		return ""
-	var colon := text.find(":", at + marker.length())
-	if colon < 0:
-		return ""
-	var index := colon + 1
-	while index < text.length():
-		var gap := text.substr(index, 1)
-		if gap != " " and gap != "\n" and gap != "\t":
-			break
-		index += 1
-	if index >= text.length() or text.substr(index, 1) != "\"":
-		return ""
-	index += 1
-	var out := ""
-	while index < text.length():
-		var ch := text.substr(index, 1)
-		if ch == "\\":
-			if index + 1 >= text.length():
-				break
-			var nxt := text.substr(index + 1, 1)
-			if nxt == "n":
-				out += "\n"
-			elif nxt == "t":
-				out += "\t"
-			else:
-				out += nxt
-			index += 2
-			continue
-		if ch == "\"":
-			break
-		out += ch
-		index += 1
-	return out
-
-
-static func take_sentences(text: String) -> Dictionary:
-	var ready := PackedStringArray()
-	var start := 0
-	var index := 0
-	while index < text.length():
-		var ch := text.substr(index, 1)
-		var boundary := ch == "!" or ch == "?" or ch == "…" or ch == "."
-		if ch == "." and index > 0 and index + 1 < text.length():
-			var prev := text.substr(index - 1, 1)
-			var nxt := text.substr(index + 1, 1)
-			if prev >= "0" and prev <= "9" and nxt >= "0" and nxt <= "9":
-				boundary = false
-		if boundary:
-			var sentence := text.substr(start, index + 1 - start).strip_edges()
-			if sentence != "":
-				ready.append(sentence)
-			start = index + 1
-		index += 1
-	return {"ready": ready, "rest": text.substr(start)}
-
-
 func _failure(error_code: String, message: String) -> Dictionary:
 	return {
 		"ok": false,
@@ -612,61 +459,6 @@ class Transport:
 			"headers": _header_map(response_headers),
 			"error": "",
 		}
-
-
-	func request_stream(url: String, headers: Dictionary, body: String, timeout_s: float, on_text: Callable) -> Dictionary:
-		var client := HTTPClient.new()
-		var secure := url.begins_with("https://")
-		var rest := url.trim_prefix("https://").trim_prefix("http://")
-		var slash := rest.find("/")
-		if slash < 0:
-			return {"ok": false, "status": 0, "body": "", "headers": {}, "error": "offline"}
-		var host := rest.substr(0, slash)
-		var path := rest.substr(slash)
-		var port := 443 if secure else 80
-		var err := client.connect_to_host(host, port, TLSOptions.client() if secure else null)
-		if err != OK:
-			return {"ok": false, "status": 0, "body": "", "headers": {}, "error": "offline"}
-		var started := Time.get_ticks_msec()
-		var limit := int(timeout_s * 1000.0)
-		while client.get_status() == HTTPClient.STATUS_CONNECTING or client.get_status() == HTTPClient.STATUS_RESOLVING:
-			client.poll()
-			if Time.get_ticks_msec() - started > limit:
-				client.close()
-				return {"ok": false, "status": 0, "body": "", "headers": {}, "error": "timeout"}
-			await get_tree().process_frame
-		if client.get_status() != HTTPClient.STATUS_CONNECTED:
-			client.close()
-			return {"ok": false, "status": 0, "body": "", "headers": {}, "error": "offline"}
-		var lines: PackedStringArray = PackedStringArray()
-		for key in headers:
-			lines.append("%s: %s" % [str(key), str(headers[key])])
-		if client.request(HTTPClient.METHOD_POST, path, lines, body) != OK:
-			client.close()
-			return {"ok": false, "status": 0, "body": "", "headers": {}, "error": "offline"}
-		while client.get_status() == HTTPClient.STATUS_REQUESTING:
-			client.poll()
-			if Time.get_ticks_msec() - started > limit:
-				client.close()
-				return {"ok": false, "status": 0, "body": "", "headers": {}, "error": "timeout"}
-			await get_tree().process_frame
-		var status := client.get_response_code()
-		var acc := ""
-		while client.get_status() == HTTPClient.STATUS_BODY:
-			client.poll()
-			var chunk := client.read_response_body_chunk()
-			if chunk.is_empty():
-				if Time.get_ticks_msec() - started > limit:
-					client.close()
-					return {"ok": false, "status": status, "body": acc, "headers": {}, "error": "timeout"}
-				await get_tree().process_frame
-				continue
-			var piece := chunk.get_string_from_utf8()
-			acc += piece
-			if on_text.is_valid():
-				on_text.call(piece)
-		client.close()
-		return {"ok": true, "status": status, "body": acc, "headers": {}, "error": ""}
 
 
 	func _header_map(lines: PackedStringArray) -> Dictionary:

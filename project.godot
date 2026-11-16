@@ -37,3 +37,5 @@ theme/custom="res://ui/theme/main_theme.tres"
 ; Рендер в диздоке и А§1 не задан: стандарт нового проекта Godot 4.7.
 renderer/rendering_method="forward_plus"
 renderer/rendering_method.mobile="mobile"
+; Без ETC2/ASTC Godot отказывается экспортировать Android.
+textures/vram_compression/import_etc2_astc=true

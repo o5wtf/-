@@ -29,7 +29,7 @@ const MOCK_LABEL := "Офлайн-отладка (без модели)"
 const KEY_HINT := "Ключ нужен для живого допроса. Его берут в Google AI Studio → Get API key. Ключ не пишется в журнал."
 const KEY_PLACEHOLDER := "Вставьте ключ"
 const KEY_SAVED_PLACEHOLDER := "Ключ сохранён"
-const MODEL_PLACEHOLDER := "по умолчанию gemini-3.8-flash"
+const MODEL_PLACEHOLDER := "по умолчанию gemini-3.5-flash"
 const QUESTION_PLACEHOLDER := "Ваш вопрос…"
 const ALL_AGENTS := "все"
 const NO_EVIDENCE := "Открытых улик пока нет."
@@ -104,29 +104,42 @@ static func emotion_word(emotion: String) -> String:
 
 static func error_text(kind: String) -> String:
 	match kind:
-		"offline", "timeout":
-			return "Нет связи с сервером"
+		"offline":
+			return "Нет сети. Проверьте подключение и повторите."
+		"timeout":
+			return "Модель не ответила вовремя."
 		"rate_limited":
-			return "Модель перегружена, подождите немного"
+			return "Слишком много запросов. Подождите немного."
+		"overloaded":
+			return "Модель перегружена. Подождите немного."
+		"unavailable":
+			return "Эта модель недоступна."
 		"auth":
-			return "Проверьте ключ в настройках"
+			return "Проверьте ключ в настройках."
+		"rejected":
+			return "Запрос отклонён."
 		"server":
-			return "Сервис временно недоступен"
+			return "Сервис временно недоступен."
 		_:
-			return "Ход не получился. Попробуйте ещё раз"
+			return "Ход не получился. Попробуйте ещё раз."
 
 
 static func connection_message(provider: String, result: Dictionary) -> String:
 	if provider == "mock":
 		return LINK_MOCK
-	if not result.get("ok", false):
-		var kind := str(result.get("error", ""))
-		if kind == "auth":
-			return "Проверьте ключ."
-		if kind == "":
-			return LINK_FAIL
-		return error_text(kind)
-	return LINK_OK
+	if result.get("ok", false):
+		var model := str(result.get("model", "")).strip_edges()
+		var elapsed := float(result.get("elapsed_s", -1.0))
+		if model != "" and elapsed >= 0.0:
+			return "Связь есть. Ответила %s за %s с." % [model, String.num(elapsed, 1)]
+		return LINK_OK
+	var message := str(result.get("message", "")).strip_edges()
+	if message != "":
+		return message
+	var kind := str(result.get("error", ""))
+	if kind == "":
+		return LINK_FAIL
+	return error_text(kind)
 
 
 static func present_hint(title: String) -> String:

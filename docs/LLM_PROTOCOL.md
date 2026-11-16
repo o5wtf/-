@@ -37,7 +37,7 @@ Content-Type: application/json
     "responseMimeType": "application/json",
     "responseJsonSchema": { "<СХЕМА, раздел 5>": "" },
     "temperature": 0.9,
-    "maxOutputTokens": 2048,
+    "maxOutputTokens": 8192,
     "thinkingConfig": { "thinkingLevel": "LOW" }
   },
   "safetySettings": [
@@ -51,9 +51,9 @@ Content-Type: application/json
 
 - **Схема ответа.** `responseJsonSchema` — обычный JSON Schema, его сейчас рекомендует документация Gemini. Старое поле `responseSchema` (подмножество OpenAPI, типы `OBJECT`, `STRING`…) тоже работает. Если выбранная модель не примет `responseJsonSchema`, `GeminiClient` переключается на `responseSchema` с той же схемой, переведённой в этот формат.
 - **Модели** берутся из настроек, в коде их нет:
-  - `dialogue_model` — по умолчанию `gemini-3.8-flash`;
+  - `dialogue_model` — по умолчанию `gemini-3.5-flash` (на ноябрь 2026 отвечает быстрее, чем `gemini-3.8-flash`);
   - `summary_model` — по умолчанию `gemini-3.5-flash-lite`;
-  - `fallback_model` — по умолчанию `gemini-3.5-flash-lite`, на неё переходим при исчерпании лимита.
+  - при таймауте, 503 и 429 клиент сам идёт по цепочке: выбранная модель → `gemini-3.5-flash` → `gemini-3.5-flash-lite`. Модель, которая ответила, запоминается до перезапуска клиента.
 
   Обе модели на бесплатном уровне на ноябрь 2026. Лимиты считаются на проект, их видно в Google AI Studio.
 - **Бесплатный уровень:** Google может использовать запросы для улучшения своих продуктов. Для прототипа это приемлемо.
@@ -65,11 +65,11 @@ Content-Type: application/json
 - **Текст:** `candidates[0].content.parts[*].text`. Части с `"thought": true` пропускаем, остальные склеиваем и разбираем как JSON.
 - **`finishReason`:**
   - `STOP` — ответ нормальный;
-  - `MAX_TOKENS` — `bad_response`;
+  - `MAX_TOKENS`, если JSON уже собран — ответ принимается; если текст оборван — одна повторная попытка без `thinkingConfig` и с большим лимитом, затем следующая модель;
   - `SAFETY`, `PROHIBITED_CONTENT`, `BLOCKLIST` — `blocked`;
   - любое другое значение — `bad_response`.
 - **`promptFeedback.blockReason`** задан — тоже `blocked`.
-- **HTTP-ошибки** — по `docs/ARCHITECTURE.md`, раздел 3.6. Коротко: 429 → ждать и повторить, потом запасная модель; 401/403 → `auth`; 400 с признаком неверного ключа (`API_KEY_INVALID`) → тоже `auth` (так Gemini часто отвечает вместо 401); 5xx → повтор; нет сети → `offline`.
+- **HTTP-ошибки** — по `docs/ARCHITECTURE.md`, раздел 3.6. Коротко: таймаут, 429 и 503 → сразу следующая модель в цепочке; 401/403 и 400 с `API_KEY_INVALID` → `auth`; прочий 400 не считается ошибкой ключа; 404 → модель недоступна, пробуем следующую; прочий 5xx → один повтор той же модели; нет сети → `offline`, цепочку не продолжаем. В тексте ошибки есть имя модели и короткая причина Google, ключ вырезан.
 
 ## 3. Системный промпт (шаблон)
 
@@ -293,11 +293,12 @@ e1 — Журнал посещений
 [llm]
 provider="gemini"                    ; gemini | mock
 api_key=""                           ; вставляется на экране настроек; в git и сборку не попадает
-dialogue_model="gemini-3.8-flash"
+dialogue_model="gemini-3.5-flash"
 summary_model="gemini-3.5-flash-lite"
 fallback_model="gemini-3.5-flash-lite"
 thinking_level="LOW"
-timeout_s=30
+timeout_s=45
+ping_timeout_s=32
 min_interval_s=1.0
 
 [validator]

@@ -80,8 +80,8 @@ func test_finish_and_block_reasons() -> void:
 	var transport: FakeTransport = client._transport
 	transport.push(_candidate("{\"reply\":\"x\"}", "MAX_TOKENS"))
 	var truncated: Dictionary = await client.generate(_request("dialogue"))
-	assert_false(truncated["ok"])
-	assert_eq(truncated["error"], "bad_response")
+	assert_true(truncated["ok"])
+	assert_eq(truncated["json"]["reply"], "x")
 	transport.push(_candidate("{\"reply\":\"x\"}", "SAFETY"))
 	var safety: Dictionary = await client.generate(_request("dialogue"))
 	assert_eq(safety["error"], "blocked")
@@ -140,18 +140,16 @@ func test_missing_key_does_not_call_network() -> void:
 func test_rate_limit_then_fallback_model() -> void:
 	var client := await _client()
 	var transport: FakeTransport = client._transport
-	transport.push(_status(429, "{}", {"Retry-After": "3"}))
-	transport.push(_status(429, "{}"))
-	transport.push(_status(429, "{}"))
+	transport.push(_status(429, "{\"error\":{\"message\":\"quota\"}}"))
 	transport.push(_ok("{\"reply\":\"запасная\"}"))
 	var result: Dictionary = await client.generate(_request("dialogue"))
 	assert_true(result["ok"])
 	assert_eq(result["json"]["reply"], "запасная")
-	assert_eq(client.waits, [3.0, 4.0])
-	assert_eq(transport.seen.size(), 4)
+	assert_eq(result["model"], "gemini-3.5-flash")
+	assert_eq(client.waits.size(), 0)
+	assert_eq(transport.seen.size(), 2)
 	assert_true(str(transport.seen[0]["url"]).contains("/dialogue-model:"))
-	assert_true(str(transport.seen[2]["url"]).contains("/dialogue-model:"))
-	assert_true(str(transport.seen[3]["url"]).contains("/fallback-model:"))
+	assert_true(str(transport.seen[1]["url"]).contains("/gemini-3.5-flash:"))
 	client.free()
 
 
@@ -164,7 +162,7 @@ func test_rate_limit_exhausted_is_rate_limited() -> void:
 	var result: Dictionary = await client.generate(_request("dialogue"))
 	assert_eq(result["error"], "rate_limited")
 	assert_eq(transport.seen.size(), 3)
-	assert_eq(client.waits, [2.0, 4.0])
+	assert_true(str(result["message"]).contains("dialogue-model"))
 	client.free()
 
 
@@ -172,11 +170,12 @@ func test_server_error_retries_twice() -> void:
 	var client := await _client()
 	var transport: FakeTransport = client._transport
 	transport.push(_status(500, ""))
-	transport.push(_status(503, ""))
+	transport.push(_status(500, ""))
 	var result: Dictionary = await client.generate(_request("dialogue"))
 	assert_eq(result["error"], "server")
 	assert_eq(transport.seen.size(), 2)
 	assert_eq(client.waits, [GeminiClient.SERVER_PAUSE_S])
+	assert_true(str(transport.seen[1]["url"]).contains("/dialogue-model:"))
 	transport.push(_status(500, ""))
 	transport.push(_ok("{\"reply\":\"после сбоя\"}"))
 	var recovered: Dictionary = await client.generate(_request("dialogue"))
@@ -188,13 +187,15 @@ func test_timeout_and_offline() -> void:
 	var client := await _client()
 	var transport: FakeTransport = client._transport
 	transport.push({"ok": false, "status": 0, "body": "", "headers": {}, "error": "timeout"})
+	transport.push(_ok("{\"reply\":\"успел\"}"))
 	var timed_out: Dictionary = await client.generate(_request("dialogue"))
-	assert_eq(timed_out["error"], "timeout")
-	assert_eq(transport.seen.size(), 1)
+	assert_true(timed_out["ok"])
+	assert_eq(timed_out["model"], "gemini-3.5-flash")
+	assert_eq(transport.seen.size(), 2)
 	transport.push({"ok": false, "status": 0, "body": "", "headers": {}, "error": "offline"})
 	var offline: Dictionary = await client.generate(_request("dialogue"))
 	assert_eq(offline["error"], "offline")
-	assert_eq(transport.seen.size(), 2)
+	assert_eq(transport.seen.size(), 3)
 	client.free()
 
 
@@ -225,6 +226,108 @@ func test_only_one_request_in_flight() -> void:
 	assert_eq(transport.calls, 1)
 	assert_false(JSON.stringify(result).contains(SECRET), "ключ попал в результат")
 	await (Engine.get_main_loop() as SceneTree).process_frame
+	client.free()
+
+
+func test_lite_shape_is_accepted() -> void:
+	var client := await _client()
+	var transport: FakeTransport = client._transport
+	var fenced := "```json\n{\"player_tone\": \"1\", \"reply\": \"Я ничего не видел.\", \"remark\": \"отводит взгляд\", \"emotion\": \"Neutral\"}\n```"
+	var parts: Array = [
+		{"thought": true, "text": "скрытые рассуждения"},
+		{"text": fenced, "thoughtSignature": "sig"},
+	]
+	var payload := {"candidates": [{"content": {"parts": parts}, "finishReason": "MAX_TOKENS"}]}
+	transport.push({"ok": true, "status": 200, "body": JSON.stringify(payload), "headers": {}, "error": ""})
+	var result: Dictionary = await client.generate(_request("dialogue"))
+	assert_true(result["ok"])
+	assert_eq(result["json"]["reply"], "Я ничего не видел.")
+	assert_eq(result["json"]["player_tone"], 1)
+	assert_eq(result["json"]["emotion"], "neutral")
+	assert_false(str(result["raw_text"]).contains("скрытые рассуждения"))
+	client.free()
+
+
+func test_truncated_json_retries_without_thinking() -> void:
+	var client := await _client()
+	var transport: FakeTransport = client._transport
+	transport.push(_candidate("{", "MAX_TOKENS"))
+	transport.push(_ok("{\"reply\":\"после повтора\"}"))
+	var result: Dictionary = await client.generate(_request("dialogue"))
+	assert_true(result["ok"])
+	assert_eq(result["json"]["reply"], "после повтора")
+	var retry: Dictionary = JSON.parse_string(transport.seen[1]["body"])
+	assert_false(retry["generationConfig"].has("thinkingConfig"))
+	assert_true(int(retry["generationConfig"]["maxOutputTokens"]) >= 8192)
+	client.free()
+
+
+func test_overloaded_and_missing_model_switch() -> void:
+	var client := await _client()
+	var transport: FakeTransport = client._transport
+	transport.push(_status(503, "{\"error\":{\"message\":\"high demand\",\"status\":\"UNAVAILABLE\"}}"))
+	transport.push(_status(404, "{\"error\":{\"message\":\"no longer available to new users\",\"status\":\"NOT_FOUND\"}}"))
+	transport.push(_ok("{\"reply\":\"есть\"}"))
+	var result: Dictionary = await client.generate(_request("dialogue"))
+	assert_true(result["ok"])
+	assert_eq(result["model"], "fallback-model")
+	assert_true(str(transport.seen[0]["url"]).contains("/dialogue-model:"))
+	assert_true(str(transport.seen[1]["url"]).contains("/gemini-3.5-flash:"))
+	client.free()
+
+
+func test_plain_400_is_not_an_auth_error() -> void:
+	var client := await _client()
+	var transport: FakeTransport = client._transport
+	transport.push(_status(400, "{\"error\":{\"status\":\"INVALID_ARGUMENT\",\"message\":\"thinkingLevel is not supported\"}}"))
+	transport.push(_ok("{\"reply\":\"без рассуждений\"}"))
+	var result: Dictionary = await client.generate(_request("dialogue"))
+	assert_true(result["ok"])
+	var retry: Dictionary = JSON.parse_string(transport.seen[1]["body"])
+	assert_false(retry["generationConfig"].has("thinkingConfig"))
+	assert_eq(transport.seen.size(), 2)
+	client.free()
+
+
+func test_timeout_names_the_model() -> void:
+	var client := await _client()
+	var transport: FakeTransport = client._transport
+	for _i in 4:
+		transport.push({"ok": false, "status": 0, "body": "", "headers": {}, "error": "timeout"})
+	var result: Dictionary = await client.generate(_request("dialogue"))
+	assert_eq(result["error"], "timeout")
+	assert_true(str(result["message"]).contains("dialogue-model"))
+	assert_true(str(result["message"]).contains("Пробовали"))
+	assert_false(str(result["message"]).contains("Нет сети"))
+	client.free()
+
+
+func test_session_remembers_the_model_that_answered() -> void:
+	var client := await _client()
+	var transport: FakeTransport = client._transport
+	transport.push({"ok": false, "status": 0, "body": "", "headers": {}, "error": "timeout"})
+	transport.push(_ok("{\"reply\":\"успел\"}"))
+	var first: Dictionary = await client.generate(_request("dialogue"))
+	assert_eq(first["model"], "gemini-3.5-flash")
+	transport.push(_ok("{\"reply\":\"снова\"}"))
+	var second: Dictionary = await client.generate(_request("dialogue"))
+	assert_true(second["ok"])
+	assert_true(str(transport.seen[2]["url"]).contains("/gemini-3.5-flash:"))
+	client.free()
+
+
+func test_probe_uses_a_short_timeout_without_thinking() -> void:
+	var client := await _client()
+	var transport: FakeTransport = client._transport
+	transport.push(_ok("{\"ok\":\"да\"}"))
+	var request := _request("dialogue")
+	request["probe"] = true
+	request["timeout_s"] = 12.0
+	var result: Dictionary = await client.generate(request)
+	assert_true(result["ok"])
+	assert_eq(transport.seen[0]["timeout"], 12.0)
+	var body: Dictionary = JSON.parse_string(transport.seen[0]["body"])
+	assert_false(body["generationConfig"].has("thinkingConfig"))
 	client.free()
 
 

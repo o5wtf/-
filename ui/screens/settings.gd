@@ -145,12 +145,20 @@ func _test_connection() -> void:
 	_testing = false
 
 
+func _ping_timeout() -> float:
+	if LLM.client is GeminiClient:
+		return (LLM.client as GeminiClient).ping_timeout_s
+	return 32.0
+
+
 func _ping_request() -> Dictionary:
 	return {
 		"system": "Верни короткий JSON.",
 		"user": "ping",
+		"probe": true,
+		"timeout_s": _ping_timeout(),
 		"temperature": 0.0,
-		"max_output_tokens": 32,
+		"max_output_tokens": 64,
 		"schema": {
 			"type": "object",
 			"properties": {"ok": {"type": "string"}},

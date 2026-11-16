@@ -216,13 +216,17 @@ func _speak_one(job: Dictionary) -> String:
 		var result: Dictionary = await speech.synthesize(line, profile.voice_name, emotion, remark, -1.0, VoiceProfiles.STYLE_PLAIN)
 		if not result.get("ok", false):
 			var kind := str(result.get("error", "unsupported"))
-			voice_error.emit(kind, str(result.get("message", "")))
+			var message := str(result.get("message", "")).strip_edges()
+			if message == "":
+				message = "Не удалось озвучить реплику."
+			voice_error.emit(kind, message)
 			return kind
 		pcm = result["pcm"]
 		mix_rate = int(result.get("mix_rate", 24000))
 		VoiceCache.store(cache_key, pcm, mix_rate)
 	if pcm.is_empty():
-		return ""
+		voice_error.emit("unsupported", "Не удалось озвучить реплику.")
+		return "unsupported"
 	var pitch := profile.pitch * VoiceProfiles.playback_rate(emotion, user_rate)
 	var volume := VoiceProfiles.playback_volume(emotion, user_volume)
 	await speaker.play(pcm, mix_rate, pitch, volume)
@@ -239,14 +243,22 @@ func _speak_live(line: String, voice_name: String, pitch: float, volume_linear: 
 		live.audio_chunk.connect(_on_live_chunk)
 	var result: Dictionary = await live.speak_line(speech.api_key, line, voice_name, emotion, remark)
 	if result.get("ok", false):
-		await speaker.end_stream()
+		if _live_streaming:
+			await speaker.end_stream()
+		else:
+			var spoken: PackedByteArray = result.get("pcm", PackedByteArray())
+			if not spoken.is_empty():
+				await speaker.play(spoken, int(result.get("mix_rate", 24000)), pitch, volume_linear)
 		return result
 	if _live_streaming:
 		speaker.stop()
+		_live_streaming = false
 	return result
 
 
 func _on_partial(text: String) -> void:
+	if live == null or not live.accepts_input() or GeminiLive.is_clock_label(text):
+		return
 	transcript_ready.emit(text, false)
 
 
@@ -296,6 +308,8 @@ class PcmSpeaker:
 	var _stream_frames: int = 0
 	var _pending_frames: PackedVector2Array = PackedVector2Array()
 
+	const BUS := "Master"
+
 	func play(pcm: PackedByteArray, mix_rate: int, pitch: float, volume_linear: float) -> void:
 		played.append({"bytes": pcm.size(), "mix_rate": mix_rate})
 		if instant:
@@ -304,6 +318,7 @@ class PcmSpeaker:
 			_player = AudioStreamPlayer.new()
 			add_child(_player)
 			_player.finished.connect(func() -> void: playback_finished.emit())
+		_player.bus = BUS
 		_player.stop()
 		_player.stream = VoiceAudio.stream_from_pcm(pcm, mix_rate)
 		_player.pitch_scale = clampf(pitch, 0.5, 1.6)
@@ -318,6 +333,7 @@ class PcmSpeaker:
 		if _player == null:
 			_player = AudioStreamPlayer.new()
 			add_child(_player)
+		_player.bus = BUS
 		var generator := AudioStreamGenerator.new()
 		generator.mix_rate = mix_rate
 		generator.buffer_length = 0.4
@@ -387,39 +403,57 @@ class PcmSpeaker:
 class MicRecorder:
 	extends Node
 
+	const BUS := "VoiceRecord"
+
 	var _effect: AudioEffectCapture
 	var _player: AudioStreamPlayer
-	var _bus := "VoiceRecord"
 	var _stored: PackedByteArray = PackedByteArray()
+	var _fresh: PackedByteArray = PackedByteArray()
 	var _rate: int = 16000
+	var _running: bool = false
 	var _resample := VoiceAudio.RateState.new()
 
 	func start() -> Dictionary:
 		_ensure()
 		_stored = PackedByteArray()
+		_fresh = PackedByteArray()
 		_resample = VoiceAudio.RateState.new()
 		_effect.clear_buffer()
+		_running = true
+		_player.bus = BUS
 		_player.play()
 		return {"ok": true}
 
+	func _process(_delta: float) -> void:
+		if _running:
+			_drain_to_store()
+
 	func pull_new() -> Dictionary:
-		var native := _take_native()
-		if native.pcm.is_empty():
+		_drain_to_store()
+		var chunk := _fresh
+		_fresh = PackedByteArray()
+		if chunk.is_empty():
 			return {"ok": true, "pcm": PackedByteArray(), "mix_rate": 16000, "stereo": false}
-		_stored.append_array(native.pcm)
-		_rate = native.mix_rate
-		return {"ok": true, "pcm": VoiceAudio.feed_16k(_resample, native.pcm, native.mix_rate), "mix_rate": 16000, "stereo": false}
+		return {"ok": true, "pcm": VoiceAudio.feed_16k(_resample, chunk, _rate), "mix_rate": 16000, "stereo": false}
 
 	func stop() -> Dictionary:
+		_running = false
 		if _effect == null:
 			return {"ok": false, "message": "Микрофон не был включён."}
-		var native := _take_native()
-		_stored.append_array(native.pcm)
+		_drain_to_store()
 		if _player != null:
 			_player.stop()
 		if _stored.is_empty():
 			return {"ok": false, "message": "Микрофон ничего не записал."}
 		return {"ok": true, "pcm": _stored, "mix_rate": _rate, "stereo": false}
+
+	func _drain_to_store() -> void:
+		var native := _take_native()
+		if native.pcm.is_empty():
+			return
+		_stored.append_array(native.pcm)
+		_fresh.append_array(native.pcm)
+		_rate = int(native.mix_rate)
 
 	func _take_native() -> Dictionary:
 		var rate := int(AudioServer.get_mix_rate())
@@ -441,16 +475,17 @@ class MicRecorder:
 	func _ensure() -> void:
 		if _effect != null:
 			return
-		var index := AudioServer.get_bus_index(_bus)
-		if index < 0:
+		var index := AudioServer.get_bus_index(BUS)
+		if index <= 0:
 			AudioServer.add_bus()
 			index = AudioServer.bus_count - 1
-			AudioServer.set_bus_name(index, _bus)
-			AudioServer.set_bus_mute(index, true)
+			AudioServer.set_bus_name(index, BUS)
+		AudioServer.set_bus_mute(index, true)
+		AudioServer.set_bus_send(index, PcmSpeaker.BUS)
 		_effect = AudioEffectCapture.new()
-		_effect.buffer_length = 0.5
+		_effect.buffer_length = 12.0
 		AudioServer.add_bus_effect(index, _effect)
 		_player = AudioStreamPlayer.new()
 		_player.stream = AudioStreamMicrophone.new()
-		_player.bus = _bus
+		_player.bus = BUS
 		add_child(_player)

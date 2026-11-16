@@ -85,7 +85,7 @@ static func style_prompt(reply: String, emotion: String, _remark: String, mode: 
 
 
 static func live_instruction(emotion: String, remark: String) -> String:
-	var text := "Respond in Russian. Output only the words between <<< and >>>. Never answer the line, never add words. Ты озвучиваешь персонажа. Произнеси реплику пользователя дословно, ничего не добавляя и не комментируя. Тон: %s." % live_tone(emotion)
+	var text := "Ты озвучиваешь персонажа. Произнеси реплику пользователя дословно, ничего не добавляя и не комментируя. Тон: %s." % live_tone(emotion)
 	var stage := remark.strip_edges().replace("\n", " ")
 	if stage.length() > 80:
 		stage = stage.substr(0, 80).strip_edges()
@@ -110,10 +110,6 @@ static func live_tone(emotion: String) -> String:
 			return "медленно, презрительно (slow, contemptuous)"
 		_:
 			return "спокойно (calm)"
-
-
-static func marked_line(line: String) -> String:
-	return "<<<%s>>>" % spoken_text(line)
 
 
 static func vocabulary_from_case(case_data: CaseData) -> PackedStringArray:

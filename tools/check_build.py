@@ -68,9 +68,13 @@ def check_paths(label: str, paths: list[str], blobs: list[bytes]) -> None:
     for packed in paths:
         if forbidden(packed):
             fail(f"в сборку попал запрещённый путь: {packed}")
-    cases = [packed for packed in paths if "/cases/" in packed.replace("\\", "/") and packed.endswith(".json")]
+    normalized = [packed.replace("\\", "/") for packed in paths]
+    cases = [packed for packed in normalized if "cases/" in packed and packed.endswith(".json")]
     if not cases:
-        fail(f"{label}: в пакете нет json дела")
+        sample = [packed for packed in normalized if "json" in packed.lower() or "case" in packed.lower()][:8]
+        if not sample:
+            sample = normalized[:5]
+        fail(f"{label}: в пакете нет json дела. примеры: {sample}")
     print(f"{label}: файлов {len(paths)}, дел {len(cases)}")
 
 

@@ -100,6 +100,7 @@ func _ready() -> void:
 	tools.add_child(_mic)
 	if not Game.agent_replied.is_connected(_on_replied):
 		Game.agent_replied.connect(_on_replied)
+		Game.reply_preview.connect(_on_preview)
 		Game.events.connect(_on_events)
 		Game.llm_error.connect(_on_error)
 		Game.busy_changed.connect(_on_busy)
@@ -288,6 +289,17 @@ func _on_transcript(text: String, is_final: bool) -> void:
 	_refresh_hint_from_text()
 
 
+func _on_preview(reply_agent: String, text: String) -> void:
+	if reply_agent != agent_id:
+		return
+	var rows: Array = _feeds.get(agent_id, [])
+	if rows.is_empty() or str((rows[rows.size() - 1] as Dictionary).get("preview", "")) != reply_agent:
+		_push({"kind": "agent", "text": text, "remark": "", "emotion": "neutral", "preview": reply_agent})
+		return
+	(rows[rows.size() - 1] as Dictionary)["text"] = text
+	_render_feed()
+
+
 func _on_replied(reply_agent: String, text: String, remark: String) -> void:
 	if reply_agent != agent_id:
 		_push_to(reply_agent, {"kind": "agent", "text": text, "remark": remark})
@@ -295,10 +307,16 @@ func _on_replied(reply_agent: String, text: String, remark: String) -> void:
 	var emotion := "neutral"
 	if Game.state != null:
 		emotion = str(Game.state.emotion.get(reply_agent, "neutral"))
-	_push({"kind": "agent", "text": text, "remark": remark, "emotion": emotion})
-	var agent: CaseData.Agent = Game.case_data.agent_by_id.get(reply_agent) as CaseData.Agent
-	if agent != null:
-		Voice.speak_agent(agent, text, remark, emotion)
+	var rows: Array = _feeds.get(agent_id, [])
+	if not rows.is_empty() and str((rows[rows.size() - 1] as Dictionary).get("preview", "")) == reply_agent:
+		var last: Dictionary = rows[rows.size() - 1]
+		last["text"] = text
+		last["remark"] = remark
+		last["emotion"] = emotion
+		last.erase("preview")
+		_render_feed()
+	else:
+		_push({"kind": "agent", "text": text, "remark": remark, "emotion": emotion})
 	_render_header()
 	_apply_model_hints()
 

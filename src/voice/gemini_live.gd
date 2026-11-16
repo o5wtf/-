@@ -14,11 +14,14 @@ const LISTEN_MODELS: PackedStringArray = [
 ]
 const CONNECT_MS := 4000
 const FIRST_AUDIO_MS := 12000
-## Удержание кнопки: сервер не режет фразу сам. 500 мс — нижняя граница, если VAD включат снова.
-const SILENCE_DURATION_MS := 500
-const PUSH_TO_TALK := {
-	"disabled": true,
+## Автоопределение конца фразы. Короче 500 мс сервер обрывает речь.
+const ACTIVITY := {
+	"startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
+	"endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
+	"prefixPaddingMs": 200,
+	"silenceDurationMs": 500,
 }
+const MIN_SPEECH_MS := 150
 
 ## Тесты выключают сеть: тогда сессия сразу отвечает «недоступна», без сокета.
 static var network_enabled: bool = true
@@ -39,6 +42,7 @@ var _segments: PackedStringArray = PackedStringArray()
 var _turn_done: bool = false
 var _listen_language: String = "ru-RU"
 var _listen_vocab: PackedStringArray = PackedStringArray()
+var _mode: String = ""
 
 
 static func parse_server(raw: String) -> Array:
@@ -108,8 +112,9 @@ static func setup_message(model: String, voice_name: String, listen: bool, emoti
 		var transcription := {"languageCodes": [language if language != "" else "ru-RU"]}
 		if not vocabulary.is_empty():
 			transcription["customVocabulary"] = vocabulary
+		transcription["mode"] = "VERBATIM"
 		setup["inputAudioTranscription"] = transcription
-		setup["realtimeInputConfig"] = {"automaticActivityDetection": PUSH_TO_TALK}
+		setup["realtimeInputConfig"] = {"automaticActivityDetection": ACTIVITY}
 	else:
 		setup["outputAudioTranscription"] = {}
 		setup["systemInstruction"] = {"parts": [{"text": VoiceProfiles.live_instruction(emotion, remark)}]}
@@ -193,7 +198,7 @@ static func collect_transcript(existing: PackedStringArray, events: Array) -> Di
 				parts.append(text)
 		elif kind == "interim":
 			interim = str(event.get("text", "")).strip_edges()
-		elif kind == "turn_complete" or kind == "generation_complete":
+		elif kind == "turn_complete":
 			done = true
 	var caption := parts.duplicate()
 	if interim != "":
@@ -201,12 +206,43 @@ static func collect_transcript(existing: PackedStringArray, events: Array) -> Di
 	return {"parts": parts, "done": done, "text": join_transcripts(parts), "caption": join_transcripts(caption)}
 
 
-static func activity_start() -> Dictionary:
-	return {"realtimeInput": {"activityStart": {}}}
+static func audio_stream_end() -> Dictionary:
+	return {"realtimeInput": {"audioStreamEnd": true}}
 
 
-static func activity_end() -> Dictionary:
-	return {"realtimeInput": {"activityEnd": {}}}
+static func is_clock_label(text: String) -> bool:
+	var folded := text.strip_edges()
+	if folded == "" or not folded.contains(":"):
+		return false
+	for index in folded.length():
+		var ch := folded.substr(index, 1)
+		var ok := (ch >= "0" and ch <= "9") or ch == ":" or ch == "." or ch == "," or ch == " " or ch == "-" or ch == ">" or ch == "[" or ch == "]" or ch == "(" or ch == ")"
+		if not ok:
+			return false
+	return true
+
+
+static func caption_for_input(mode: String, events: Array) -> String:
+	if mode != "listen":
+		return ""
+	var text := str(collect_transcript(PackedStringArray(), events)["caption"])
+	if is_clock_label(text):
+		return ""
+	return text
+
+
+static func min_speech_bytes(mix_rate: int) -> int:
+	var rate := mix_rate if mix_rate > 0 else 24000
+	return maxi(2, int(float(rate) * float(MIN_SPEECH_MS) / 1000.0) * 2)
+
+
+static func accept_spoken(byte_count: int, mix_rate: int, _turn_done: bool, heard: String, expected: String) -> bool:
+	if byte_count < min_speech_bytes(mix_rate):
+		return false
+	var clean := heard.strip_edges()
+	if clean != "" and not verbatim_ok(expected, clean):
+		return false
+	return true
 
 
 static func line_message(line: String) -> Dictionary:
@@ -236,7 +272,6 @@ func speak_line(api_key: String, line: String, voice_name: String, emotion: Stri
 		return _fail("unavailable", "Live отключён.")
 	var last := _fail("unavailable", "Live-сессия не открылась.")
 	for model in SPEAK_MODELS:
-		playback_reset.emit()
 		var result := await _speak_model(api_key, model, line, voice_name, emotion, remark)
 		if result.get("ok", false):
 			return result
@@ -248,7 +283,7 @@ func speak_line(api_key: String, line: String, voice_name: String, emotion: Stri
 
 
 func prepare_socket(api_key: String) -> void:
-	if api_key.strip_edges() == "" or not network_enabled:
+	if api_key.strip_edges() == "" or not network_enabled or _mode == "listen":
 		return
 	if _peer != null and (_peer.get_ready_state() == WebSocketPeer.STATE_OPEN or _peer.get_ready_state() == WebSocketPeer.STATE_CONNECTING):
 		return
@@ -276,8 +311,12 @@ func listen_open(api_key: String, language: String = "ru-RU", vocabulary: Packed
 	return last
 
 
+func accepts_input() -> bool:
+	return _mode == "listen"
+
+
 func listen_audio(pcm16k: PackedByteArray) -> void:
-	if _closed or pcm16k.is_empty():
+	if _mode != "listen" or _closed or pcm16k.is_empty():
 		return
 	_send(audio_message(pcm16k))
 	_absorb(_drain_packets())
@@ -285,8 +324,8 @@ func listen_audio(pcm16k: PackedByteArray) -> void:
 
 func listen_finish() -> String:
 	if _closed:
-		return join_transcripts(_segments)
-	_send(activity_end())
+		return _usable_join()
+	_send(audio_stream_end())
 	var started := Time.get_ticks_msec()
 	while not _turn_done and Time.get_ticks_msec() - started < 4000:
 		if _socket_closed():
@@ -295,10 +334,17 @@ func listen_finish() -> String:
 		if _turn_done:
 			break
 		await get_tree().process_frame
-	var text := join_transcripts(_segments)
+	var text := _usable_join()
 	_segments = PackedStringArray()
 	_turn_done = false
 	_close()
+	return text
+
+
+func _usable_join() -> String:
+	var text := join_transcripts(_segments)
+	if is_clock_label(text):
+		return ""
 	return text
 
 
@@ -307,8 +353,9 @@ func _absorb(events: Array) -> void:
 	_segments = collected["parts"]
 	_turn_done = _turn_done or bool(collected["done"])
 	var caption := str(collected["caption"])
-	if caption != "":
-		partial_text.emit(caption)
+	if caption == "" or _mode != "listen" or is_clock_label(caption):
+		return
+	partial_text.emit(caption)
 
 
 func _speak_model(api_key: String, model: String, line: String, voice_name: String, emotion: String, remark: String) -> Dictionary:
@@ -316,7 +363,7 @@ func _speak_model(api_key: String, model: String, line: String, voice_name: Stri
 	if not opened.get("ok", false):
 		return opened
 	var spoken_line := VoiceProfiles.spoken_text(line)
-	_send(line_message(VoiceProfiles.marked_line(spoken_line)))
+	_send(line_message(spoken_line))
 	var pcm := PackedByteArray()
 	var rate := 24000
 	var heard := ""
@@ -333,7 +380,7 @@ func _speak_model(api_key: String, model: String, line: String, voice_name: Stri
 				limit = maxi(limit, 20000)
 			elif kind == "output_transcript":
 				heard = str(event.get("text", ""))
-			elif kind == "turn_complete" or kind == "generation_complete":
+			elif kind == "turn_complete":
 				done = true
 			elif kind == "error":
 				_drop_session()
@@ -344,7 +391,7 @@ func _speak_model(api_key: String, model: String, line: String, voice_name: Stri
 			_drop_session()
 			return _fail_closed(model)
 		await get_tree().process_frame
-	if should_fallback(not pcm.is_empty(), done, heard, spoken_line):
+	if not accept_spoken(pcm.size(), rate, done, heard, spoken_line):
 		_drop_session()
 		return _fail("bad_response", "Модель «%s» не повторила реплику." % model)
 	var offset := 0
@@ -400,8 +447,7 @@ func _open(api_key: String, model: String, voice_name: String, listen: bool, emo
 		for event in _drain_packets():
 			var kind := str(event.get("kind", ""))
 			if kind == "setup":
-				if listen:
-					_send(activity_start())
+				_mode = "listen" if listen else "speak"
 				return {"ok": true, "error": "", "message": ""}
 			if kind == "error":
 				_close()
@@ -458,11 +504,7 @@ func _drain_packets() -> Array:
 		for event in parse_server(text):
 			events.append(event)
 			var kind := str(event.get("kind", ""))
-			if kind == "interim":
-				partial_text.emit(str(event.get("text", "")))
-			elif kind == "transcript":
-				final_text.emit(str(event.get("text", "")))
-			elif kind == "resume":
+			if kind == "resume":
 				_resume_handle = str(event.get("handle", ""))
 			elif kind == "go_away":
 				_go_away = true
@@ -483,6 +525,7 @@ func _close() -> void:
 	_closed = true
 	_go_away = false
 	_setup_sent = false
+	_mode = ""
 	if _peer != null:
 		_peer.close()
 		_peer = null

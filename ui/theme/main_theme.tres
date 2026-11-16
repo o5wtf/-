@@ -1,0 +1,9 @@
+[gd_resource type="Theme" load_steps=2 format=3]
+
+[ext_resource type="FontFile" uid="uid://dioqkhlw3alfy" path="res://ui/theme/fonts/PTSans-Regular.ttf" id="1_font"]
+
+[resource]
+default_font = ExtResource("1_font")
+default_font_size = 18
+Label/colors/font_color = Color(0.905882, 0.87451, 0.815686, 1)
+Button/colors/font_color = Color(0.905882, 0.87451, 0.815686, 1)

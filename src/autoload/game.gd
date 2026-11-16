@@ -9,6 +9,7 @@ signal busy_changed(is_busy: bool)
 var case_data: CaseData = null
 var state: GameState = null
 var notebook: Notebook = null
+var case_path: String = ""
 
 var _engine: RulesEngine = null
 var _dialogues: Dictionary = {}
@@ -24,11 +25,15 @@ func open_case(path: String) -> CaseLoader.Result:
 		case_data = null
 		state = null
 		notebook = null
+		case_path = ""
 		_engine = null
 		_dialogues = {}
 		return loaded
 	case_data = loaded.case_data
+	case_path = path
 	state = GameState.new()
+	state.case_id = case_data.id
+	state.case_version_hash = SaveState.file_hash(path)
 	_engine = RulesEngine.new(case_data, state)
 	_engine.start_new()
 	_dialogues = {}
@@ -72,13 +77,34 @@ func present(agent_id: String, evidence_id: String, player_text: String = "") ->
 func mark_contradiction(a: Dictionary, b: Dictionary) -> Dictionary:
 	if _engine == null:
 		return {"ok": false}
-	return _engine.try_manual_contradiction(a, b)
+	var report := _engine.try_manual_contradiction(a, b)
+	_autosave()
+	return report
 
 
 func accuse(killer_id: String, motive_id: String, method_id: String) -> Dictionary:
 	if _engine == null:
 		return {"killer_ok": false, "motive_ok": false, "method_ok": false, "solved": false}
-	return _engine.check_accusation(killer_id, motive_id, method_id)
+	var report := _engine.check_accusation(killer_id, motive_id, method_id)
+	_autosave()
+	return report
+
+
+func continue_case(path: String) -> Dictionary:
+	var case_id := SaveState.case_id_from_path(path)
+	if case_id == "":
+		return {"ok": false, "reason": "case"}
+	var saved := SaveState.read(case_id)
+	if not saved.ok:
+		return saved
+	var current_hash := SaveState.file_hash(path)
+	if str(saved.get("hash", "")) != current_hash or str(saved.get("case_id", "")) != case_id:
+		return {"ok": false, "reason": "hash"}
+	var loaded := open_case(path)
+	if not loaded.ok:
+		return {"ok": false, "reason": "case"}
+	_replace_state(saved.get("state", {}))
+	return {"ok": true, "reason": ""}
 
 
 func _turn(agent_id: String, player_text: String, event_note: String, evidence_id: String) -> void:
@@ -151,9 +177,34 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 	dialogue.append_message("player", player_text, state.turn)
 	dialogue.append_message("agent", reply, state.turn, remark)
 	_sync_dialogues()
+	_autosave()
 	agent_replied.emit(agent_id, reply, remark)
 	events.emit(turn_events)
 	busy_changed.emit(false)
+
+
+func _autosave() -> void:
+	if state == null:
+		return
+	SaveState.write_state(state)
+
+
+func _replace_state(data: Variant) -> void:
+	if data is not Dictionary:
+		return
+	state = GameState.from_dict(data)
+	state.case_id = case_data.id
+	state.case_version_hash = SaveState.file_hash(case_path)
+	_engine = RulesEngine.new(case_data, state)
+	_dialogues = {}
+	for agent in case_data.agents:
+		var saved: Variant = state.dialogues.get(agent.id, {})
+		if saved is Dictionary:
+			_dialogues[agent.id] = DialogueState.from_dict(saved)
+		else:
+			_dialogues[agent.id] = DialogueState.new()
+		state.dialogues[agent.id] = (_dialogues[agent.id] as DialogueState).to_dict()
+	notebook = Notebook.new(case_data, state)
 
 
 func _refresh_summary(agent_id: String, dialogue: DialogueState) -> void:

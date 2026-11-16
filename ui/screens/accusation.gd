@@ -1,6 +1,7 @@
 extends Control
 
 signal menu_pressed
+signal back_pressed
 
 var _killer: OptionButton
 var _motive: OptionButton
@@ -34,6 +35,9 @@ func _ready() -> void:
 	column.add_child(UiWidgets.label("Способ"))
 	_method = _options("MethodOption")
 	column.add_child(_method)
+	var back := UiWidgets.button(UiStrings.BACK, "BackButton")
+	back.pressed.connect(func() -> void: back_pressed.emit())
+	column.add_child(back)
 	var accuse := UiWidgets.button(UiStrings.ACCUSE, "AccuseButton")
 	accuse.pressed.connect(_accuse)
 	column.add_child(accuse)
@@ -46,6 +50,7 @@ func _ready() -> void:
 	var victory_box := VBoxContainer.new()
 	_victory.add_child(victory_box)
 	victory_box.add_child(UiWidgets.label(UiStrings.VICTORY))
+	victory_box.add_child(UiWidgets.label(UiStrings.HOW_IT_ENDED))
 	_timeline = UiWidgets.label("", "TimelineLabel")
 	victory_box.add_child(_timeline)
 	var menu := UiWidgets.button(UiStrings.TO_MENU, "VictoryMenuButton")

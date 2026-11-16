@@ -4,6 +4,7 @@ extends RefCounted
 
 const NEW_CASE := "Новое дело"
 const CONTINUE := "Продолжить"
+const RESTART := "Начать заново"
 const SETTINGS := "Настройки"
 const BACK := "Назад"
 const SAVE := "Сохранить"
@@ -58,6 +59,10 @@ const LINK_NEED_KEY := "Сначала укажите ключ."
 const LINK_FAIL := "Проверка не удалась."
 const CHECKING := "Проверяем…"
 const SAVED := "Настройки сохранены."
+const SAVE_HASH := "Дело изменилось. Это сохранение не подходит. Начните заново."
+const SAVE_CORRUPT := "Сохранение повреждено. Начните заново."
+const SAVE_VERSION := "Это сохранение от другой версии. Начните заново."
+const HOW_IT_ENDED := "Как всё было"
 
 
 static func state_remark(band_name: String, emotion: String) -> String:

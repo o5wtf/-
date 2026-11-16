@@ -122,6 +122,44 @@ func test_live_instruction_carries_tone_outside_the_line() -> void:
 		assert_false(spoken.contains("Тон"))
 
 
+func test_live_vad_verbatim_and_resumption() -> void:
+	var listen: Dictionary = GeminiLive.setup_message("gemini-3.5-transcribe-live", "", true)
+	var activity: Dictionary = listen["setup"]["realtimeInputConfig"]["automaticActivityDetection"]
+	assert_eq(activity, GeminiLive.ACTIVITY)
+	assert_eq(activity["silenceDurationMs"], 500)
+	assert_eq(activity["endOfSpeechSensitivity"], "END_SENSITIVITY_HIGH")
+	assert_eq(activity["startOfSpeechSensitivity"], "START_SENSITIVITY_HIGH")
+	var speak: Dictionary = GeminiLive.setup_message("gemini-3.8-live", "Kore", false, "controlled", "молчит", "handle-1")
+	assert_true(speak["setup"].has("outputAudioTranscription"))
+	assert_eq(speak["setup"]["sessionResumption"]["handle"], "handle-1")
+	assert_true(speak["setup"]["contextWindowCompression"].has("slidingWindow"))
+	assert_true(str(speak["setup"]["systemInstruction"]["parts"][0]["text"]).contains("cold, restrained"))
+	var sent: Dictionary = GeminiLive.line_message("Хватит.")
+	assert_eq(sent["clientContent"]["turns"][0]["parts"][0]["text"], "Хватит.")
+	assert_true(GeminiLive.verbatim_ok("Хватит!", "хватит"))
+	assert_true(GeminiLive.verbatim_ok("Всё сказал.", "все сказал"))
+	assert_false(GeminiLive.verbatim_ok("Хватит.", "Совершенно другая фраза"))
+	assert_true(GeminiLive.should_fallback(false, true, "", "Хватит."))
+	assert_true(GeminiLive.should_fallback(true, false, "", "Хватит."))
+	assert_true(GeminiLive.should_fallback(true, true, "другая фраза", "Хватит."))
+	assert_false(GeminiLive.should_fallback(true, true, "Хватит!", "Хватит."))
+	assert_false(GeminiLive.should_fallback(true, true, "", "Хватит."))
+	var events := GeminiLive.parse_server("{\"sessionResumptionUpdate\":{\"newHandle\":\"abc\",\"resumable\":true},\"goAway\":{\"timeLeft\":\"10s\"}}")
+	var handle := ""
+	var leaving := false
+	for event in events:
+		if str(event.get("kind", "")) == "resume":
+			handle = str(event.get("handle", ""))
+		if str(event.get("kind", "")) == "go_away":
+			leaving = true
+	assert_eq(handle, "abc")
+	assert_true(leaving)
+	var same := GeminiLive.session_key("gemini-3.8-live", "Kore", false, "calm", "")
+	assert_true(GeminiLive.can_resume(same, same, handle))
+	var other := GeminiLive.session_key("gemini-3.8-live", "Kore", false, "angry", "")
+	assert_false(GeminiLive.can_resume(same, other, handle))
+
+
 func test_l16_and_wav_roundtrip() -> void:
 	var pcm := PackedByteArray([1, 2, 3, 4, 5, 6])
 	var parsed := VoiceAudio.pcm_from_mime("audio/L16;codec=pcm;rate=24000", Marshalls.raw_to_base64(pcm))

@@ -84,6 +84,34 @@ static func style_prompt(reply: String, emotion: String, _remark: String, mode: 
 	return "Read the following Russian line in a %s tone. Speak only the Russian line:\n%s" % [tone, line]
 
 
+static func live_instruction(emotion: String, remark: String) -> String:
+	var text := "Ты озвучиваешь персонажа. Произнеси реплику пользователя дословно, ничего не добавляя и не комментируя. Тон: %s." % live_tone(emotion)
+	var stage := remark.strip_edges().replace("\n", " ")
+	if stage.length() > 80:
+		stage = stage.substr(0, 80).strip_edges()
+	if stage != "":
+		text += " Ремарка: %s." % stage
+	return text
+
+
+static func live_tone(emotion: String) -> String:
+	match emotion:
+		"nervous":
+			return "нервно, сбивчиво (nervous, hesitant)"
+		"scared":
+			return "тихо, испуганно (scared, quiet)"
+		"sad":
+			return "печально (sad)"
+		"angry":
+			return "резко, гневно (angry, sharp)"
+		"controlled":
+			return "холодно, сдержанно (cold, restrained)"
+		"contemptuous":
+			return "медленно, презрительно (slow, contemptuous)"
+		_:
+			return "спокойно (calm)"
+
+
 static func _english_tone(emotion: String) -> String:
 	match emotion:
 		"nervous":

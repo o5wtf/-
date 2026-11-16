@@ -64,7 +64,7 @@ static func parse_server(raw: String) -> Array:
 	return events
 
 
-static func setup_message(model: String, voice_name: String, listen: bool) -> Dictionary:
+static func setup_message(model: String, voice_name: String, listen: bool, emotion: String = "", remark: String = "") -> Dictionary:
 	var generation := {"responseModalities": ["TEXT" if listen else "AUDIO"]}
 	if not listen and voice_name != "":
 		generation["speechConfig"] = {
@@ -77,7 +77,7 @@ static func setup_message(model: String, voice_name: String, listen: bool) -> Di
 	if listen:
 		setup["inputAudioTranscription"] = {}
 	else:
-		setup["systemInstruction"] = {"parts": [{"text": "Speak the user's text verbatim in Russian. Do not add, translate, or describe the delivery."}]}
+		setup["systemInstruction"] = {"parts": [{"text": VoiceProfiles.live_instruction(emotion, remark)}]}
 	return {"setup": setup}
 
 
@@ -101,14 +101,14 @@ static func audio_message(pcm: PackedByteArray) -> Dictionary:
 	}
 
 
-func speak_line(api_key: String, line: String, voice_name: String) -> Dictionary:
+func speak_line(api_key: String, line: String, voice_name: String, emotion: String = "neutral", remark: String = "") -> Dictionary:
 	if api_key.strip_edges() == "":
 		return _fail("auth", "Не задан ключ API. Укажите его в настройках или в переменной GEMINI_API_KEY.")
 	if not network_enabled:
 		return _fail("unavailable", "Live отключён.")
 	var last := _fail("unavailable", "Live-сессия не открылась.")
 	for model in SPEAK_MODELS:
-		var result := await _speak_model(api_key, model, line, voice_name)
+		var result := await _speak_model(api_key, model, line, voice_name, emotion, remark)
 		if result.get("ok", false):
 			return result
 		last = result
@@ -159,11 +159,11 @@ func listen_finish() -> String:
 	return final_text
 
 
-func _speak_model(api_key: String, model: String, line: String, voice_name: String) -> Dictionary:
-	var opened := await _open(api_key, model, voice_name, false)
+func _speak_model(api_key: String, model: String, line: String, voice_name: String, emotion: String, remark: String) -> Dictionary:
+	var opened := await _open(api_key, model, voice_name, false, emotion, remark)
 	if not opened.get("ok", false):
 		return opened
-	_send(line_message(line))
+	_send(line_message(VoiceProfiles.spoken_text(line)))
 	var pcm := PackedByteArray()
 	var rate := 24000
 	var started := Time.get_ticks_msec()
@@ -192,7 +192,7 @@ func _speak_model(api_key: String, model: String, line: String, voice_name: Stri
 	return {"ok": true, "pcm": pcm, "mix_rate": rate, "model": model, "error": "", "message": ""}
 
 
-func _open(api_key: String, model: String, voice_name: String, listen: bool) -> Dictionary:
+func _open(api_key: String, model: String, voice_name: String, listen: bool, emotion: String = "", remark: String = "") -> Dictionary:
 	_close()
 	_api_key = api_key
 	_closed = false
@@ -214,7 +214,7 @@ func _open(api_key: String, model: String, voice_name: String, listen: bool) -> 
 	if _peer == null or _peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		_close()
 		return _fail("offline", "Нет сети. Проверьте подключение и повторите.")
-	_send(setup_message(model, voice_name, listen))
+	_send(setup_message(model, voice_name, listen, emotion, remark))
 	started = Time.get_ticks_msec()
 	while Time.get_ticks_msec() - started < CONNECT_MS:
 		for event in _drain_packets():

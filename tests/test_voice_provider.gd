@@ -96,6 +96,32 @@ func test_live_messages_carry_transcript_and_audio() -> void:
 	assert_false(str(line["clientContent"]["turns"][0]["parts"][0]["text"]).contains("["))
 
 
+func test_live_instruction_carries_tone_outside_the_line() -> void:
+	var line := "Хватит."
+	var expected := {
+		"calm": "calm",
+		"neutral": "calm",
+		"nervous": "hesitant",
+		"scared": "quiet",
+		"sad": "sad",
+		"angry": "sharp",
+		"controlled": "restrained",
+		"contemptuous": "contemptuous",
+	}
+	for emotion in expected:
+		var setup: Dictionary = GeminiLive.setup_message("gemini-3.8-live", "Kore", false, emotion, "отводит взгляд")
+		var instruction := str(setup["setup"]["systemInstruction"]["parts"][0]["text"])
+		assert_true(instruction.contains("Тон:"), emotion)
+		assert_true(instruction.contains(str(expected[emotion])), emotion)
+		assert_true(instruction.contains("отводит взгляд"), emotion)
+		var sent: Dictionary = GeminiLive.line_message(VoiceProfiles.spoken_text(line))
+		var spoken := str(sent["clientContent"]["turns"][0]["parts"][0]["text"])
+		assert_eq(spoken, line)
+		assert_false(spoken.contains(str(expected[emotion])))
+		assert_false(spoken.contains("отводит"))
+		assert_false(spoken.contains("Тон"))
+
+
 func test_l16_and_wav_roundtrip() -> void:
 	var pcm := PackedByteArray([1, 2, 3, 4, 5, 6])
 	var parsed := VoiceAudio.pcm_from_mime("audio/L16;codec=pcm;rate=24000", Marshalls.raw_to_base64(pcm))
@@ -128,7 +154,7 @@ func test_overload_falls_back_and_cache_replays_without_request() -> void:
 	assert_eq(transport.seen.size(), 2)
 	assert_true(str(transport.seen[1]["url"]).contains("gemini-3.8-flash-tts"))
 	assert_false(str(transport.seen[0]["body"]).contains(SECRET))
-	var cache_path := VoiceCache.path_for(VoiceCache.key_for(profile.voice_name, "calm", "Добрый день.", VoiceProfiles.DEFAULT_STYLE_MODE))
+	var cache_path := VoiceCache.path_for(VoiceCache.key_for(profile.voice_name, "calm", "Добрый день.", VoiceProfiles.DEFAULT_STYLE_MODE, "кивает"))
 	assert_true(FileAccess.file_exists(cache_path))
 	assert_false(FileAccess.get_file_as_string(cache_path).contains(SECRET))
 	provider.speak("Добрый день.", profile, "calm", "кивает")

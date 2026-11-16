@@ -32,13 +32,18 @@ func test_profile_follows_gender_age_and_name() -> void:
 	assert_eq(from_case.age_band, "older")
 
 
-func test_style_prompt_speaks_the_reply_only() -> void:
+func test_style_prompt_is_a_bracket_tag_without_instructions() -> void:
 	var prompt := VoiceProfiles.style_prompt("Только это.", "nervous", "отводит взгляд")
-	assert_true(prompt.ends_with("Только это."))
-	assert_true(prompt.contains("отводит взгляд"))
-	assert_true(prompt.contains("не произноси"))
-	assert_eq(VoiceProfiles.spoken_text("  да  "), "да")
-	assert_true(prompt.find("Только это.") > prompt.find("отводит взгляд"))
+	assert_eq(prompt, "[нервно, сбивчиво, отводит взгляд] Только это.")
+	var lower := prompt.to_lower()
+	for phrase in ["скажи", "произнеси", "вслух", "не произноси", "реплику"]:
+		assert_false(lower.contains(phrase), phrase)
+	assert_false(prompt.contains("\""))
+	assert_false(prompt.contains("«"))
+	var cleaned := VoiceProfiles.style_prompt("[уже] *сказал*", "calm", "скажи громко")
+	assert_eq(cleaned, "[спокойно, громко] уже сказал")
+	assert_false(cleaned.to_lower().contains("скаж"))
+	assert_eq(VoiceProfiles.spoken_text("  [да]*  "), "да")
 
 
 func test_l16_and_wav_roundtrip() -> void:
@@ -138,13 +143,48 @@ func test_auth_error_names_the_reason_without_the_key() -> void:
 	_free(fixture)
 
 
-func test_mic_audio_returns_transcript_in_the_request() -> void:
+func test_rate_limit_falls_through_to_the_next_tts_model() -> void:
+	var fixture := await _cloud()
+	var transport: FakeTransport = fixture["transport"]
+	var provider: CloudVoiceProvider = fixture["provider"]
+	_arm(provider)
+	transport.push(_status(429, "{\"error\":{\"status\":\"RESOURCE_EXHAUSTED\",\"message\":\"quota\"}}"))
+	transport.push(_audio(PackedByteArray([4, 0])))
+	provider.speak("Ещё раз.", VoiceProfiles.for_person("a", "Анна", "", 40), "neutral", "")
+	await _until(provider, 1)
+	assert_eq(fixture["speaker"].played.size(), 1)
+	assert_eq(transport.seen.size(), 2)
+	assert_true(str(transport.seen[1]["url"]).contains("gemini-3.8-flash-tts"))
+	provider.speak("Ещё раз.", VoiceProfiles.for_person("a", "Анна", "", 40), "neutral", "")
+	await _until(provider, 2)
+	assert_eq(transport.seen.size(), 2)
+	_free(fixture)
+
+
+func test_developer_instruction_is_a_request_bug() -> void:
+	var fixture := await _cloud()
+	var transport: FakeTransport = fixture["transport"]
+	var provider: CloudVoiceProvider = fixture["provider"]
+	_arm(provider)
+	_notice = ""
+	_notice_text = ""
+	provider.voice_error.connect(_on_notice_text)
+	transport.push(_status(400, "{\"error\":{\"status\":\"INVALID_ARGUMENT\",\"message\":\"Developer instruction is not enabled for this model\"}}"))
+	provider.speak("Алло.", VoiceProfiles.for_person("a", "Анна", "", 40), "neutral", "")
+	await _until(provider, 1)
+	assert_eq(_notice, "rejected")
+	assert_false(_notice_text.to_lower().contains("недоступ"))
+	assert_false(_notice_text.contains("Ключ"))
+	assert_eq(transport.seen.size(), 1)
+	_free(fixture)
+
+
+func test_mic_audio_uses_the_fast_transcription_chain() -> void:
 	var fixture := await _cloud()
 	var transport: FakeTransport = fixture["transport"]
 	var mic: FakeMic = fixture["mic"]
 	var provider: CloudVoiceProvider = fixture["provider"]
-	transport.push(_status(400, "{\"error\":{\"message\":\"responseJsonSchema is not supported\"}}"))
-	transport.push(_transcript("Во сколько это было?"))
+	transport.push(_plain("Во сколько это было?"))
 	_heard = ""
 	_heard_final = false
 	_heard_n = 0
@@ -155,15 +195,52 @@ func test_mic_audio_returns_transcript_in_the_request() -> void:
 		await provider.transcript_ready
 	assert_eq(_heard, "Во сколько это было?")
 	assert_true(_heard_final)
-	assert_eq(transport.seen.size(), 2)
+	assert_eq(transport.seen.size(), 1)
 	var first := str(transport.seen[0]["body"])
-	var second := str(transport.seen[1]["body"])
+	assert_true(str(transport.seen[0]["url"]).contains("gemini-3.5-flash-lite"))
+	assert_eq(transport.seen[0]["timeout"], GeminiSpeech.TRANSCRIBE_TIMEOUT_S)
 	assert_true(first.contains("inlineData"))
-	assert_true(second.contains("responseSchema"))
-	assert_false(second.contains("responseJsonSchema"))
+	assert_true(first.contains(GeminiSpeech.TRANSCRIBE_PROMPT))
+	assert_true(first.contains("MINIMAL"))
+	assert_false(first.contains("systemInstruction"))
+	assert_false(first.contains("responseJsonSchema"))
 	assert_false(first.contains(SECRET))
 	assert_true(mic.started_count >= 1)
 	_free(fixture)
+
+
+func test_transcribe_model_reads_audio_transcription() -> void:
+	var fixture := await _cloud()
+	var transport: FakeTransport = fixture["transport"]
+	var provider: CloudVoiceProvider = fixture["provider"]
+	transport.push(_plain(""))
+	transport.push(_audio_transcription("После семи."))
+	_heard = ""
+	_heard_n = 0
+	provider.transcript_ready.connect(_on_transcript)
+	provider.start_listening()
+	provider.stop_listening()
+	while _heard_n < 1:
+		await provider.transcript_ready
+	assert_eq(_heard, "После семи.")
+	assert_eq(transport.seen.size(), 2)
+	assert_true(str(transport.seen[1]["url"]).contains("gemini-3.5-transcribe"))
+	var second: Dictionary = JSON.parse_string(str(transport.seen[1]["body"]))
+	assert_false(second["generationConfig"].has("thinkingConfig"))
+	_free(fixture)
+
+
+func test_upload_audio_is_16k_mono_without_edge_silence() -> void:
+	var loud := PackedByteArray([0, 0, 0, 16])
+	var silence := PackedByteArray([0, 0])
+	var pcm := silence + silence + loud + silence + silence
+	var prepared := VoiceAudio.prepare_for_upload(pcm, 48000, false)
+	assert_true(prepared.size() < pcm.size())
+	assert_true(prepared.size() >= 2)
+	var wav := VoiceAudio.wav_bytes(prepared, VoiceAudio.UPLOAD_RATE)
+	var back := VoiceAudio.pcm_from_mime("audio/wav", Marshalls.raw_to_base64(wav))
+	assert_eq(back["mix_rate"], 16000)
+	assert_eq(back["pcm"], prepared)
 
 
 func test_requests_are_one_at_a_time() -> void:
@@ -306,6 +383,26 @@ func _audio(pcm: PackedByteArray) -> Dictionary:
 	return _status(200, JSON.stringify(payload))
 
 
+func _plain(text: String) -> Dictionary:
+	var payload := {
+		"candidates": [{
+			"content": {"parts": [{"text": text}]},
+			"finishReason": "STOP",
+		}],
+	}
+	return _status(200, JSON.stringify(payload))
+
+
+func _audio_transcription(text: String) -> Dictionary:
+	var payload := {
+		"candidates": [{
+			"content": {"parts": [{"audioTranscription": {"text": text}}]},
+			"finishReason": "STOP",
+		}],
+	}
+	return _status(200, JSON.stringify(payload))
+
+
 func _transcript(text: String) -> Dictionary:
 	var payload := {
 		"candidates": [{
@@ -352,7 +449,7 @@ class FakeMic:
 		return {"ok": true}
 
 	func stop() -> Dictionary:
-		return {"ok": true, "pcm": PackedByteArray([1, 0, 2, 0]), "mix_rate": 16000, "stereo": false}
+		return {"ok": true, "pcm": PackedByteArray([0, 16, 0, 16, 0, 16, 0, 16]), "mix_rate": 16000, "stereo": false}
 
 
 class FakeTts:

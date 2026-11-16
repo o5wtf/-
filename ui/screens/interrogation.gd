@@ -262,6 +262,9 @@ func _mic_up() -> void:
 		return
 	_holding_mic = false
 	_mic.text = UiStrings.MIC
+	var recognizing := Voice.listening()
+	if recognizing:
+		_prompt.placeholder_text = UiStrings.RECOGNIZING
 	Voice.stop_listening()
 
 
@@ -273,11 +276,13 @@ func _on_voice_error(kind: String, message: String) -> void:
 		text = UiStrings.error_text(kind)
 	_voice_notice.text = text
 	_voice_notice.visible = true
+	_prompt.placeholder_text = UiStrings.QUESTION_PLACEHOLDER
 
 
 func _on_transcript(text: String, is_final: bool) -> void:
 	if not is_final:
 		return
+	_prompt.placeholder_text = UiStrings.QUESTION_PLACEHOLDER
 	_prompt.text = text
 	_voice_notice.visible = false
 	_refresh_hint_from_text()

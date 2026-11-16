@@ -8,7 +8,7 @@ static var directory := "user://voice_cache"
 static func key_for(voice_name: String, emotion: String, remark: String, reply: String) -> String:
 	var ctx := HashingContext.new()
 	ctx.start(HashingContext.HASH_SHA256)
-	var payload := "v1|%s|%s|%s|%s" % [voice_name, emotion, remark.strip_edges(), reply.strip_edges()]
+	var payload := "v2|%s|%s|%s|%s" % [voice_name, emotion, remark.strip_edges(), reply.strip_edges()]
 	ctx.update(payload.to_utf8_buffer())
 	return ctx.finish().hex_encode()
 

@@ -59,6 +59,10 @@ func start_listening() -> void:
 	provider.start_listening("ru-RU")
 
 
+func listening() -> bool:
+	return provider != null and provider.is_listening()
+
+
 func stop_listening() -> void:
 	if provider == null:
 		return

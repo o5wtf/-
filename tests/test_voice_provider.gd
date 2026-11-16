@@ -32,18 +32,22 @@ func test_profile_follows_gender_age_and_name() -> void:
 	assert_eq(from_case.age_band, "older")
 
 
-func test_style_prompt_is_a_bracket_tag_without_instructions() -> void:
-	var prompt := VoiceProfiles.style_prompt("Только это.", "nervous", "отводит взгляд")
-	assert_eq(prompt, "[нервно, сбивчиво, отводит взгляд] Только это.")
-	var lower := prompt.to_lower()
-	for phrase in ["скажи", "произнеси", "вслух", "не произноси", "реплику"]:
-		assert_false(lower.contains(phrase), phrase)
-	assert_false(prompt.contains("\""))
-	assert_false(prompt.contains("«"))
-	var cleaned := VoiceProfiles.style_prompt("[уже] *сказал*", "calm", "скажи громко")
-	assert_eq(cleaned, "[спокойно, громко] уже сказал")
-	assert_false(cleaned.to_lower().contains("скаж"))
-	assert_eq(VoiceProfiles.spoken_text("  [да]*  "), "да")
+func test_style_prompt_is_only_the_spoken_line() -> void:
+	for emotion in ["calm", "neutral", "nervous", "scared", "sad", "angry", "controlled", "contemptuous"]:
+		var prompt := VoiceProfiles.style_prompt("Только это.", emotion, "отводит взгляд")
+		assert_eq(prompt, "Только это.")
+		assert_false(prompt.contains("["))
+		assert_false(prompt.contains("]"))
+		assert_false(prompt.contains("("))
+		assert_false(prompt.contains("*"))
+		for word in VoiceProfiles.MOOD_WORDS:
+			assert_false(prompt.to_lower().contains(word), "%s/%s" % [emotion, word])
+	assert_eq(VoiceProfiles.spoken_text("Холодно, сдержанно: Я уже всё рассказал."), "Я уже всё рассказал.")
+	assert_eq(VoiceProfiles.spoken_text("(нервно) Я не знаю."), "Я не знаю.")
+	assert_eq(VoiceProfiles.spoken_text("*вздыхает* Оставьте меня."), "Оставьте меня.")
+	assert_eq(VoiceProfiles.spoken_text("— тихо — Я был дома."), "Я был дома.")
+	assert_eq(VoiceProfiles.spoken_text("[холодно, сдержанно] Хватит."), "Хватит.")
+	assert_eq(VoiceProfiles.style_prompt("[холодно, сдержанно] Хватит.", "controlled", "молчит"), "Хватит.")
 
 
 func test_l16_and_wav_roundtrip() -> void:

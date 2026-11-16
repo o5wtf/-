@@ -42,18 +42,24 @@ static func for_person(person_id: String, person_name: String, gender: String, a
 	return profile
 
 
+const MOOD_WORDS: PackedStringArray = [
+	"спокойно", "ровно", "нервно", "сбивчиво", "тихо", "испуганно", "печально",
+	"резко", "гневно", "холодно", "сдержанно", "медленно", "презрительно",
+]
+
+
 static func spoken_text(reply: String) -> String:
-	return _clean_line(reply)
+	var line := reply.strip_edges()
+	for _step in 6:
+		var next := _strip_leading_direction(line)
+		if next == line:
+			break
+		line = next.strip_edges()
+	return line
 
 
-static func style_prompt(reply: String, emotion: String, remark: String) -> String:
-	var line := spoken_text(reply)
-	var tags := _style_tags(emotion, remark)
-	if line == "":
-		return ""
-	if tags == "":
-		return line
-	return "[%s] %s" % [tags, line]
+static func style_prompt(reply: String, _emotion: String, _remark: String) -> String:
+	return spoken_text(reply)
 
 
 static func playback_rate(emotion: String, user_rate: float) -> float:
@@ -98,60 +104,86 @@ static func _pitch(gender: String, band: String) -> float:
 	return clampf(pitch, 0.85, 1.15)
 
 
-static func _style_tags(emotion: String, remark: String) -> String:
-	var tags: PackedStringArray = PackedStringArray()
-	var mood := _mood(emotion)
-	if mood != "":
-		tags.append(mood)
-	var stage := _condense_remark(remark)
-	if stage != "":
-		tags.append(stage)
-	return ", ".join(tags)
+static func _strip_leading_direction(line: String) -> String:
+	if line == "":
+		return ""
+	var wrapped := _unwrap_mark(line, "[", "]")
+	if wrapped != line:
+		return wrapped
+	wrapped = _unwrap_mark(line, "(", ")")
+	if wrapped != line:
+		return wrapped
+	wrapped = _unwrap_mark(line, "*", "*")
+	if wrapped != line:
+		return wrapped
+	for dash in ["—", "–", "-"]:
+		wrapped = _unwrap_mark(line, dash, dash)
+		if wrapped != line:
+			return wrapped
+	var mood := _mood_prefix(line)
+	if int(mood["count"]) <= 0:
+		return line
+	var rest := str(mood["rest"])
+	var marked := int(mood["count"]) >= 2 or bool(mood["separator"])
+	if marked and rest != "":
+		return rest
+	return line
 
 
-static func _mood(emotion: String) -> String:
-	match emotion:
-		"calm":
-			return "спокойно"
-		"nervous":
-			return "нервно, сбивчиво"
-		"scared":
-			return "тихо, испуганно"
-		"sad":
-			return "тихо, печально"
-		"angry":
-			return "резко, гневно"
-		"controlled":
-			return "холодно, сдержанно"
-		"contemptuous":
-			return "медленно, презрительно"
-		_:
-			return "ровно"
+static func _unwrap_mark(line: String, opener: String, closer: String) -> String:
+	if not line.begins_with(opener):
+		return line
+	var end := line.find(closer, opener.length())
+	if end <= opener.length() or end > 64:
+		return line
+	var inner := line.substr(opener.length(), end - opener.length()).strip_edges()
+	var rest := line.substr(end + closer.length()).strip_edges()
+	if rest == "":
+		if _is_direction(inner):
+			return ""
+		return line
+	if _is_direction(inner):
+		return rest
+	return line
 
 
-static func _clean_line(reply: String) -> String:
-	var line := reply.strip_edges()
-	line = line.replace("[", "").replace("]", "").replace("*", "")
-	return line.strip_edges()
+static func _is_direction(inner: String) -> bool:
+	var text := inner.strip_edges()
+	if text == "" or text.length() > 48:
+		return false
+	if text.contains(".") or text.contains("!") or text.contains("?"):
+		return false
+	return true
 
 
-static func _condense_remark(remark: String) -> String:
-	var text := remark.strip_edges()
-	for mark in ["[", "]", "*", "\"", "«", "»", ".", "!", "?", ",", ";", ":"]:
-		text = text.replace(mark, " ")
-	var words: PackedStringArray = PackedStringArray()
-	for word in text.split(" ", false):
-		var clean := str(word).strip_edges()
-		if clean == "":
+static func _mood_prefix(line: String) -> Dictionary:
+	var index := 0
+	var count := 0
+	while index < line.length():
+		while index < line.length() and (line.substr(index, 1) == " " or line.substr(index, 1) == ","):
+			index += 1
+		var word_end := index
+		while word_end < line.length():
+			var ch := line.substr(word_end, 1)
+			if ch == " " or ch == "," or ch == ":" or ch == "." or ch == "—" or ch == "–" or ch == "-":
+				break
+			word_end += 1
+		if word_end == index:
+			break
+		var word := line.substr(index, word_end - index).to_lower()
+		if not MOOD_WORDS.has(word):
+			break
+		count += 1
+		index = word_end
+		if index < line.length() and line.substr(index, 1) == ",":
 			continue
-		var lower := clean.to_lower()
-		if lower.contains("скаж") or lower.contains("произнес") or lower == "вслух":
-			continue
-		words.append(clean)
-	text = " ".join(words)
-	if text.length() > 40:
-		text = text.substr(0, 40).strip_edges()
-	return text
+		break
+	var rest := line.substr(index).strip_edges()
+	var separator := false
+	if rest.begins_with(":") or rest.begins_with(".") or rest.begins_with("—") or rest.begins_with("–") or rest.begins_with("-"):
+		separator = true
+		rest = rest.substr(1).strip_edges()
+	return {"count": count, "rest": rest, "separator": separator}
 
 
 static func _emotion_rate(emotion: String) -> float:

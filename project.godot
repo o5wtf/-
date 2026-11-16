@@ -18,6 +18,7 @@ run/main_scene="res://src/main.tscn"
 
 Game="*res://src/autoload/game.gd"
 LLM="*res://src/autoload/llm.gd"
+Voice="*res://src/autoload/voice.gd"
 
 [display]
 
@@ -31,6 +32,11 @@ window/handheld/orientation=6
 [gui]
 
 theme/custom="res://ui/theme/main_theme.tres"
+
+[audio]
+
+driver/enable_input=true
+general/text_to_speech=true
 
 [rendering]
 

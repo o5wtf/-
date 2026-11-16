@@ -81,6 +81,8 @@ static func _agent(raw: Dictionary) -> CaseData.Agent:
 	agent.id = _string(raw.get("id"))
 	agent.name = _string(raw.get("name"))
 	agent.role = _string(raw.get("role"))
+	agent.gender = _string(raw.get("gender", ""))
+	agent.age = _int(raw.get("age", 0))
 	agent.personality = _string(raw.get("personality"))
 	agent.prompt_background = _string(raw.get("prompt_background"))
 	agent.background = _string(raw.get("background"))

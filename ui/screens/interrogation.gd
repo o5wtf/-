@@ -15,7 +15,10 @@ var _hint: HBoxContainer
 var _hint_label: Label
 var _thinking: Label
 var _error: Label
+var _voice_notice: Label
+var _mic: Button
 var _retry: Button
+var _holding_mic: bool = false
 var _busy: bool = false
 var _hint_id: String = ""
 var _dismissed: String = ""
@@ -50,6 +53,10 @@ func _ready() -> void:
 	_error.add_theme_color_override("font_color", NoirTheme.GOLD)
 	_error.visible = false
 	column.add_child(_error)
+	_voice_notice = UiWidgets.label("", "VoiceNotice")
+	_voice_notice.add_theme_color_override("font_color", NoirTheme.MUTED)
+	_voice_notice.visible = false
+	column.add_child(_voice_notice)
 	_retry = UiWidgets.button(UiStrings.RETRY, "RetryButton")
 	_retry.visible = false
 	_retry.pressed.connect(_retry_last)
@@ -87,11 +94,17 @@ func _ready() -> void:
 	var contradiction := UiWidgets.button(UiStrings.CONTRADICTION, "ContradictionButton")
 	contradiction.pressed.connect(func() -> void: contradiction_requested.emit())
 	tools.add_child(contradiction)
+	_mic = UiWidgets.button(UiStrings.MIC, "MicButton")
+	_mic.button_down.connect(_mic_down)
+	_mic.button_up.connect(_mic_up)
+	tools.add_child(_mic)
 	if not Game.agent_replied.is_connected(_on_replied):
 		Game.agent_replied.connect(_on_replied)
 		Game.events.connect(_on_events)
 		Game.llm_error.connect(_on_error)
 		Game.busy_changed.connect(_on_busy)
+		Voice.voice_error.connect(_on_voice_error)
+		Voice.transcript_ready.connect(_on_transcript)
 
 
 func open_agent(next_id: String) -> void:
@@ -221,11 +234,66 @@ func _hide_hint() -> void:
 	_hint.visible = false
 
 
+func _unhandled_input(event: InputEvent) -> void:
+	if OS.get_name() == "Android":
+		return
+	if event is not InputEventKey:
+		return
+	var key := event as InputEventKey
+	if key.echo or key.keycode != KEY_SPACE or _prompt.has_focus():
+		return
+	if key.pressed:
+		_mic_down()
+	else:
+		_mic_up()
+	get_viewport().set_input_as_handled()
+
+
+func _mic_down() -> void:
+	if _busy or _holding_mic:
+		return
+	_holding_mic = true
+	_mic.text = UiStrings.MIC_LIVE
+	Voice.start_listening()
+
+
+func _mic_up() -> void:
+	if not _holding_mic:
+		return
+	_holding_mic = false
+	_mic.text = UiStrings.MIC
+	Voice.stop_listening()
+
+
+func _on_voice_error(kind: String, message: String) -> void:
+	var text := message.strip_edges()
+	if kind == "rate_limited":
+		text = UiStrings.VOICE_SKIPPED
+	elif text == "":
+		text = UiStrings.error_text(kind)
+	_voice_notice.text = text
+	_voice_notice.visible = true
+
+
+func _on_transcript(text: String, is_final: bool) -> void:
+	if not is_final:
+		return
+	_prompt.text = text
+	_voice_notice.visible = false
+	_refresh_hint_from_text()
+
+
 func _on_replied(reply_agent: String, text: String, remark: String) -> void:
 	if reply_agent != agent_id:
 		_push_to(reply_agent, {"kind": "agent", "text": text, "remark": remark})
 		return
-	_push({"kind": "agent", "text": text, "remark": remark})
+	var emotion := "neutral"
+	if Game.state != null:
+		emotion = str(Game.state.emotion.get(reply_agent, "neutral"))
+	_push({"kind": "agent", "text": text, "remark": remark, "emotion": emotion})
+	var agent: CaseData.Agent = Game.case_data.agent_by_id.get(reply_agent) as CaseData.Agent
+	if agent != null:
+		Voice.speak_agent(agent, text, remark, emotion)
 	_render_header()
 	_apply_model_hints()
 
@@ -338,7 +406,17 @@ func _render_feed() -> void:
 		elif kind == "agent":
 			var agent: CaseData.Agent = Game.case_data.agent_by_id.get(agent_id) as CaseData.Agent
 			var name := agent.name if agent != null else ""
-			_feed_box.add_child(UiWidgets.label("%s: %s" % [name, str(row.get("text", ""))]))
+			var spoken := str(row.get("text", ""))
+			var replay := UiWidgets.button("%s: %s" % [name, spoken], "ReplyLine")
+			replay.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			replay.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			var remark_text := str(row.get("remark", ""))
+			var emotion_name := str(row.get("emotion", "neutral"))
+			replay.pressed.connect(func() -> void:
+				if agent != null:
+					Voice.speak_agent(agent, spoken, remark_text, emotion_name)
+			)
+			_feed_box.add_child(replay)
 			var remark := str(row.get("remark", ""))
 			if remark != "":
 				var note := UiWidgets.label("(%s)" % remark)

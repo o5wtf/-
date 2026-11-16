@@ -1,6 +1,18 @@
 extends TestCase
 
 
+func test_lite_reply_types_are_coerced() -> void:
+	var body := _body([])
+	body["player_tone"] = "2"
+	body["emotion"] = "Neutral"
+	body.erase("requested_evidence")
+	body.erase("mentioned_evidence")
+	var report := ResponseValidator.validate(body, [_basic()], _context())
+	assert_true(report["ok"])
+	assert_eq(report["tone"], 2)
+	assert_eq(report["emotion"], "neutral")
+
+
 func test_format_requires_fields() -> void:
 	var report := ResponseValidator.validate({"reply": "Есть только реплика."}, [_basic()], _context())
 	assert_false(report["ok"])

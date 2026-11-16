@@ -257,7 +257,7 @@ func _is_network_error(result: Dictionary) -> bool:
 	if result.get("ok", false):
 		return false
 	var code := str(result.get("error", ""))
-	return code == "offline" or code == "timeout" or code == "rate_limited" or code == "auth" or code == "server"
+	return code == "offline" or code == "timeout" or code == "rate_limited" or code == "auth" or code == "server" or code == "unavailable" or code == "overloaded" or code == "rejected"
 
 
 func _sync_dialogues() -> void:

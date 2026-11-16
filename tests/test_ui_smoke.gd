@@ -66,9 +66,18 @@ func test_connection_message_hides_secret() -> void:
 	var message := UiStrings.connection_message("gemini", {
 		"ok": false,
 		"error": "auth",
-		"message": "ключ %s не показывать" % secret,
+		"message": "Ключ API отклонён.",
 	})
 	assert_false(message.contains(secret))
+	assert_eq(message, "Ключ API отклонён.")
+	var linked := UiStrings.connection_message("gemini", {
+		"ok": true,
+		"model": "gemini-3.5-flash-lite",
+		"elapsed_s": 1.2,
+	})
+	assert_true(linked.contains("gemini-3.5-flash-lite"))
+	assert_true(linked.contains("1.2"))
+	assert_false(UiStrings.error_text("timeout").contains("Нет сети"))
 	assert_eq(UiStrings.connection_message("mock", {}), UiStrings.LINK_MOCK)
 
 

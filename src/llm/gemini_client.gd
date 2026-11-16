@@ -13,9 +13,12 @@ var dialogue_model: String = LLMConfig.DEFAULT_DIALOGUE_MODEL
 var summary_model: String = LLMConfig.DEFAULT_SUMMARY_MODEL
 var fallback_model: String = LLMConfig.DEFAULT_FALLBACK_MODEL
 var thinking_level: String = "LOW"
-var timeout_s: float = 30.0
+var timeout_s: float = 45.0
+var ping_timeout_s: float = 32.0
 var min_interval_s: float = 1.0
 var base_url: String = BASE_URL
+## Модель, которая уже ответила в этой сессии. Следующий ход начинается с неё.
+var session_model: String = ""
 
 var _transport: Object = null
 var _busy: bool = false
@@ -34,6 +37,7 @@ func apply_config(config: LLMConfig) -> void:
 	fallback_model = config.fallback_model
 	thinking_level = config.thinking_level
 	timeout_s = config.timeout_s
+	ping_timeout_s = config.ping_timeout_s
 	min_interval_s = config.min_interval_s
 
 
@@ -63,74 +67,136 @@ func generate(request: Dictionary) -> Dictionary:
 func _generate_body(request: Dictionary) -> Dictionary:
 	if api_key.strip_edges() == "":
 		return _failure("auth", "Не задан ключ API. Укажите его в настройках или в переменной GEMINI_API_KEY.")
-	var model := _model_for(request)
+	var chain := _chain(_model_for(request))
 	var schema_field := "responseJsonSchema"
-	var tried_fallback := false
-	while true:
-		var rate_attempts := 0
+	var started := Time.get_ticks_msec()
+	var last := _failure("bad_response", "Запрос к Gemini не завершился.")
+	var tried := PackedStringArray()
+	for model in chain:
+		tried.append(model)
+		var disable_thinking := bool(request.get("probe", false))
+		var raise_tokens := false
 		var server_attempts := 0
-		var switch_model := false
-		while true:
+		var next_model := false
+		while not next_model:
 			await _pace()
-			var outcome: Dictionary = await _post(model, request, schema_field)
+			var call_started := Time.get_ticks_msec()
+			var outcome: Dictionary = await _post(model, request, schema_field, not disable_thinking, raise_tokens)
 			var transport_error := str(outcome.get("error", ""))
-			if transport_error == "timeout":
-				return _failure("timeout", "Нет ответа от Gemini за отведённое время.")
 			if transport_error == "offline":
-				return _failure("offline", "Нет сети. Проверьте подключение и повторите.")
+				return _with_meta(_failure("offline", "Нет сети. Проверьте подключение и повторите."), model, call_started)
+			if transport_error == "timeout":
+				last = _failure("timeout", "Модель «%s» не ответила за %d с." % [model, int(_timeout_for(request))])
+				next_model = true
+				break
 			var status := int(outcome.get("status", 0))
 			var body := _redact(str(outcome.get("body", "")))
+			var google := _google_status(body)
+			var reason := _google_reason(body)
 			if status == 200:
-				return _parse_success(body)
+				var parsed := _parse_success(body)
+				if parsed.get("ok", false):
+					session_model = model
+					return _with_meta(parsed, model, call_started)
+				if str(parsed.get("error", "")) == "truncated" and not disable_thinking:
+					disable_thinking = true
+					raise_tokens = true
+					continue
+				if str(parsed.get("error", "")) == "blocked" or str(parsed.get("error", "")) == "bad_response":
+					return _with_meta(parsed, model, call_started)
+				last = parsed
+				next_model = true
+				break
 			if status == 400 and schema_field == "responseJsonSchema" and _is_schema_rejection(body):
 				schema_field = "responseSchema"
 				continue
-			if status == 400 or status == 401 or status == 403:
-				return _failure("auth", "Ключ API отклонён. Проверьте ключ в настройках.")
+			if _is_auth(status, google, reason):
+				return _with_meta(_failure("auth", _with_reason("Ключ API отклонён.", reason)), model, call_started)
+			if status == 404 or google == "NOT_FOUND":
+				last = _failure("unavailable", _with_reason("Модель «%s» недоступна." % model, reason))
+				next_model = true
+				break
 			if status == 429:
-				rate_attempts += 1
-				if rate_attempts >= RATE_ATTEMPTS:
-					switch_model = true
-					break
-				await _wait(_retry_delay(outcome, rate_attempts))
-				continue
+				last = _failure("rate_limited", _with_reason("Слишком много запросов к «%s»." % model, reason))
+				next_model = true
+				break
+			if status == 503 or status == 502 or status == 504:
+				last = _failure("overloaded", _with_reason("Модель «%s» перегружена." % model, reason))
+				next_model = true
+				break
 			if status >= 500:
 				server_attempts += 1
-				if server_attempts >= SERVER_ATTEMPTS:
-					return _failure("server", "Сервис Gemini временно недоступен.")
-				await _wait(SERVER_PAUSE_S)
-				continue
-			return _failure("bad_response", "Неожиданный ответ сервиса.")
-		if switch_model and not tried_fallback and fallback_model != "" and fallback_model != model:
-			tried_fallback = true
-			model = fallback_model
-			continue
-		return _failure("rate_limited", "Слишком много запросов. Подождите и повторите.")
-	return _failure("bad_response", "Запрос к Gemini не завершился.")
+				if server_attempts < SERVER_ATTEMPTS:
+					await _wait(SERVER_PAUSE_S)
+					continue
+				return _with_meta(_failure("server", _with_reason("Сервис Gemini временно недоступен.", reason)), model, call_started)
+			if status == 400:
+				if not disable_thinking and reason.to_lower().contains("thinking"):
+					disable_thinking = true
+					continue
+				return _with_meta(_failure("rejected", _with_reason("Запрос отклонён.", reason)), model, call_started)
+			last = _failure("bad_response", _with_reason("Неожиданный ответ сервиса.", reason))
+			next_model = true
+			break
+	if tried.size() > 1:
+		last["message"] = "%s Пробовали: %s." % [str(last.get("message", "")).strip_edges(), ", ".join(tried)]
+	var last_model := tried[tried.size() - 1] if tried.size() > 0 else ""
+	return _with_meta(last, last_model, started)
 
 
-func _post(model: String, request: Dictionary, schema_field: String) -> Dictionary:
+func _chain(primary: String) -> PackedStringArray:
+	var chain := PackedStringArray()
+	_push_model(chain, session_model)
+	_push_model(chain, primary)
+	_push_model(chain, LLMConfig.FAST_MODEL)
+	_push_model(chain, fallback_model)
+	_push_model(chain, LLMConfig.LITE_MODEL)
+	if chain.is_empty() and primary != "":
+		chain.append(primary)
+	return chain
+
+
+func _push_model(chain: PackedStringArray, model: String) -> void:
+	var name := model.strip_edges()
+	if name == "" or chain.has(name):
+		return
+	chain.append(name)
+
+
+func _post(model: String, request: Dictionary, schema_field: String, use_thinking: bool, raise_tokens: bool) -> Dictionary:
 	var url := "%s/%s:generateContent" % [base_url.trim_suffix("/"), model]
 	var headers := {
 		"Content-Type": "application/json",
 		"x-goog-api-key": api_key,
 	}
-	var payload := JSON.stringify(_body(request, schema_field))
-	var pending: Variant = _transport.call("request", url, headers, payload, timeout_s)
+	var payload := JSON.stringify(_body(request, schema_field, use_thinking, raise_tokens))
+	var pending: Variant = _transport.call("request", url, headers, payload, _timeout_for(request))
 	if pending is Dictionary:
 		return pending
 	return await pending
 
 
-func _body(request: Dictionary, schema_field: String) -> Dictionary:
+func _timeout_for(request: Dictionary) -> float:
+	if request.has("timeout_s"):
+		return float(request["timeout_s"])
+	if bool(request.get("probe", false)):
+		return ping_timeout_s
+	return timeout_s
+
+
+func _body(request: Dictionary, schema_field: String, use_thinking: bool, raise_tokens: bool) -> Dictionary:
 	var schema: Dictionary = request.get("schema", {})
+	var tokens := int(request.get("max_output_tokens", 8192))
+	if raise_tokens:
+		tokens = maxi(tokens, 8192)
 	var generation := {
 		"responseMimeType": "application/json",
 		schema_field: schema,
 		"temperature": float(request.get("temperature", 0.9)),
-		"maxOutputTokens": int(request.get("max_output_tokens", 2048)),
-		"thinkingConfig": {"thinkingLevel": thinking_level},
+		"maxOutputTokens": tokens,
 	}
+	if use_thinking:
+		generation["thinkingConfig"] = {"thinkingLevel": thinking_level}
 	return {
 		"systemInstruction": {"parts": [{"text": str(request.get("system", ""))}]},
 		"contents": [{"role": "user", "parts": [{"text": str(request.get("user", ""))}]}],
@@ -152,16 +218,19 @@ func _parse_success(body: String) -> Dictionary:
 		return _failure("bad_response", "В ответе Gemini нет кандидата.")
 	var candidate := candidates[0] as Dictionary
 	var finish := str(candidate.get("finishReason", "STOP"))
-	var finish_error := _finish_error(finish)
-	if finish_error != "":
-		return _failure(finish_error, _finish_message(finish_error))
+	if finish == "SAFETY" or finish == "PROHIBITED_CONTENT" or finish == "BLOCKLIST":
+		return _failure("blocked", "Ответ заблокирован фильтром.")
 	var text := _join_visible_text(candidate)
-	var parsed = _parse_json(text)
+	var parsed: Variant = _parse_model_json(text)
+	if finish == "MAX_TOKENS" and (parsed == null or parsed is not Dictionary):
+		return _failure("truncated", "Ответ модели оборвался: не хватило места на текст.")
+	if finish != "" and finish != "STOP" and finish != "MAX_TOKENS":
+		return _failure("bad_response", "Ответ модели оборван или неполон.")
 	if parsed == null or parsed is not Dictionary:
 		return _failure("bad_response", "Текст ответа не является JSON-объектом.")
 	return {
 		"ok": true,
-		"json": parsed,
+		"json": _normalize_reply(parsed),
 		"raw_text": _redact(text),
 		"error": "",
 		"retry_after_s": 0.0,
@@ -176,26 +245,48 @@ func _join_visible_text(candidate: Dictionary) -> String:
 	for part in parts:
 		if part is not Dictionary:
 			continue
-		if (part as Dictionary).get("thought", false) == true:
+		var body := part as Dictionary
+		if body.get("thought", false) == true:
 			continue
-		var text := str((part as Dictionary).get("text", ""))
-		if text != "":
-			chunks.append(text)
+		var text := str(body.get("text", ""))
+		if text == "":
+			continue
+		chunks.append(text)
 	return "".join(chunks)
 
 
-func _finish_error(finish: String) -> String:
-	if finish == "" or finish == "STOP":
-		return ""
-	if finish == "SAFETY" or finish == "PROHIBITED_CONTENT" or finish == "BLOCKLIST":
-		return "blocked"
-	return "bad_response"
+func _parse_model_json(text: String) -> Variant:
+	var stripped := _strip_fences(text)
+	var parsed: Variant = _parse_json(stripped)
+	if parsed is Dictionary:
+		return parsed
+	return _parse_json(_extract_object(stripped))
 
 
-func _finish_message(error_code: String) -> String:
-	if error_code == "blocked":
-		return "Ответ заблокирован фильтром."
-	return "Ответ модели оборван или неполон."
+func _strip_fences(text: String) -> String:
+	var trimmed := text.strip_edges()
+	if not trimmed.begins_with("```"):
+		return trimmed
+	var lines := trimmed.split("\n")
+	if lines.size() >= 2 and lines[0].begins_with("```"):
+		lines.remove_at(0)
+	if lines.size() >= 1 and lines[lines.size() - 1].strip_edges() == "```":
+		lines.remove_at(lines.size() - 1)
+	return "\n".join(lines).strip_edges()
+
+
+func _extract_object(text: String) -> String:
+	var start := text.find("{")
+	var finish := text.rfind("}")
+	if start < 0 or finish <= start:
+		return text
+	return text.substr(start, finish - start + 1)
+
+
+func _normalize_reply(data: Dictionary) -> Dictionary:
+	if not data.has("reply"):
+		return data
+	return ResponseValidator._normalize(data)
 
 
 func _retry_delay(outcome: Dictionary, attempt: int) -> float:
@@ -218,6 +309,52 @@ func _is_schema_rejection(body: String) -> bool:
 	if lower.contains("api_key") or lower.contains("api key"):
 		return false
 	return lower.contains("responsejsonschema") or lower.contains("unknown name") or lower.contains("invalid json payload")
+
+
+func _google_status(body: String) -> String:
+	var parsed: Variant = _parse_json(body)
+	if parsed is not Dictionary:
+		return ""
+	var err: Variant = (parsed as Dictionary).get("error", {})
+	if err is not Dictionary:
+		return ""
+	return str((err as Dictionary).get("status", ""))
+
+
+func _google_reason(body: String) -> String:
+	var parsed: Variant = _parse_json(body)
+	if parsed is not Dictionary:
+		return ""
+	var err: Variant = (parsed as Dictionary).get("error", {})
+	if err is not Dictionary:
+		return ""
+	var message := _redact(str((err as Dictionary).get("message", ""))).strip_edges()
+	var newline := message.find("\n")
+	if newline > 0:
+		message = message.substr(0, newline).strip_edges()
+	if message.length() > 180:
+		message = message.substr(0, 180).strip_edges()
+	return message
+
+
+func _is_auth(status: int, google: String, reason: String) -> bool:
+	if status == 401 or status == 403:
+		return true
+	var blob := ("%s %s" % [google, reason]).to_lower()
+	return blob.contains("api_key_invalid") or blob.contains("api key not valid") or blob.contains("permission_denied")
+
+
+func _with_reason(lead: String, reason: String) -> String:
+	if reason == "":
+		return lead
+	return "%s %s" % [lead, reason]
+
+
+func _with_meta(result: Dictionary, model: String, started_ms: int) -> Dictionary:
+	result["model"] = model
+	result["elapsed_s"] = (Time.get_ticks_msec() - started_ms) / 1000.0
+	result["message"] = _redact(str(result.get("message", "")))
+	return result
 
 
 func _model_for(request: Dictionary) -> String:
@@ -252,6 +389,10 @@ func _now() -> float:
 
 func _parse_json(text: String) -> Variant:
 	var trimmed := text.strip_edges()
+	if trimmed.begins_with("{") and not trimmed.ends_with("}"):
+		return null
+	if trimmed.begins_with("[") and not trimmed.ends_with("]"):
+		return null
 	if not trimmed.begins_with("{") and not trimmed.begins_with("["):
 		return null
 	return JSON.parse_string(trimmed)

@@ -39,7 +39,7 @@ static func build_turn(
 		"schema": _turn_schema(_packet_keys(packet), evidence_keys),
 		"model_role": "dialogue",
 		"temperature": 0.9,
-		"max_output_tokens": 2048,
+		"max_output_tokens": 8192,
 	}
 
 

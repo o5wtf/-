@@ -3,9 +3,11 @@ extends RefCounted
 ## Ключ и модели. Ключ не пишется в логи.
 ## Порядок ключа: user://config.cfg, затем GEMINI_API_KEY, затем res://config/dev.cfg только в отладочной сборке.
 
-const DEFAULT_DIALOGUE_MODEL := "gemini-3.8-flash"
+const DEFAULT_DIALOGUE_MODEL := "gemini-3.5-flash"
 const DEFAULT_SUMMARY_MODEL := "gemini-3.5-flash-lite"
 const DEFAULT_FALLBACK_MODEL := "gemini-3.5-flash-lite"
+const FAST_MODEL := "gemini-3.5-flash"
+const LITE_MODEL := "gemini-3.5-flash-lite"
 
 var provider: String = "gemini"
 var api_key: String = ""
@@ -14,7 +16,8 @@ var dialogue_model: String = DEFAULT_DIALOGUE_MODEL
 var summary_model: String = DEFAULT_SUMMARY_MODEL
 var fallback_model: String = DEFAULT_FALLBACK_MODEL
 var thinking_level: String = "LOW"
-var timeout_s: float = 30.0
+var timeout_s: float = 45.0
+var ping_timeout_s: float = 32.0
 var min_interval_s: float = 1.0
 
 
@@ -38,7 +41,8 @@ static func from_sources(user_text: String, env_key: String, dev_text: String, d
 	config.summary_model = _first_string(user, dev, "summary_model", DEFAULT_SUMMARY_MODEL)
 	config.fallback_model = _first_string(user, dev, "fallback_model", DEFAULT_FALLBACK_MODEL)
 	config.thinking_level = _first_string(user, dev, "thinking_level", "LOW")
-	config.timeout_s = _first_number(user, dev, "timeout_s", 30.0)
+	config.timeout_s = _first_number(user, dev, "timeout_s", 45.0)
+	config.ping_timeout_s = _first_number(user, dev, "ping_timeout_s", 32.0)
 	config.min_interval_s = _first_number(user, dev, "min_interval_s", 1.0)
 	var user_key := str(user.get("api_key", "")).strip_edges()
 	var env := env_key.strip_edges()

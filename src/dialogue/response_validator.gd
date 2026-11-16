@@ -31,7 +31,7 @@ static func validate(resp: Variant, packet: Array, context: Dictionary) -> Dicti
 	if resp is not Dictionary:
 		_violate(report, "ответ не объект")
 		return report
-	var body := resp as Dictionary
+	var body := _normalize(resp as Dictionary)
 	if not _has_types(body):
 		_violate(report, "в ответе нет обязательных полей или типы неверные")
 		return report
@@ -104,6 +104,28 @@ static func fallback_reply(pressure_value: int) -> String:
 			return "Спросите что-нибудь другое."
 		_:
 			return "…Мне нечего добавить."
+
+
+static func _normalize(body: Dictionary) -> Dictionary:
+	var copy := body.duplicate(true)
+	if copy.get("stated") is Dictionary:
+		copy["stated"] = [copy["stated"]]
+	if copy.get("stated") == null and copy.has("stated"):
+		copy["stated"] = []
+	if copy.get("mentioned_evidence") is String:
+		copy["mentioned_evidence"] = [copy["mentioned_evidence"]]
+	var ready := copy.has("reply") and copy.has("remark") and copy.has("emotion") and copy.has("player_tone") and copy.has("stated")
+	if ready:
+		if not copy.has("mentioned_evidence") or copy["mentioned_evidence"] == null:
+			copy["mentioned_evidence"] = []
+		if not copy.has("requested_evidence"):
+			copy["requested_evidence"] = null
+	var tone: Variant = copy.get("player_tone", 0)
+	if tone is String and str(tone).is_valid_float():
+		copy["player_tone"] = int(float(tone))
+	if copy.has("emotion") and copy["emotion"] is String:
+		copy["emotion"] = str(copy["emotion"]).strip_edges().to_lower()
+	return copy
 
 
 static func _has_types(body: Dictionary) -> bool:

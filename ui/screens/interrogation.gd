@@ -240,9 +240,12 @@ func _on_events(list: Array) -> void:
 	_render_header()
 
 
-func _on_error(kind: String, _message: String) -> void:
+func _on_error(kind: String, message: String) -> void:
 	_pop_player_line()
-	_error.text = UiStrings.error_text(kind)
+	var text := message.strip_edges()
+	if text == "":
+		text = UiStrings.error_text(kind)
+	_error.text = text
 	_error.visible = true
 	_retry.visible = true
 

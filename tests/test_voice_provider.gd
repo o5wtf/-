@@ -378,6 +378,18 @@ func test_developer_instruction_is_a_request_bug() -> void:
 	_free(fixture)
 
 
+func test_toggle_off_stops_the_microphone() -> void:
+	var fixture := await _cloud()
+	var mic: FakeMic = fixture["mic"]
+	var provider: CloudVoiceProvider = fixture["provider"]
+	provider.start_listening()
+	assert_true(provider.is_listening())
+	provider.stop_listening()
+	assert_false(provider.is_listening())
+	assert_true(mic.stopped_count >= 1)
+	_free(fixture)
+
+
 func test_mic_audio_uses_the_fast_transcription_chain() -> void:
 	var fixture := await _cloud()
 	var transport: FakeTransport = fixture["transport"]
@@ -644,12 +656,14 @@ class FakeMic:
 	extends Node
 
 	var started_count: int = 0
+	var stopped_count: int = 0
 
 	func start() -> Dictionary:
 		started_count += 1
 		return {"ok": true}
 
 	func stop() -> Dictionary:
+		stopped_count += 1
 		return {"ok": true, "pcm": PackedByteArray([0, 16, 0, 16, 0, 16, 0, 16]), "mix_rate": 16000, "stereo": false}
 
 

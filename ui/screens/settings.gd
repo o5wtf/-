@@ -15,6 +15,7 @@ var _source: OptionButton
 var _stt: OptionButton
 var _volume: HSlider
 var _rate: HSlider
+var _pause: HSlider
 var _status: Label
 var _show: Button
 var _testing: bool = false
@@ -126,6 +127,14 @@ func _ready() -> void:
 	_rate.step = 0.05
 	_rate.custom_minimum_size = Vector2(0, 48)
 	scroll_box.add_child(_rate)
+	scroll_box.add_child(UiWidgets.label(UiStrings.PAUSE_LABEL))
+	_pause = HSlider.new()
+	_pause.name = "PauseSlider"
+	_pause.min_value = Handsfree.MIN_PAUSE_MS
+	_pause.max_value = Handsfree.MAX_PAUSE_MS
+	_pause.step = 50
+	_pause.custom_minimum_size = Vector2(0, 48)
+	scroll_box.add_child(_pause)
 	_status = UiWidgets.label("", "StatusLabel")
 	scroll_box.add_child(_status)
 	var save := UiWidgets.button(UiStrings.SAVE, "SaveButton")
@@ -150,6 +159,7 @@ func _load_fields() -> void:
 	_stt.select(_stt_index(store.stt_mode))
 	_volume.value = store.voice_volume
 	_rate.value = store.voice_rate
+	_pause.value = store.pause_ms
 
 
 func _toggle_key() -> void:
@@ -258,6 +268,7 @@ func _voice_payload() -> Dictionary:
 		"rate": _rate.value,
 		"tts_model": SettingsStore.load_current().tts_model,
 		"style_mode": _style_mode_to_save(),
+		"pause_ms": int(_pause.value),
 	}
 
 

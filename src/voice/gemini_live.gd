@@ -21,7 +21,7 @@ const ACTIVITY := {
 	"startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
 	"endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
 	"prefixPaddingMs": 200,
-	"silenceDurationMs": 500,
+	"silenceDurationMs": 700,
 }
 const MIN_SPEECH_MS := 150
 
@@ -32,6 +32,7 @@ signal audio_chunk(pcm: PackedByteArray, mix_rate: int)
 signal partial_text(text: String)
 signal final_text(text: String)
 signal playback_reset
+signal phrase_ready(text: String)
 
 var _peer: WebSocketPeer = null
 var _api_key: String = ""
@@ -47,6 +48,8 @@ var _caption_ms: int = 0
 var _listen_language: String = "ru-RU"
 var _listen_vocab: PackedStringArray = PackedStringArray()
 var _mode: String = ""
+var _pause_ms: int = 700
+var _keep_listen: bool = false
 
 
 static func parse_server(raw: String) -> Array:
@@ -97,7 +100,13 @@ static func parse_server(raw: String) -> Array:
 	return events
 
 
-static func setup_message(model: String, voice_name: String, listen: bool, emotion: String = "", remark: String = "", handle: String = "", language: String = "ru-RU", vocabulary: PackedStringArray = PackedStringArray()) -> Dictionary:
+static func activity_for(pause_ms: int) -> Dictionary:
+	var body := ACTIVITY.duplicate()
+	body["silenceDurationMs"] = Handsfree.clamp_pause(pause_ms)
+	return body
+
+
+static func setup_message(model: String, voice_name: String, listen: bool, emotion: String = "", remark: String = "", handle: String = "", language: String = "ru-RU", vocabulary: PackedStringArray = PackedStringArray(), pause_ms: int = -1) -> Dictionary:
 	var generation := {"responseModalities": ["TEXT" if listen else "AUDIO"]}
 	if not listen and voice_name != "":
 		generation["speechConfig"] = {
@@ -118,7 +127,8 @@ static func setup_message(model: String, voice_name: String, listen: bool, emoti
 			transcription["customVocabulary"] = vocabulary
 		transcription["mode"] = "VERBATIM"
 		setup["inputAudioTranscription"] = transcription
-		setup["realtimeInputConfig"] = {"automaticActivityDetection": ACTIVITY}
+		var pause := int(ACTIVITY["silenceDurationMs"]) if pause_ms < 0 else Handsfree.clamp_pause(pause_ms)
+		setup["realtimeInputConfig"] = {"automaticActivityDetection": activity_for(pause)}
 	else:
 		setup["outputAudioTranscription"] = {}
 		setup["systemInstruction"] = {"parts": [{"text": VoiceProfiles.live_instruction(emotion, remark)}]}
@@ -300,13 +310,15 @@ func prepare_socket(api_key: String) -> void:
 	_begin_connect(api_key)
 
 
-func listen_open(api_key: String, language: String = "ru-RU", vocabulary: PackedStringArray = PackedStringArray()) -> Dictionary:
+func listen_open(api_key: String, language: String = "ru-RU", vocabulary: PackedStringArray = PackedStringArray(), pause_ms: int = 700) -> Dictionary:
 	if api_key.strip_edges() == "":
 		return _fail("auth", "Не задан ключ API. Укажите его в настройках или в переменной GEMINI_API_KEY.")
 	if not network_enabled:
 		return _fail("unavailable", "Live отключён.")
 	_listen_language = language if language != "" else "ru-RU"
 	_listen_vocab = vocabulary
+	_pause_ms = Handsfree.clamp_pause(pause_ms)
+	_keep_listen = true
 	_segments = PackedStringArray()
 	_turn_done = false
 	_caption = ""
@@ -372,6 +384,14 @@ func _absorb(events: Array) -> void:
 		_caption = caption
 		_caption_ms = Time.get_ticks_msec()
 	partial_text.emit(caption)
+	if _turn_done and _keep_listen and _mode == "listen":
+		var phrase := _usable_join()
+		_segments = PackedStringArray()
+		_turn_done = false
+		_caption = ""
+		_caption_ms = 0
+		if phrase != "":
+			phrase_ready.emit(phrase)
 
 
 func _speak_model(api_key: String, model: String, line: String, voice_name: String, emotion: String, remark: String) -> Dictionary:
@@ -448,7 +468,7 @@ func _open(api_key: String, model: String, voice_name: String, listen: bool, emo
 	if _peer == null or _peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		_close()
 		return _fail("offline", "Нет сети. Проверьте подключение и повторите.")
-	_send(setup_message(model, voice_name, listen, emotion, remark, handle, _listen_language, _listen_vocab))
+	_send(setup_message(model, voice_name, listen, emotion, remark, handle, _listen_language, _listen_vocab, _pause_ms if listen else -1))
 	_setup_sent = true
 	started = Time.get_ticks_msec()
 	while Time.get_ticks_msec() - started < CONNECT_MS:

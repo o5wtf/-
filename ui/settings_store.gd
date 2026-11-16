@@ -15,6 +15,7 @@ var voice_volume: float = 1.0
 var voice_rate: float = 1.0
 var tts_model: String = "gemini-3.8-flash-lite-tts"
 var style_mode: String = VoiceProfiles.DEFAULT_STYLE_MODE
+var pause_ms: int = Handsfree.DEFAULT_PAUSE_MS
 
 
 static func load_current() -> SettingsStore:
@@ -36,6 +37,7 @@ static func load_current() -> SettingsStore:
 		if model != "":
 			store.tts_model = model
 		store.style_mode = VoiceProfiles.normalize_style(str(file.get_value("voice", "style_mode", store.style_mode)))
+		store.pause_ms = Handsfree.clamp_pause(int(file.get_value("voice", "pause_ms", store.pause_ms)))
 	return store
 
 
@@ -59,6 +61,8 @@ static func save_values(provider: String, api_key: String, dialogue_model: Strin
 		file.set_value("voice", "cloud_vendor", "gemini")
 		if voice.has("style_mode"):
 			file.set_value("voice", "style_mode", VoiceProfiles.normalize_style(str(voice["style_mode"])))
+		if voice.has("pause_ms"):
+			file.set_value("voice", "pause_ms", Handsfree.clamp_pause(int(voice["pause_ms"])))
 	file.save(PATH)
 
 

@@ -32,6 +32,8 @@ func reload() -> void:
 	provider.user_rate = rate
 	provider.style_mode = settings.style_mode
 	add_child(provider)
+	if provider.has_method("set_pause_ms"):
+		provider.set_pause_ms(settings.pause_ms)
 	provider.voice_error.connect(_on_error)
 	provider.transcript_ready.connect(_on_transcript)
 	provider.speech_finished.connect(_on_finished)
@@ -68,6 +70,21 @@ func speak_sample() -> int:
 	provider.style_mode = style_mode
 	var profile := VoiceProfiles.for_person("sample", "Анна", "female", 40)
 	return provider.speak(UiStrings.VOICE_SAMPLE, profile, "neutral", "")
+
+
+func set_pause_ms(ms: int) -> void:
+	if provider != null and provider.has_method("set_pause_ms"):
+		provider.set_pause_ms(ms)
+
+
+func input_held() -> bool:
+	return provider != null and provider.has_method("input_held") and bool(provider.call("input_held"))
+
+
+func speech_end_ms() -> int:
+	if provider == null:
+		return 0
+	return int(provider.get("speech_end_ms"))
 
 
 func start_listening() -> void:

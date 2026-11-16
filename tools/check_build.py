@@ -75,11 +75,6 @@ def check_paths(label: str, paths: list[str], blobs: list[bytes]) -> None:
 
 
 def check_apk(path: Path) -> None:
-    raw = path.read_bytes()
-    if b"android.permission.INTERNET" not in raw:
-        fail("в APK нет разрешения INTERNET")
-    if b"supports-screens" not in raw and "supports-screens".encode("utf-16le") not in raw:
-        fail("в манифесте APK нет supports-screens")
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
         pcks = [name for name in names if name.endswith(".pck")]

@@ -123,7 +123,18 @@ jobs:
           test -s builds/Detective.apk
 
       - name: В сборке нет ключа и лишних файлов
-        run: python3 tools/check_build.py builds/Detective.apk builds/Detective.pck
+        run: |
+          set -euo pipefail
+          aapt="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort | tail -1)"
+          "$aapt" dump permissions builds/Detective.apk | tee "$RUNNER_TEMP/permissions.txt"
+          grep -q android.permission.INTERNET "$RUNNER_TEMP/permissions.txt"
+          "$aapt" dump xmltree builds/Detective.apk AndroidManifest.xml > "$RUNNER_TEMP/manifest.txt"
+          if ! grep -q xlargeScreens "$RUNNER_TEMP/manifest.txt"; then
+            echo "В манифесте нет больших экранов"
+            grep -n -i screen "$RUNNER_TEMP/manifest.txt" | head -40
+            exit 1
+          fi
+          python3 tools/check_build.py builds/Detective.apk builds/Detective.pck
 
       - name: Архив Windows
         run: |

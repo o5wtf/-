@@ -18,6 +18,10 @@ func is_stt_available() -> bool:
 	return false
 
 
+func is_listening() -> bool:
+	return false
+
+
 func speak(text: String, profile: VoiceProfiles.Profile, emotion: String, remark: String = "") -> int:
 	return -1
 

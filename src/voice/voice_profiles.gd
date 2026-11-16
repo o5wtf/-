@@ -43,18 +43,17 @@ static func for_person(person_id: String, person_name: String, gender: String, a
 
 
 static func spoken_text(reply: String) -> String:
-	return reply.strip_edges()
+	return _clean_line(reply)
 
 
 static func style_prompt(reply: String, emotion: String, remark: String) -> String:
 	var line := spoken_text(reply)
-	var direction := _direction(emotion)
-	var stage := remark.strip_edges()
-	var prompt := "Скажи по-русски, %s." % direction
-	if stage != "":
-		prompt += " Подача, не произноси это вслух: %s." % stage
-	prompt += "\nПроизнеси только реплику:\n%s" % line
-	return prompt
+	var tags := _style_tags(emotion, remark)
+	if line == "":
+		return ""
+	if tags == "":
+		return line
+	return "[%s] %s" % [tags, line]
 
 
 static func playback_rate(emotion: String, user_rate: float) -> float:
@@ -99,24 +98,60 @@ static func _pitch(gender: String, band: String) -> float:
 	return clampf(pitch, 0.85, 1.15)
 
 
-static func _direction(emotion: String) -> String:
+static func _style_tags(emotion: String, remark: String) -> String:
+	var tags: PackedStringArray = PackedStringArray()
+	var mood := _mood(emotion)
+	if mood != "":
+		tags.append(mood)
+	var stage := _condense_remark(remark)
+	if stage != "":
+		tags.append(stage)
+	return ", ".join(tags)
+
+
+static func _mood(emotion: String) -> String:
 	match emotion:
 		"calm":
-			return "спокойно и ровно"
+			return "спокойно"
 		"nervous":
-			return "нервно и сбивчиво"
+			return "нервно, сбивчиво"
 		"scared":
-			return "тихо и испуганно"
+			return "тихо, испуганно"
 		"sad":
-			return "тихо и печально"
+			return "тихо, печально"
 		"angry":
-			return "резко и гневно"
+			return "резко, гневно"
 		"controlled":
-			return "холодно и сдержанно"
+			return "холодно, сдержанно"
 		"contemptuous":
-			return "медленно и с презрением"
+			return "медленно, презрительно"
 		_:
-			return "обычным голосом"
+			return "ровно"
+
+
+static func _clean_line(reply: String) -> String:
+	var line := reply.strip_edges()
+	line = line.replace("[", "").replace("]", "").replace("*", "")
+	return line.strip_edges()
+
+
+static func _condense_remark(remark: String) -> String:
+	var text := remark.strip_edges()
+	for mark in ["[", "]", "*", "\"", "«", "»", ".", "!", "?", ",", ";", ":"]:
+		text = text.replace(mark, " ")
+	var words: PackedStringArray = PackedStringArray()
+	for word in text.split(" ", false):
+		var clean := str(word).strip_edges()
+		if clean == "":
+			continue
+		var lower := clean.to_lower()
+		if lower.contains("скаж") or lower.contains("произнес") or lower == "вслух":
+			continue
+		words.append(clean)
+	text = " ".join(words)
+	if text.length() > 40:
+		text = text.substr(0, 40).strip_edges()
+	return text
 
 
 static func _emotion_rate(emotion: String) -> float:

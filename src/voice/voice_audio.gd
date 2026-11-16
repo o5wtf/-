@@ -26,6 +26,54 @@ static func wav_bytes(pcm: PackedByteArray, mix_rate: int, stereo: bool = false)
 	return out
 
 
+const UPLOAD_RATE := 16000
+const SILENCE_THRESHOLD := 400
+
+
+static func prepare_for_upload(pcm: PackedByteArray, mix_rate: int, stereo: bool) -> PackedByteArray:
+	var single := mono(pcm, stereo)
+	single = trim_silence(single)
+	var rate := mix_rate if mix_rate > 0 else UPLOAD_RATE
+	if rate == UPLOAD_RATE:
+		return single
+	return resample(single, rate, UPLOAD_RATE)
+
+
+static func trim_silence(pcm: PackedByteArray) -> PackedByteArray:
+	var frames := pcm.size() / 2
+	var first := -1
+	var last := -1
+	for index in frames:
+		if absi(_sample(pcm, index)) > SILENCE_THRESHOLD:
+			if first < 0:
+				first = index
+			last = index
+	if first < 0:
+		return PackedByteArray()
+	first = maxi(0, first - 80)
+	last = mini(frames - 1, last + 80)
+	return pcm.slice(first * 2, (last + 1) * 2)
+
+
+static func resample(pcm: PackedByteArray, from_rate: int, to_rate: int) -> PackedByteArray:
+	var frames := pcm.size() / 2
+	if frames == 0 or from_rate <= 0 or to_rate <= 0:
+		return PackedByteArray()
+	if from_rate == to_rate:
+		return pcm
+	var out_frames := maxi(1, int(round(float(frames) * float(to_rate) / float(from_rate))))
+	var out := PackedByteArray()
+	out.resize(out_frames * 2)
+	for index in out_frames:
+		var source := float(index) * float(from_rate) / float(to_rate)
+		var left := mini(int(source), frames - 1)
+		var right := mini(left + 1, frames - 1)
+		var frac := source - float(left)
+		var mixed := int(round(float(_sample(pcm, left)) + (float(_sample(pcm, right)) - float(_sample(pcm, left))) * frac))
+		_put_sample(out, index, clampi(mixed, -32768, 32767))
+	return out
+
+
 static func mono(pcm: PackedByteArray, stereo: bool) -> PackedByteArray:
 	if not stereo:
 		return pcm
@@ -98,3 +146,22 @@ static func _u16(buffer: PackedByteArray, at: int, value: int) -> void:
 
 static func _u32(buffer: PackedByteArray, at: int, value: int) -> void:
 	buffer.encode_u32(at, value)
+
+
+static func _sample(pcm: PackedByteArray, index: int) -> int:
+	var at := index * 2
+	if at + 1 >= pcm.size():
+		return 0
+	var value := int(pcm[at]) | (int(pcm[at + 1]) << 8)
+	if value >= 32768:
+		value -= 65536
+	return value
+
+
+static func _put_sample(pcm: PackedByteArray, index: int, value: int) -> void:
+	var stored := value
+	if stored < 0:
+		stored += 65536
+	var at := index * 2
+	pcm[at] = stored & 255
+	pcm[at + 1] = (stored >> 8) & 255

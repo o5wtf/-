@@ -39,6 +39,10 @@ func is_stt_available() -> bool:
 	return true
 
 
+func is_listening() -> bool:
+	return _listening
+
+
 func speak(text: String, profile: VoiceProfiles.Profile, emotion: String, remark: String = "") -> int:
 	var line := VoiceProfiles.spoken_text(text)
 	if line == "":
@@ -86,11 +90,11 @@ func stop_listening() -> void:
 		voice_error.emit("unsupported", "Не удалось записать звук.")
 		return
 	var pcm: PackedByteArray = clip.get("pcm", PackedByteArray())
-	var mono := VoiceAudio.mono(pcm, bool(clip.get("stereo", false)))
-	if mono.size() < 2:
+	var prepared := VoiceAudio.prepare_for_upload(pcm, int(clip.get("mix_rate", 16000)), bool(clip.get("stereo", false)))
+	if prepared.size() < 2:
 		voice_error.emit("unsupported", "Запись слишком короткая.")
 		return
-	_pending_wav = VoiceAudio.wav_bytes(mono, int(clip.get("mix_rate", 16000)), false)
+	_pending_wav = VoiceAudio.wav_bytes(prepared, VoiceAudio.UPLOAD_RATE, false)
 	Callable(self, "_publish_transcript").call_deferred()
 
 

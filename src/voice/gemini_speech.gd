@@ -10,6 +10,10 @@ const TTS_MODELS: PackedStringArray = [
 	"gemini-3.1-flash-tts-preview",
 	"gemini-2.5-flash-preview-tts",
 ]
+const TRANSCRIBE_LITE := "gemini-3.5-flash-lite"
+const TRANSCRIBE_MODEL := "gemini-3.5-transcribe"
+const TRANSCRIBE_PROMPT := "Дословно расшифруй русскую речь. Верни только текст."
+const TRANSCRIBE_TIMEOUT_S := 15.0
 const SERVER_PAUSE_S := 2.0
 
 var api_key: String = ""
@@ -27,7 +31,7 @@ var _last_request_s: float = -1.0
 var _prompt: String = ""
 var _voice_name: String = ""
 var _wav: PackedByteArray = PackedByteArray()
-var _schema_field: String = "responseJsonSchema"
+var _use_thinking: bool = true
 
 
 func set_transport(transport: Object) -> void:
@@ -52,13 +56,9 @@ func synthesize(reply: String, voice_name: String, emotion: String, remark: Stri
 
 func transcribe_wav(wav: PackedByteArray, timeout: float = -1.0) -> Dictionary:
 	_wav = wav
-	_schema_field = "responseJsonSchema"
-	var chain := _chain("", dialogue_model, PackedStringArray([
-		LLMConfig.DEFAULT_DIALOGUE_MODEL,
-		LLMConfig.FAST_MODEL,
-		LLMConfig.LITE_MODEL,
-	]))
-	var limit := timeout_s if timeout < 0.0 else timeout
+	_use_thinking = true
+	var chain := _chain("", TRANSCRIBE_LITE, PackedStringArray([TRANSCRIBE_MODEL, dialogue_model]))
+	var limit := TRANSCRIBE_TIMEOUT_S if timeout < 0.0 else timeout
 	return await _walk(chain, limit, "transcript", false)
 
 
@@ -73,7 +73,7 @@ func _walk(chain: PackedStringArray, limit: float, mode: String, remember: bool)
 		var advance := false
 		while not advance:
 			await _pace()
-			var outcome: Dictionary = await _post(model, _body_for(mode), limit)
+			var outcome: Dictionary = await _post(model, _body_for(mode, model), limit)
 			var transport_error := str(outcome.get("error", ""))
 			if transport_error == "offline":
 				return _failure("offline", "Нет сети. Проверьте подключение и повторите.")
@@ -95,7 +95,9 @@ func _walk(chain: PackedStringArray, limit: float, mode: String, remember: bool)
 				last = parsed
 				advance = true
 				break
-			if mode == "transcript" and _switch_schema(status, body):
+			if _is_developer_instruction(status, reason):
+				return _failure("rejected", _with_reason("Запрос отклонён.", reason))
+			if mode == "transcript" and _retry_without_thinking(status, reason):
 				continue
 			if _is_auth(status, google, reason):
 				return _failure("auth", _with_reason("Ключ API отклонён.", reason))
@@ -138,9 +140,9 @@ func _chain(session_model: String, primary: String, extras: PackedStringArray) -
 	return chain
 
 
-func _body_for(mode: String) -> Dictionary:
+func _body_for(mode: String, model: String) -> Dictionary:
 	if mode == "transcript":
-		return _transcript_body(_wav, _schema_field)
+		return _transcript_body(model)
 	return _tts_body(_prompt, _voice_name)
 
 
@@ -150,10 +152,14 @@ func _parse_mode(mode: String, body: String) -> Dictionary:
 	return _parse_audio(body)
 
 
-func _switch_schema(status: int, body: String) -> bool:
-	if status != 400 or _schema_field != "responseJsonSchema" or not _is_schema_rejection(body):
+func _is_developer_instruction(status: int, reason: String) -> bool:
+	return status == 400 and reason.to_lower().contains("developer instruction")
+
+
+func _retry_without_thinking(status: int, reason: String) -> bool:
+	if status != 400 or not _use_thinking or not reason.to_lower().contains("thinking"):
 		return false
-	_schema_field = "responseSchema"
+	_use_thinking = false
 	return true
 
 
@@ -171,24 +177,19 @@ func _tts_body(prompt: String, voice_name: String) -> Dictionary:
 	}
 
 
-func _transcript_body(wav: PackedByteArray, schema_field: String) -> Dictionary:
-	var schema := {
-		"type": "object",
-		"properties": {"transcript": {"type": "string"}},
-		"required": ["transcript"],
+func _transcript_body(model: String) -> Dictionary:
+	var generation := {
+		"temperature": 0.0,
+		"maxOutputTokens": 512,
 	}
+	if _use_thinking and model != TRANSCRIBE_MODEL:
+		generation["thinkingConfig"] = {"thinkingLevel": "MINIMAL"}
 	return {
-		"systemInstruction": {"parts": [{"text": "Ты расшифровываешь русскую речь. Верни только JSON с полем transcript."}]},
 		"contents": [{"role": "user", "parts": [
-			{"inlineData": {"mimeType": "audio/wav", "data": Marshalls.raw_to_base64(wav)}},
-			{"text": "Расшифруй речь дословно по-русски. Если речи нет, верни пустую строку."},
+			{"inlineData": {"mimeType": "audio/wav", "data": Marshalls.raw_to_base64(_wav)}},
+			{"text": TRANSCRIBE_PROMPT},
 		]}],
-		"generationConfig": {
-			"responseMimeType": "application/json",
-			schema_field: schema,
-			"temperature": 0.0,
-			"maxOutputTokens": 1024,
-		},
+		"generationConfig": generation,
 	}
 
 
@@ -229,20 +230,44 @@ func _parse_transcript(body: String) -> Dictionary:
 	var root = _parse_json(body)
 	if root == null or root is not Dictionary:
 		return _failure("bad_response", "Ответ расшифровки не разобрался.")
-	var text := ""
+	var spoken := ""
+	var plain := ""
 	for part in _parts(root):
 		if part.get("thought", false) == true:
 			continue
-		text += str(part.get("text", ""))
-	var parsed: Variant = _parse_json(_extract_object(text.strip_edges()))
+		var heard := _audio_transcription(part)
+		if heard != "":
+			spoken = heard
+		var text := str(part.get("text", "")).strip_edges()
+		if text != "":
+			plain = text
+	if spoken != "":
+		return _transcript_ok(spoken)
+	if plain == "":
+		return _failure("bad_response", "В ответе нет расшифровки.")
+	var parsed: Variant = _parse_json(_extract_object(plain))
 	if parsed is Dictionary and (parsed as Dictionary).has("transcript"):
-		return {
-			"ok": true,
-			"transcript": str((parsed as Dictionary).get("transcript", "")).strip_edges(),
-			"error": "",
-			"message": "",
-		}
-	return _failure("bad_response", "В ответе нет расшифровки.")
+		return _transcript_ok(str((parsed as Dictionary).get("transcript", "")))
+	return _transcript_ok(plain)
+
+
+func _audio_transcription(part: Dictionary) -> String:
+	for key in ["audioTranscription", "audio_transcription"]:
+		var body: Variant = part.get(key, {})
+		if body is Dictionary:
+			var text := str((body as Dictionary).get("text", "")).strip_edges()
+			if text != "":
+				return text
+	return ""
+
+
+func _transcript_ok(text: String) -> Dictionary:
+	return {
+		"ok": true,
+		"transcript": text.strip_edges(),
+		"error": "",
+		"message": "",
+	}
 
 
 func _parts(root: Dictionary) -> Array:

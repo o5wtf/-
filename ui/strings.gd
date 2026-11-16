@@ -38,6 +38,7 @@ const VOICE_SKIPPED := "Голос пропущен: слишком много �
 const VOICE_NOTICE := "Голос"
 const MIC := "🎤"
 const MIC_LIVE := "●"
+const RECOGNIZING := "Распознаю…"
 const KEY_LABEL := "Ключ Gemini API"
 const MODEL_LABEL := "Модель диалога"
 const SCALE_LABEL := "Масштаб текста"

@@ -10,6 +10,7 @@ var _model: LineEdit
 var _scale: HSlider
 var _mock: CheckBox
 var _voice_on: CheckBox
+var _intonation: CheckBox
 var _source: OptionButton
 var _stt: OptionButton
 var _volume: HSlider
@@ -85,6 +86,11 @@ func _ready() -> void:
 	_voice_on.text = UiStrings.VOICE_TOGGLE
 	_voice_on.custom_minimum_size = Vector2(0, 48)
 	scroll_box.add_child(_voice_on)
+	_intonation = CheckBox.new()
+	_intonation.name = "IntonationToggle"
+	_intonation.text = UiStrings.VOICE_INTONATION
+	_intonation.custom_minimum_size = Vector2(0, 48)
+	scroll_box.add_child(_intonation)
 	scroll_box.add_child(UiWidgets.label(UiStrings.VOICE_SOURCE))
 	_source = OptionButton.new()
 	_source.name = "VoiceSource"
@@ -139,6 +145,7 @@ func _load_fields() -> void:
 	_scale.value = store.text_scale
 	_mock.button_pressed = store.provider == "mock"
 	_voice_on.button_pressed = store.voice_enabled
+	_intonation.button_pressed = store.style_mode != VoiceProfiles.STYLE_PLAIN
 	_source.select(1 if store.voice_provider == "builtin" else 0)
 	_stt.select(_stt_index(store.stt_mode))
 	_volume.value = store.voice_volume
@@ -250,7 +257,17 @@ func _voice_payload() -> Dictionary:
 		"volume": _volume.value,
 		"rate": _rate.value,
 		"tts_model": SettingsStore.load_current().tts_model,
+		"style_mode": _style_mode_to_save(),
 	}
+
+
+func _style_mode_to_save() -> String:
+	if not _intonation.button_pressed:
+		return VoiceProfiles.STYLE_PLAIN
+	var current := SettingsStore.load_current().style_mode
+	if current == VoiceProfiles.STYLE_ENGLISH_TAGS:
+		return current
+	return VoiceProfiles.DEFAULT_STYLE_MODE
 
 
 func _stt_index(mode: String) -> int:

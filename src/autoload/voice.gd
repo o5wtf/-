@@ -10,6 +10,7 @@ var provider: VoiceProvider
 var volume: float = 1.0
 var rate: float = 1.0
 var stt_mode: String = "gemini_audio"
+var style_mode: String = VoiceProfiles.DEFAULT_STYLE_MODE
 
 
 func _ready() -> void:
@@ -22,11 +23,13 @@ func reload() -> void:
 	volume = settings.voice_volume
 	rate = settings.voice_rate
 	stt_mode = settings.stt_mode
+	style_mode = settings.style_mode
 	var next := _make(settings.voice_provider)
 	_detach()
 	provider = next
 	provider.user_volume = volume
 	provider.user_rate = rate
+	provider.style_mode = settings.style_mode
 	add_child(provider)
 	provider.voice_error.connect(_on_error)
 	provider.transcript_ready.connect(_on_transcript)
@@ -38,6 +41,7 @@ func speak_agent(agent: CaseData.Agent, reply: String, remark: String, emotion: 
 		return -1
 	provider.user_volume = volume
 	provider.user_rate = rate
+	provider.style_mode = style_mode
 	return provider.speak(reply, VoiceProfiles.for_agent(agent), emotion, remark)
 
 
@@ -46,6 +50,7 @@ func speak_sample() -> int:
 		return -1
 	provider.user_volume = volume
 	provider.user_rate = rate
+	provider.style_mode = style_mode
 	var profile := VoiceProfiles.for_person("sample", "Анна", "female", 40)
 	return provider.speak(UiStrings.VOICE_SAMPLE, profile, "neutral", "")
 

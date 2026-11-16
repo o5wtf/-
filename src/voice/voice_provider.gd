@@ -8,6 +8,7 @@ signal voice_error(kind: String, message: String)
 
 var user_volume: float = 1.0
 var user_rate: float = 1.0
+var style_mode: String = VoiceProfiles.DEFAULT_STYLE_MODE
 
 
 func is_tts_available() -> bool:

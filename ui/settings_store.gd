@@ -14,6 +14,7 @@ var stt_mode: String = "gemini_audio"
 var voice_volume: float = 1.0
 var voice_rate: float = 1.0
 var tts_model: String = "gemini-3.8-flash-lite-tts"
+var style_mode: String = VoiceProfiles.DEFAULT_STYLE_MODE
 
 
 static func load_current() -> SettingsStore:
@@ -34,6 +35,7 @@ static func load_current() -> SettingsStore:
 		var model := str(file.get_value("voice", "tts_model", store.tts_model)).strip_edges()
 		if model != "":
 			store.tts_model = model
+		store.style_mode = VoiceProfiles.normalize_style(str(file.get_value("voice", "style_mode", store.style_mode)))
 	return store
 
 
@@ -55,6 +57,8 @@ static func save_values(provider: String, api_key: String, dialogue_model: Strin
 		file.set_value("voice", "rate", clampf(float(voice.get("rate", 1.0)), 0.8, 1.3))
 		file.set_value("voice", "tts_model", str(voice.get("tts_model", "gemini-3.8-flash-lite-tts")))
 		file.set_value("voice", "cloud_vendor", "gemini")
+		if voice.has("style_mode"):
+			file.set_value("voice", "style_mode", VoiceProfiles.normalize_style(str(voice["style_mode"])))
 	file.save(PATH)
 
 

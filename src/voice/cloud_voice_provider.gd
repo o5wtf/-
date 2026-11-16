@@ -125,7 +125,7 @@ func _speak_one(job: Dictionary) -> String:
 	var emotion := str(job["emotion"])
 	var remark := str(job["remark"])
 	var line := str(job["text"])
-	var cache_key := VoiceCache.key_for(profile.voice_name, emotion, remark, line)
+	var cache_key := VoiceCache.key_for(profile.voice_name, emotion, line, style_mode)
 	var cached := VoiceCache.load(cache_key)
 	var pcm: PackedByteArray = PackedByteArray()
 	var mix_rate := 24000
@@ -133,7 +133,7 @@ func _speak_one(job: Dictionary) -> String:
 		pcm = cached["pcm"]
 		mix_rate = int(cached["mix_rate"])
 	else:
-		var result: Dictionary = await speech.synthesize(line, profile.voice_name, emotion, remark)
+		var result: Dictionary = await speech.synthesize(line, profile.voice_name, emotion, remark, -1.0, style_mode)
 		if not result.get("ok", false):
 			var kind := str(result.get("error", "unsupported"))
 			voice_error.emit(kind, str(result.get("message", "")))

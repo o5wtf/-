@@ -255,6 +255,7 @@ func _mic_down() -> void:
 		return
 	_holding_mic = true
 	_mic.text = UiStrings.MIC_LIVE
+	Game.begin_hearing(agent_id)
 	Voice.start_listening()
 
 
@@ -284,6 +285,7 @@ func _on_transcript(text: String, is_final: bool) -> void:
 	_prompt.placeholder_text = UiStrings.QUESTION_PLACEHOLDER if is_final else UiStrings.RECOGNIZING
 	_prompt.text = text
 	if not is_final:
+		Game.note_hearing(agent_id, text)
 		return
 	_voice_notice.visible = false
 	_refresh_hint_from_text()

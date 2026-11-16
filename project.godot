@@ -36,6 +36,8 @@ theme/custom="res://ui/theme/main_theme.tres"
 [audio]
 
 driver/enable_input=true
+driver/mix_rate=48000
+driver/output_latency=15
 general/text_to_speech=true
 
 [rendering]

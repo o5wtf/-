@@ -23,6 +23,17 @@ var _stream_emotion: String = "neutral"
 var _stream_reply: String = ""
 var _voiced_len: int = 0
 var _send_ms: int = 0
+var _voice_stream: bool = false
+var _speculating: bool = false
+var _spec_epoch: int = 0
+var _spec_agent: String = ""
+var _spec_candidate: String = ""
+var _spec_norm: String = ""
+var _spec_stamp: int = 0
+var _spec_started: bool = false
+var _spec_pending: bool = false
+var _spec_arming: bool = false
+var _spec_result: Dictionary = {}
 
 
 func open_case(path: String) -> CaseLoader.Result:
@@ -63,6 +74,29 @@ func mentioned_evidence(text: String) -> Array[String]:
 		if state.unlocked_evidence.has(evidence.id):
 			open.append(evidence)
 	return EvidenceMatcher.find_mentioned(text, open)
+
+
+func begin_hearing(agent_id: String) -> void:
+	_spec_epoch += 1
+	_spec_agent = agent_id
+	_spec_candidate = ""
+	_spec_norm = ""
+	_spec_stamp = 0
+	_spec_started = false
+	_spec_result = {}
+	_spec_arming = false
+
+
+func note_hearing(agent_id: String, text: String) -> void:
+	if _engine == null or agent_id == "" or not Speculation.usable(text):
+		return
+	_spec_agent = agent_id
+	_spec_candidate = text.strip_edges()
+	_spec_stamp = Time.get_ticks_msec()
+	if _spec_arming or _spec_started:
+		return
+	_spec_arming = true
+	_arm_speculation()
 
 
 func ask(agent_id: String, player_text: String) -> void:
@@ -132,9 +166,17 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 		await _refresh_summary(agent_id, dialogue)
 	var packet: Array = _engine.get_packet(agent_id)
 	var request := PromptBuilder.build_turn(case_data, state, agent_id, packet, dialogue, player_text, event_note)
+	var kept := _spec_matches(agent_id, player_text)
+	if not kept:
+		_drop_speculation()
 	_begin_stream(agent_id, str(state.emotion.get(agent_id, agent_emotion(agent_id))))
-	var result := await _generate(request)
+	_voice_stream = not kept
+	var result: Dictionary = await _take_speculation() if kept else await _generate(request)
+	if kept and not result.get("ok", false):
+		_voice_stream = true
+		result = await _generate(request)
 	TurnTiming.span("send_to_reply", _send_ms)
+	_drop_speculation()
 	if _is_network_error(result):
 		_abort_stream()
 		_restore(snapshot)
@@ -265,13 +307,14 @@ func _begin_stream(agent_id: String, emotion: String) -> void:
 	_stream_emotion = emotion
 	_stream_reply = ""
 	_voiced_len = 0
+	_voice_stream = true
 	_send_ms = Time.get_ticks_msec()
 	if LLM.client != null and LLM.client.has_signal("reply_text") and not LLM.client.reply_text.is_connected(_on_reply_text):
 		LLM.client.reply_text.connect(_on_reply_text)
 
 
 func _on_reply_text(text: String) -> void:
-	if _stream_agent == "" or text == _stream_reply:
+	if not _voice_stream or _speculating or _stream_agent == "" or text == _stream_reply:
 		return
 	if _stream_reply == "":
 		TurnTiming.span("send_to_first_token", _send_ms)
@@ -312,6 +355,67 @@ func _queue_speech(text: String, emotion: String, remark: String) -> void:
 	if agent == null:
 		return
 	Voice.speak_agent(agent, text, remark, emotion)
+
+
+func _arm_speculation() -> void:
+	var epoch := _spec_epoch
+	await get_tree().create_timer(float(Speculation.DEBOUNCE_MS) / 1000.0).timeout
+	if epoch != _spec_epoch:
+		_spec_arming = false
+		return
+	var stable := Time.get_ticks_msec() - _spec_stamp
+	if not Speculation.should_launch(_spec_candidate, _spec_started, _spec_pending, stable):
+		if not _spec_started and stable < Speculation.DEBOUNCE_MS:
+			_arm_speculation()
+			return
+		_spec_arming = false
+		return
+	_spec_arming = false
+	_spec_started = true
+	_launch_speculation(epoch)
+
+
+func _launch_speculation(epoch: int) -> void:
+	if _engine == null or not _dialogues.has(_spec_agent):
+		return
+	_spec_pending = true
+	_speculating = true
+	_spec_norm = Speculation.normalize(_spec_candidate)
+	var dialogue: DialogueState = _dialogues[_spec_agent]
+	var packet: Array = _engine.get_packet(_spec_agent)
+	var request := PromptBuilder.build_turn(case_data, state, _spec_agent, packet, dialogue, _spec_candidate, "")
+	var result: Dictionary = await _generate(request)
+	_speculating = false
+	_spec_pending = false
+	if epoch != _spec_epoch:
+		return
+	_spec_result = result
+
+
+func _spec_matches(agent_id: String, player_text: String) -> bool:
+	if _spec_agent != agent_id:
+		return false
+	var heard := _spec_norm if _spec_norm != "" else _spec_candidate
+	if not Speculation.same_input(player_text, heard):
+		return false
+	return _spec_pending or not _spec_result.is_empty()
+
+
+func _take_speculation() -> Dictionary:
+	var epoch := _spec_epoch
+	while _spec_pending and epoch == _spec_epoch:
+		await get_tree().process_frame
+	if epoch != _spec_epoch:
+		return {}
+	return _spec_result
+
+
+func _drop_speculation() -> void:
+	_spec_epoch += 1
+	_spec_started = true
+	_spec_arming = false
+	_spec_result = {}
+	_spec_norm = ""
 
 
 func _generate(request: Dictionary) -> Dictionary:

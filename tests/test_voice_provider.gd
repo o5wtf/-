@@ -33,21 +33,30 @@ func test_profile_follows_gender_age_and_name() -> void:
 
 
 func test_style_prompt_is_only_the_spoken_line() -> void:
-	for emotion in ["calm", "neutral", "nervous", "scared", "sad", "angry", "controlled", "contemptuous"]:
-		var prompt := VoiceProfiles.style_prompt("Только это.", emotion, "отводит взгляд")
-		assert_eq(prompt, "Только это.")
-		assert_false(prompt.contains("["))
-		assert_false(prompt.contains("]"))
-		assert_false(prompt.contains("("))
-		assert_false(prompt.contains("*"))
-		for word in VoiceProfiles.MOOD_WORDS:
-			assert_false(prompt.to_lower().contains(word), "%s/%s" % [emotion, word])
+	var emotions := ["calm", "neutral", "nervous", "scared", "sad", "angry", "controlled", "contemptuous"]
+	for emotion in emotions:
+		for mode in [VoiceProfiles.STYLE_ENGLISH_PREFIX, VoiceProfiles.STYLE_ENGLISH_TAGS]:
+			var prompt := VoiceProfiles.style_prompt("Только это.", emotion, "отводит взгляд", mode)
+			var russian := prompt.substr(prompt.rfind("\n") + 1)
+			assert_eq(russian, "Только это.")
+			assert_false(russian.contains("["), mode)
+			assert_false(russian.contains("]"), mode)
+			for word in VoiceProfiles.MOOD_WORDS:
+				assert_false(prompt.to_lower().contains(word), "%s/%s" % [emotion, word])
+			for phrase in ["скажи", "произнеси", "вслух", "отводит"]:
+				assert_false(prompt.to_lower().contains(phrase), phrase)
+		assert_eq(VoiceProfiles.style_prompt("Только это.", emotion, "отводит взгляд", VoiceProfiles.STYLE_PLAIN), "Только это.")
+	var cold := VoiceProfiles.style_prompt("Хватит.", "controlled", "молчит", VoiceProfiles.STYLE_ENGLISH_PREFIX)
+	assert_true(cold.begins_with("Read the following Russian line in a cold, restrained tone."))
+	assert_true(cold.ends_with("\nХватит."))
+	var tags := VoiceProfiles.style_prompt("Хватит.", "nervous", "молчит", VoiceProfiles.STYLE_ENGLISH_TAGS)
+	assert_true(tags.begins_with("[nervous] [hesitant]\n"))
 	assert_eq(VoiceProfiles.spoken_text("Холодно, сдержанно: Я уже всё рассказал."), "Я уже всё рассказал.")
 	assert_eq(VoiceProfiles.spoken_text("(нервно) Я не знаю."), "Я не знаю.")
 	assert_eq(VoiceProfiles.spoken_text("*вздыхает* Оставьте меня."), "Оставьте меня.")
 	assert_eq(VoiceProfiles.spoken_text("— тихо — Я был дома."), "Я был дома.")
 	assert_eq(VoiceProfiles.spoken_text("[холодно, сдержанно] Хватит."), "Хватит.")
-	assert_eq(VoiceProfiles.style_prompt("[холодно, сдержанно] Хватит.", "controlled", "молчит"), "Хватит.")
+	assert_eq(VoiceProfiles.style_prompt("[холодно, сдержанно] Хватит.", "controlled", "молчит", VoiceProfiles.STYLE_PLAIN), "Хватит.")
 
 
 func test_l16_and_wav_roundtrip() -> void:
@@ -82,7 +91,7 @@ func test_overload_falls_back_and_cache_replays_without_request() -> void:
 	assert_eq(transport.seen.size(), 2)
 	assert_true(str(transport.seen[1]["url"]).contains("gemini-3.8-flash-tts"))
 	assert_false(str(transport.seen[0]["body"]).contains(SECRET))
-	var cache_path := VoiceCache.path_for(VoiceCache.key_for(profile.voice_name, "calm", "кивает", "Добрый день."))
+	var cache_path := VoiceCache.path_for(VoiceCache.key_for(profile.voice_name, "calm", "Добрый день.", VoiceProfiles.DEFAULT_STYLE_MODE))
 	assert_true(FileAccess.file_exists(cache_path))
 	assert_false(FileAccess.get_file_as_string(cache_path).contains(SECRET))
 	provider.speak("Добрый день.", profile, "calm", "кивает")

@@ -46,6 +46,12 @@ const MOOD_WORDS: PackedStringArray = [
 	"спокойно", "ровно", "нервно", "сбивчиво", "тихо", "испуганно", "печально",
 	"резко", "гневно", "холодно", "сдержанно", "медленно", "презрительно",
 ]
+const STYLE_PLAIN := "plain"
+const STYLE_ENGLISH_PREFIX := "english_prefix"
+const STYLE_ENGLISH_TAGS := "english_tags"
+## По умолчанию английская инструкция: её живая проверка на gemini-3.8-flash-tts
+## не зачитывала, в отличие от русских скобок. plain — запасной режим без подачи.
+const DEFAULT_STYLE_MODE := STYLE_ENGLISH_PREFIX
 
 
 static func spoken_text(reply: String) -> String:
@@ -58,8 +64,51 @@ static func spoken_text(reply: String) -> String:
 	return line
 
 
-static func style_prompt(reply: String, _emotion: String, _remark: String) -> String:
-	return spoken_text(reply)
+static func normalize_style(mode: String) -> String:
+	var name := mode.strip_edges()
+	if name == STYLE_PLAIN or name == STYLE_ENGLISH_PREFIX or name == STYLE_ENGLISH_TAGS:
+		return name
+	return DEFAULT_STYLE_MODE
+
+
+static func style_prompt(reply: String, emotion: String, _remark: String, mode: String = DEFAULT_STYLE_MODE) -> String:
+	var line := spoken_text(reply)
+	if line == "":
+		return ""
+	var chosen := normalize_style(mode)
+	if chosen == STYLE_PLAIN:
+		return line
+	var tone := _english_tone(emotion)
+	if chosen == STYLE_ENGLISH_TAGS:
+		return "%s\n%s" % [_english_tags(tone), line]
+	return "Read the following Russian line in a %s tone. Speak only the Russian line:\n%s" % [tone, line]
+
+
+static func _english_tone(emotion: String) -> String:
+	match emotion:
+		"nervous":
+			return "nervous, hesitant"
+		"scared":
+			return "scared, quiet"
+		"sad":
+			return "sad"
+		"angry":
+			return "angry, sharp"
+		"controlled":
+			return "cold, restrained"
+		"contemptuous":
+			return "slow, contemptuous"
+		_:
+			return "calm"
+
+
+static func _english_tags(tone: String) -> String:
+	var tags: PackedStringArray = PackedStringArray()
+	for word in tone.split(","):
+		var clean := str(word).strip_edges()
+		if clean != "":
+			tags.append("[%s]" % clean)
+	return " ".join(tags)
 
 
 static func playback_rate(emotion: String, user_rate: float) -> float:

@@ -5,6 +5,7 @@ signal accuse_pressed
 
 var _body: HBoxContainer
 var _side: TabContainer
+var _drawer: Control
 var _top_accuse: Button
 var _bottom: HBoxContainer
 var _suspects: Control
@@ -27,9 +28,13 @@ func _ready() -> void:
 	margin.name = "SafeMargin"
 	UiWidgets.fill(margin)
 	add_child(margin)
+	var stack := Control.new()
+	stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stack.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	margin.add_child(stack)
 	var column := VBoxContainer.new()
-	UiWidgets.fill(column)
-	margin.add_child(column)
+	column.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	stack.add_child(column)
 	_top_accuse = UiWidgets.button(UiStrings.ACCUSE, "TopAccuseButton")
 	_top_accuse.pressed.connect(func() -> void: accuse_pressed.emit())
 	column.add_child(_top_accuse)
@@ -63,6 +68,19 @@ func _ready() -> void:
 	var menu := UiWidgets.button(UiStrings.MENU, "MenuButton")
 	menu.pressed.connect(func() -> void: menu_pressed.emit())
 	_bottom.add_child(menu)
+	_drawer = PanelContainer.new()
+	_drawer.name = "Drawer"
+	_drawer.visible = false
+	_drawer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_drawer.mouse_filter = Control.MOUSE_FILTER_STOP
+	stack.add_child(_drawer)
+	var drawer_box := VBoxContainer.new()
+	drawer_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	drawer_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_drawer.add_child(drawer_box)
+	var close := UiWidgets.button(UiStrings.TO_CHAT, "CloseDrawerButton")
+	close.pressed.connect(func() -> void: _drawer.visible = false)
+	drawer_box.add_child(close)
 	_suspects.agent_chosen.connect(_on_agent)
 	_chat.evidence_requested.connect(func() -> void: _show_tab(_evidence))
 	_chat.notebook_requested.connect(func() -> void: _show_tab(_notebook))
@@ -92,22 +110,34 @@ func _apply_layout() -> void:
 	var mode := UiLayout.mode_for_size(Vector2(DisplayServer.window_get_size()))
 	var keyboard := maxi(_keyboard_height(), 0)
 	_apply_safe_area(keyboard)
-	if mode == "wide" and keyboard < 80:
+	var wide := mode == "wide" and keyboard < 80
+	if wide:
+		_drawer.visible = false
 		_top_accuse.visible = false
 		_bottom.visible = true
-		_park(_suspects, _body, 0)
+		_side.custom_minimum_size = Vector2(320, 0)
+		_side.size_flags_horizontal = Control.SIZE_FILL
+		_suspects.visible = true
 		_side.visible = true
+		_park(_suspects, _body, 0)
+		_park(_side, _body, 99)
 		_chat.set_back_visible(false)
 	else:
+		if _mode != "medium":
+			_drawer.visible = false
 		_top_accuse.visible = true
 		_bottom.visible = false
+		_side.custom_minimum_size = Vector2(0, 0)
+		_side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_side.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		_side.visible = true
 		_park(_suspects, _side, 0)
-		_side.set_tab_title(0, "Подозреваемые")
-		_side.visible = keyboard < 80
+		var drawer_box := _drawer.get_child(0)
+		_park(_side, drawer_box, 99)
 		_chat.set_back_visible(true)
 	if _side.get_tab_count() > 0:
 		_retitle_side()
-	_mode = mode
+	_mode = "wide" if wide else "medium"
 
 
 func _retitle_side() -> void:
@@ -122,20 +152,27 @@ func _retitle_side() -> void:
 
 
 func _park(node: Control, parent: Node, index: int) -> void:
-	if node.get_parent() == parent and node.get_index() == index:
-		return
 	if node.get_parent() != parent:
 		node.reparent(parent)
-	if node.get_index() != index and index < parent.get_child_count():
-		parent.move_child(node, index)
+	var last := parent.get_child_count() - 1
+	var target := mini(index, last)
+	if target < 0:
+		target = 0
+	if node.get_index() != target:
+		parent.move_child(node, target)
 
 
 func _show_tab(node: Control) -> void:
-	if node == _suspects and node.get_parent() != _side:
-		return
+	_apply_layout()
 	if node.get_parent() != _side:
 		return
+	var portrait := _mode != "wide"
+	if portrait and _drawer.visible and _side.current_tab == node.get_index():
+		_drawer.visible = false
+		return
 	_side.current_tab = node.get_index()
+	if portrait:
+		_drawer.visible = true
 
 
 func _open_contradiction() -> void:
@@ -146,6 +183,8 @@ func _open_contradiction() -> void:
 func _present_from_board(evidence_id: String) -> void:
 	if _chat.agent_id == "":
 		return
+	if _mode != "wide":
+		_drawer.visible = false
 	await _chat._confirm_from_board(evidence_id)
 
 
@@ -155,6 +194,8 @@ func _on_agent(agent_id: String) -> void:
 	_evidence.agent_id = agent_id
 	_evidence.refresh()
 	_suspects.refresh(agent_id, _news_map())
+	if _mode != "wide":
+		_drawer.visible = false
 
 
 func _select_initial_agent() -> void:

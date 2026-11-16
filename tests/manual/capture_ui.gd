@@ -49,6 +49,9 @@ func _initialize() -> void:
 	_select_tab(main, "Улики")
 	await process_frame
 	await _shot(folder, "evidence")
+	var drawer := main.find_child("Drawer", true, false) as CanvasItem
+	if drawer != null:
+		drawer.visible = false
 	var prompt := main.find_child("PromptField", true, false) as TextEdit
 	var chat: Node = main.find_child("Interrogation", true, false)
 	if prompt != null and chat != null:
@@ -74,6 +77,9 @@ func _initialize() -> void:
 
 
 func _select_tab(main: Node, title: String) -> void:
+	var drawer := main.find_child("Drawer", true, false) as CanvasItem
+	if drawer != null:
+		drawer.visible = true
 	var side := main.find_child("SideTabs", true, false) as TabContainer
 	if side == null:
 		return

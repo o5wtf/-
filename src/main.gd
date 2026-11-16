@@ -3,12 +3,15 @@ extends Control
 const BUILTIN_CASE := "res://cases/rain_over_shadow.json"
 
 var _screen: Control = null
+var _scale_factor := -1.0
 
 
 func _ready() -> void:
 	UiWidgets.fill(self)
 	if OS.get_name() == "Windows":
 		DisplayServer.window_set_min_size(Vector2i(1024, 640))
+	get_window().size_changed.connect(_apply_content_scale)
+	_apply_content_scale()
 	_apply_theme()
 	show_menu()
 
@@ -75,6 +78,15 @@ func _on_new_case() -> void:
 		show_damaged(loaded.errors)
 		return
 	show_briefing()
+
+
+func _apply_content_scale() -> void:
+	var window := get_window()
+	var factor := UiLayout.content_scale_factor_for(Vector2(window.size))
+	if is_equal_approx(factor, _scale_factor):
+		return
+	_scale_factor = factor
+	window.content_scale_factor = factor
 
 
 func _apply_theme() -> void:

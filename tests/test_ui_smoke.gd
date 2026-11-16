@@ -33,6 +33,15 @@ func test_scenes_instantiate_and_buttons_exist() -> void:
 		node.free()
 
 
+func test_portrait_scale_keeps_physical_size() -> void:
+	var base := UiLayout.BASE_SIZE
+	assert_true(absf(UiLayout.content_scale_factor_for(Vector2(1280, 800)) - 1.0) < 0.001)
+	assert_true(absf(UiLayout.content_scale_factor_for(Vector2(1920, 1080)) - 1.0) < 0.001)
+	var factor := UiLayout.content_scale_factor_for(Vector2(800, 1280))
+	var fit := minf(800.0 / base.x, 1280.0 / base.y)
+	assert_true(absf(factor * fit - 1.0) < 0.001)
+
+
 func test_layout_modes_skip_phone() -> void:
 	assert_eq(UiLayout.mode_for_size(Vector2(1280, 800)), "wide")
 	assert_eq(UiLayout.mode_for_size(Vector2(1000, 700)), "wide")

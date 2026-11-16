@@ -46,11 +46,11 @@ func _ready() -> void:
 	_transport = http
 
 
-func synthesize(reply: String, voice_name: String, emotion: String, remark: String, timeout: float = -1.0, style_mode: String = "") -> Dictionary:
+func synthesize(reply: String, voice_name: String, emotion: String, remark: String, timeout: float = -1.0, style_mode: String = "", fast_reader: bool = false) -> Dictionary:
 	var mode := style_mode if style_mode != "" else VoiceProfiles.DEFAULT_STYLE_MODE
 	_prompt = VoiceProfiles.style_prompt(reply, emotion, remark, mode)
 	_voice_name = voice_name
-	var chain := _chain(session_tts_model, tts_model, TTS_MODELS)
+	var chain := _chain(DEFAULT_TTS_MODEL if fast_reader else session_tts_model, tts_model, TTS_MODELS)
 	var limit := timeout_s if timeout < 0.0 else timeout
 	return await _walk(chain, limit, "tts", true)
 

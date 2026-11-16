@@ -14,6 +14,9 @@ var _listen_language: String = "ru-RU"
 var _mic_released_ms: int = 0
 var _speak_started_ms: int = 0
 var _logged_audio: bool = false
+var _audio_engine: String = VoiceRoute.LIVE
+var _measure_audio: bool = false
+var _route := VoiceRoute.new()
 var _listen_pump: Variant = null
 var _queue: Array = []
 var _draining: bool = false
@@ -79,6 +82,7 @@ func speak(text: String, profile: VoiceProfiles.Profile, emotion: String, remark
 		Callable(self, "_drain").call_deferred()
 	_speak_started_ms = Time.get_ticks_msec()
 	_logged_audio = false
+	_measure_audio = false
 	return utterance_id
 
 
@@ -212,26 +216,18 @@ func _speak_one(job: Dictionary) -> String:
 		pcm = cached["pcm"]
 		mix_rate = int(cached["mix_rate"])
 	else:
-		var streamed := await _speak_live(line, profile.voice_name, profile.pitch * VoiceProfiles.playback_rate(emotion, user_rate), VoiceProfiles.playback_volume(emotion, user_volume), emotion, remark)
-		if streamed.get("ok", false):
-			pcm = streamed["pcm"]
-			mix_rate = int(streamed.get("mix_rate", 24000))
-			VoiceCache.store(cache_key, pcm, mix_rate)
-			return ""
-		if str(streamed.get("error", "")) == "auth":
-			voice_error.emit("auth", str(streamed.get("message", "")))
-			return "auth"
-		var result: Dictionary = await speech.synthesize(line, profile.voice_name, emotion, remark, -1.0, VoiceProfiles.STYLE_PLAIN)
-		if not result.get("ok", false):
-			var kind := str(result.get("error", "unsupported"))
-			var message := str(result.get("message", "")).strip_edges()
-			if message == "":
-				message = "Не удалось озвучить реплику."
-			voice_error.emit(kind, message)
-			return kind
-		pcm = result["pcm"]
-		mix_rate = int(result.get("mix_rate", 24000))
+		var pitch_now := profile.pitch * VoiceProfiles.playback_rate(emotion, user_rate)
+		var volume_now := VoiceProfiles.playback_volume(emotion, user_volume)
+		var outcome := await _speak_routed(line, profile.voice_name, pitch_now, volume_now, emotion, remark)
+		if str(outcome.get("stop", "")) != "":
+			return str(outcome.get("stop", ""))
+		if not outcome.get("ready", false):
+			return str(outcome.get("stop", "unsupported"))
+		pcm = outcome["pcm"]
+		mix_rate = int(outcome.get("mix_rate", 24000))
 		VoiceCache.store(cache_key, pcm, mix_rate)
+		if bool(outcome.get("played", false)):
+			return ""
 	if pcm.is_empty():
 		voice_error.emit("unsupported", "Не удалось озвучить реплику.")
 		return "unsupported"
@@ -240,6 +236,44 @@ func _speak_one(job: Dictionary) -> String:
 	var volume := VoiceProfiles.playback_volume(emotion, user_volume)
 	await speaker.play(pcm, mix_rate, pitch, volume)
 	return ""
+
+
+func _speak_routed(line: String, voice_name: String, pitch: float, volume_linear: float, emotion: String, remark: String) -> Dictionary:
+	var engine := _route.choose()
+	if engine == VoiceRoute.READER:
+		_begin_audio(VoiceRoute.READER)
+		var fast: Dictionary = await speech.synthesize(line, voice_name, emotion, remark, -1.0, VoiceProfiles.STYLE_PLAIN, true)
+		if fast.get("ok", false):
+			return {"ready": true, "pcm": fast["pcm"], "mix_rate": int(fast.get("mix_rate", 24000)), "played": false, "stop": ""}
+		if str(fast.get("error", "")) == "auth":
+			voice_error.emit("auth", str(fast.get("message", "")))
+			return {"ready": false, "stop": "auth"}
+		engine = VoiceRoute.LIVE
+	if engine == VoiceRoute.LIVE:
+		_begin_audio(VoiceRoute.LIVE)
+		var streamed := await _speak_live(line, voice_name, pitch, volume_linear, emotion, remark)
+		if streamed.get("ok", false):
+			return {"ready": true, "pcm": streamed["pcm"], "mix_rate": int(streamed.get("mix_rate", 24000)), "played": true, "stop": ""}
+		if str(streamed.get("error", "")) == "auth":
+			voice_error.emit("auth", str(streamed.get("message", "")))
+			return {"ready": false, "stop": "auth"}
+	_begin_audio(VoiceRoute.READER)
+	var result: Dictionary = await speech.synthesize(line, voice_name, emotion, remark, -1.0, VoiceProfiles.STYLE_PLAIN, true)
+	if not result.get("ok", false):
+		var kind := str(result.get("error", "unsupported"))
+		var message := str(result.get("message", "")).strip_edges()
+		if message == "":
+			message = "Не удалось озвучить реплику."
+		voice_error.emit(kind, message)
+		return {"ready": false, "stop": kind}
+	return {"ready": true, "pcm": result["pcm"], "mix_rate": int(result.get("mix_rate", 24000)), "played": false, "stop": ""}
+
+
+func _begin_audio(engine: String) -> void:
+	_audio_engine = engine
+	_speak_started_ms = Time.get_ticks_msec()
+	_logged_audio = false
+	_measure_audio = true
 
 
 func _speak_live(line: String, voice_name: String, pitch: float, volume_linear: float, emotion: String, remark: String) -> Dictionary:
@@ -257,6 +291,7 @@ func _speak_live(line: String, voice_name: String, pitch: float, volume_linear: 
 		else:
 			var spoken: PackedByteArray = result.get("pcm", PackedByteArray())
 			if not spoken.is_empty():
+				_note_audio()
 				await speaker.play(spoken, int(result.get("mix_rate", 24000)), pitch, volume_linear)
 		return result
 	if _live_streaming:
@@ -287,7 +322,9 @@ func _note_audio() -> void:
 	if _logged_audio or _speak_started_ms <= 0:
 		return
 	_logged_audio = true
-	TurnTiming.span("text_to_audio", _speak_started_ms)
+	if _measure_audio:
+		_route.record(_audio_engine, Time.get_ticks_msec() - _speak_started_ms)
+	TurnTiming.span_engine("text_to_audio", _speak_started_ms, _audio_engine)
 
 
 func _on_live_chunk(chunk: PackedByteArray, rate: int) -> void:
@@ -316,6 +353,8 @@ func _mic_allowed() -> bool:
 
 class PcmSpeaker:
 	extends Node
+
+	const BUFFER_SEC := 0.1
 
 	signal playback_finished
 	var instant: bool = false
@@ -353,7 +392,7 @@ class PcmSpeaker:
 		_player.bus = BUS
 		var generator := AudioStreamGenerator.new()
 		generator.mix_rate = mix_rate
-		generator.buffer_length = 0.4
+		generator.buffer_length = BUFFER_SEC
 		_player.stop()
 		_player.stream = generator
 		_player.pitch_scale = clampf(pitch, 0.5, 1.6)

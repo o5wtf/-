@@ -197,6 +197,10 @@ static func _packet_keys(packet: Array) -> PackedStringArray:
 	return keys
 
 
+static func evidence_keys(case_data: CaseData, state: GameState) -> PackedStringArray:
+	return _evidence_keys(case_data, state)
+
+
 static func _evidence_keys(case_data: CaseData, state: GameState) -> PackedStringArray:
 	var keys := PackedStringArray()
 	var index := 1

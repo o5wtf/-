@@ -1,0 +1,80 @@
+{
+  "id": "turn",
+  "title": "Учебный ход",
+  "briefing": "Короткий брифинг для проверки хода.",
+  "killer_id": "a",
+  "true_motive_id": "m",
+  "true_method_id": "w",
+  "motive_options": [{"id": "m", "text": "мотив"}],
+  "method_options": [{"id": "w", "text": "способ"}],
+  "agents": [
+    {
+      "id": "a",
+      "name": "Аня",
+      "role": "соседка",
+      "personality": "Говорит коротко.",
+      "prompt_background": "Живёт рядом.",
+      "background": "Заметки автора.",
+      "facts": [
+        {
+          "id": "fa",
+          "content_basic": "Я был на месте.",
+          "content_full": "Я был на месте допоздна.",
+          "is_lie": true,
+          "lie_type": "must_lie",
+          "lie_text": "Меня там не было.",
+          "related_evidence_ids": ["ev"],
+          "pressure_for_basic": 0,
+          "pressure_for_full": 80,
+          "requires_evidence": false,
+          "breaks_lie_on": "evidence"
+        }
+      ]
+    },
+    {
+      "id": "b",
+      "name": "Борис",
+      "role": "сторож",
+      "personality": "Говорит медленно.",
+      "prompt_background": "Работает ночью.",
+      "background": "Заметки автора.",
+      "facts": [
+        {
+          "id": "fb",
+          "content_basic": "Я видел его там.",
+          "content_full": "Я видел его там поздно.",
+          "is_lie": false,
+          "lie_type": "cannot_lie",
+          "lie_text": "",
+          "related_evidence_ids": [],
+          "pressure_for_basic": 0,
+          "pressure_for_full": 0,
+          "requires_evidence": false
+        }
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev",
+      "title": "Записка",
+      "short_description": "Клочок бумаги.",
+      "full_text": "На бумаге одно слово.",
+      "type": "document",
+      "related_fact_ids": ["fa"],
+      "related_agent_ids": ["a"],
+      "is_key": true,
+      "unlock_condition": {"type": "inconsistency_created", "contradiction_id": "c1"}
+    }
+  ],
+  "contradictions": [
+    {
+      "id": "c1",
+      "fact_a_id": "fa",
+      "fact_a_form": "lie",
+      "fact_b_id": "fb",
+      "fact_b_form": "truth",
+      "description": "Две версии одного вечера."
+    }
+  ]
+}

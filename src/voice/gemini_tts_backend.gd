@@ -7,6 +7,8 @@ extends SpeechBackend
 
 const MODEL := "gemini-3.8-flash-lite-tts"
 const SAMPLE_RATE := 24000
+const BUFFER_SECONDS := 1.0
+const PREFILL_SECONDS := 0.15
 const MAX_ATTEMPTS := 3
 const INPUT_USD_PER_MILLION := 0.50
 const OUTPUT_USD_PER_MILLION := 6.0
@@ -22,7 +24,10 @@ var _player: AudioStreamPlayer = null
 var _playback: AudioStreamGeneratorPlayback = null
 var _line_id: String = ""
 var _started_line: bool = false
+var _download_done: bool = false
+var _device_capacity: int = 0
 var _pcm_carry: PackedByteArray = PackedByteArray()
+var _pending: PackedVector2Array = PackedVector2Array()
 
 
 func _ready() -> void:
@@ -40,8 +45,7 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 	var token := _generation
 	var spoken := text.strip_edges()
 	_line_id = line_id
-	_started_line = false
-	_pcm_carry = PackedByteArray()
+	_reset_audio()
 	if spoken == "":
 		speech_error.emit(line_id, "empty")
 		return
@@ -64,15 +68,17 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 		if token != _generation:
 			return
 		limiter.mark(_now())
-		_pcm_carry = PackedByteArray()
+		_reset_audio()
 		var result: Dictionary = await _send(spoken, voice, style)
 		if token != _generation or str(result.get("error", "")) == "stopped":
 			return
 		var status := int(result.get("status", 0))
 		if result.get("ok", false):
 			_note_usage(result.get("usage", {}))
+			_download_done = true
+			_maybe_open(true)
 			if _started_line:
-				finished.emit(line_id)
+				await _wait_until_heard(token)
 			else:
 				var shown_status := status if status > 0 else 200
 				speech_error.emit(line_id, format_voice_error("no_audio", shown_status, api_key))
@@ -83,10 +89,8 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 		if kind == "no_audio":
 			_note_usage(result.get("usage", {}))
 		attempt += 1
-		if _started_line:
-			_close_playback()
-			_started_line = false
-		_pcm_carry = PackedByteArray()
+		_reset_audio()
+		_close_playback()
 		if attempt >= MAX_ATTEMPTS or not _retries(kind):
 			speech_error.emit(line_id, format_voice_error(kind, status, api_key))
 			return
@@ -102,8 +106,7 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 
 func stop() -> void:
 	_generation += 1
-	_started_line = false
-	_pcm_carry = PackedByteArray()
+	_reset_audio()
 	_close_playback()
 	if transport != null and transport.has_method("cancel"):
 		transport.call("cancel")
@@ -144,6 +147,16 @@ static func format_voice_error(kind: String, status: int, secret: String = "") -
 	return shown
 
 
+## Чтение тела только пока статус ещё BODY. Иначе движок печатает condition error.
+static func body_chunk(status: int, reader: Callable) -> PackedByteArray:
+	if status != HTTPClient.STATUS_BODY or not reader.is_valid():
+		return PackedByteArray()
+	var data: Variant = reader.call()
+	if data is PackedByteArray:
+		return data
+	return PackedByteArray()
+
+
 ## Склеивает PCM16 между кусками. Нечётный хвост остаётся до следующего куска.
 static func take_aligned(carry: PackedByteArray, incoming: PackedByteArray) -> Dictionary:
 	var joined := PackedByteArray()
@@ -180,6 +193,12 @@ func _send(text: String, voice_name: String, style: String) -> Dictionary:
 	return await pending
 
 
+func _process(_delta: float) -> void:
+	if _line_id == "":
+		return
+	_feed()
+
+
 func _push_pcm(bytes: PackedByteArray) -> void:
 	if _line_id == "":
 		return
@@ -191,15 +210,102 @@ func _push_pcm(bytes: PackedByteArray) -> void:
 	var frames := pcm16_to_frames(ready)
 	if frames.is_empty():
 		return
-	if not _started_line:
-		_started_line = true
-		_open_playback()
-		started.emit(_line_id)
+	_pending.append_array(frames)
+	_maybe_open(false)
+	_feed()
+
+
+func _maybe_open(download_finished: bool) -> void:
+	if _started_line or _line_id == "" or _pending.is_empty():
+		return
+	var hardware := sink == null
+	if hardware and not download_finished and _pending.size() < int(SAMPLE_RATE * PREFILL_SECONDS):
+		return
+	_started_line = true
+	_open_playback()
+	started.emit(_line_id)
+
+
+func _feed() -> void:
+	if not _started_line or _pending.is_empty():
+		return
+	var room := _frames_room()
+	if room <= 0:
+		return
+	var count := mini(room, _pending.size())
+	var batch := _pending.slice(0, count)
+	_pending = _pending.slice(count)
+	_write(batch)
+
+
+func _frames_room() -> int:
+	if sink != null:
+		if sink.has_method("frames_available"):
+			return maxi(int(sink.call("frames_available")), 0)
+		return _pending.size()
+	if _playback != null:
+		return maxi(_playback.get_frames_available(), 0)
+	return 0
+
+
+func _device_buffered() -> int:
+	if sink != null:
+		if sink.has_method("buffered_frames"):
+			return maxi(int(sink.call("buffered_frames")), 0)
+		return 0
+	if _playback == null:
+		return 0
+	var available := maxi(_playback.get_frames_available(), 0)
+	if available > _device_capacity:
+		_device_capacity = available
+	if _device_capacity <= 0:
+		return 1
+	return maxi(_device_capacity - available, 0)
+
+
+func _heard() -> bool:
+	return _download_done and _pending.is_empty() and _device_buffered() == 0
+
+
+func _wait_until_heard(token: int) -> void:
+	var steps := 0
+	while token == _generation:
+		_maybe_open(true)
+		_feed()
+		if _heard():
+			break
+		steps += 1
+		if steps > 100000:
+			speech_error.emit(_line_id, "playback")
+			return
+		if _instant:
+			if sink != null and sink.has_method("advance"):
+				sink.call("advance")
+			else:
+				break
+		else:
+			await get_tree().process_frame
+	if token != _generation or not _started_line or not _heard():
+		return
+	finished.emit(_line_id)
+
+
+func _write(frames: PackedVector2Array) -> void:
+	if frames.is_empty():
+		return
 	if sink != null and sink.has_method("push"):
 		sink.call("push", frames)
 		return
 	if _playback != null:
 		_playback.push_buffer(frames)
+
+
+func _reset_audio() -> void:
+	_started_line = false
+	_download_done = false
+	_device_capacity = 0
+	_pcm_carry = PackedByteArray()
+	_pending = PackedVector2Array()
 
 
 func _open_playback() -> void:
@@ -210,16 +316,19 @@ func _open_playback() -> void:
 	if _player == null:
 		var generator := AudioStreamGenerator.new()
 		generator.mix_rate = SAMPLE_RATE
-		generator.buffer_length = 0.4
+		generator.buffer_length = BUFFER_SECONDS
 		_player = AudioStreamPlayer.new()
 		_player.stream = generator
 		add_child(_player)
 	_player.play()
 	_playback = _player.get_stream_playback() as AudioStreamGeneratorPlayback
+	if _playback != null:
+		_device_capacity = _playback.get_frames_available()
 
 
 func _close_playback() -> void:
 	_playback = null
+	_device_capacity = 0
 	if _player != null and is_instance_valid(_player):
 		_player.stop()
 
@@ -293,8 +402,10 @@ class GeminiTtsTransport:
 			if Time.get_ticks_msec() >= deadline:
 				return _outcome(false, status, "timeout", 1.0, {})
 			http.poll()
-			var chunk := http.read_response_body_chunk()
+			var chunk := _take_chunk(http)
 			if chunk.is_empty():
+				if http.get_status() != HTTPClient.STATUS_BODY:
+					break
 				await get_tree().process_frame
 				continue
 			while not chunk.is_empty():
@@ -303,15 +414,7 @@ class GeminiTtsTransport:
 				else:
 					for pcm in decoder.push(chunk):
 						_emit_pcm(on_chunk, pcm)
-				chunk = http.read_response_body_chunk()
-		var tail := http.read_response_body_chunk()
-		while not tail.is_empty():
-			if decoder == null:
-				error_body.append_array(tail)
-			else:
-				for pcm in decoder.push(tail):
-					_emit_pcm(on_chunk, pcm)
-			tail = http.read_response_body_chunk()
+				chunk = _take_chunk(http)
 		if decoder == null:
 			var raw := error_body.get_string_from_utf8()
 			return _outcome(false, status, _kind(status), _retry_after(raw), {})
@@ -323,6 +426,9 @@ class GeminiTtsTransport:
 
 	func _outcome(ok: bool, status: int, error_kind: String, retry_after: float, usage: Dictionary) -> Dictionary:
 		return {"ok": ok, "status": status, "error": error_kind, "retry_after": retry_after, "usage": usage}
+
+	func _take_chunk(http: HTTPClient) -> PackedByteArray:
+		return GeminiTtsBackend.body_chunk(http.get_status(), Callable(http, "read_response_body_chunk"))
 
 	func _emit_pcm(on_chunk: Variant, pcm: PackedByteArray) -> void:
 		if pcm.is_empty() or on_chunk is not Callable:

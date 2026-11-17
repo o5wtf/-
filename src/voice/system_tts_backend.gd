@@ -1,13 +1,27 @@
 class_name SystemTtsBackend
 extends SpeechBackend
-## Системный голос через DisplayServer.tts_speak. Сначала русский голос, иначе любой.
-## Если голосов нет, speak сообщает no_voice и не вызывает движок.
+## Системный голос через DisplayServer.tts_speak.
+## Список голосов читается в момент speak, а не на старте: на Android движок поднимается с задержкой.
+## Пустой список повторяется каждые 0.5 с около 5 с. Нет русского — берётся любой голос или пустой id.
+## no_voice только если за это время голоса так и не появились.
 
+
+const RETRY_INTERVAL_S := 0.5
+const RETRY_WINDOW_S := 5.0
 
 var driver: Object = null
+var retry_interval_s: float = RETRY_INTERVAL_S
+var retry_window_s: float = RETRY_WINDOW_S
+var last_error: String = ""
+var last_voice_id: String = ""
+var last_voice_count: int = 0
+var last_russian_count: int = 0
 var _utterances: Dictionary = {}
 var _next_utterance: int = 1
 var _active: int = 0
+var _generation: int = 0
+var _instant: bool = false
+var _clock_s: float = 0.0
 
 
 func _ready() -> void:
@@ -17,16 +31,38 @@ func _ready() -> void:
 
 
 func speak(line_id: String, text: String, voice_hint: String = "") -> void:
+	var token := _generation
 	var spoken := text.strip_edges()
 	if spoken == "":
-		speech_error.emit(line_id, "empty")
+		_fail(line_id, "empty")
 		return
-	var voice := choose_voice(voice_hint, _voices("ru"), _voices(""))
-	if voice == "" and voice_hint.strip_edges() == "":
-		speech_error.emit(line_id, "no_voice")
+	var started := _now()
+	var russian: Array = []
+	var any_voices: Array = []
+	while true:
+		if token != _generation:
+			return
+		russian = _voices("ru")
+		any_voices = _voices("")
+		last_russian_count = russian.size()
+		last_voice_count = any_voices.size()
+		if not russian.is_empty() or not any_voices.is_empty():
+			break
+		if _now() - started >= retry_window_s:
+			break
+		if _instant:
+			_clock_s += retry_interval_s
+		else:
+			await get_tree().create_timer(retry_interval_s).timeout
+	if token != _generation:
 		return
-	if voice == "":
-		voice = voice_hint.strip_edges()
+	if russian.is_empty() and any_voices.is_empty():
+		last_voice_id = ""
+		_fail(line_id, "no_voice")
+		return
+	var voice := choose_voice(voice_hint, russian, any_voices)
+	last_voice_id = voice
+	last_error = ""
 	var utterance := _next_utterance
 	_next_utterance += 1
 	_utterances[utterance] = line_id
@@ -35,9 +71,24 @@ func speak(line_id: String, text: String, voice_hint: String = "") -> void:
 
 
 func stop() -> void:
+	_generation += 1
 	_active = 0
 	_utterances.clear()
-	driver.call("stop")
+	if driver != null:
+		driver.call("stop")
+
+
+func diagnostics() -> Dictionary:
+	var feature := false
+	if driver != null and driver.has_method("has_tts"):
+		feature = bool(driver.call("has_tts"))
+	return {
+		"has_feature": feature,
+		"voices": last_voice_count,
+		"russian": last_russian_count,
+		"voice_id": last_voice_id,
+		"error": last_error,
+	}
 
 
 func speaking() -> bool:
@@ -57,6 +108,17 @@ static func choose_voice(hint: String, russian: Array, any_voices: Array) -> Str
 	if not any_voices.is_empty():
 		return _voice_id(any_voices[0])
 	return ""
+
+
+func _fail(line_id: String, kind: String) -> void:
+	last_error = kind
+	speech_error.emit(line_id, kind)
+
+
+func _now() -> float:
+	if _instant:
+		return _clock_s
+	return Time.get_ticks_msec() / 1000.0
 
 
 func _voices(language: String) -> Array:
@@ -81,7 +143,7 @@ func _on_canceled(utterance_id: int) -> void:
 	_complete(utterance_id, true)
 
 
-func _complete(utterance_id: int, canceled: bool) -> void:
+func _complete(utterance_id: int, _canceled: bool) -> void:
 	var line_id := str(_utterances.get(utterance_id, ""))
 	if line_id == "":
 		return
@@ -140,6 +202,10 @@ class DisplayTtsDriver:
 		if not _available():
 			return
 		DisplayServer.tts_stop()
+
+
+	func has_tts() -> bool:
+		return _available()
 
 
 	func bind(started: Callable, finished: Callable, canceled: Callable) -> void:

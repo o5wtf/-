@@ -15,6 +15,7 @@ var _hint: HBoxContainer
 var _hint_label: Label
 var _thinking: Label
 var _timing: Label
+var _voice_error: Label
 var _error: Label
 var _retry: Button
 var _busy: bool = false
@@ -51,6 +52,10 @@ func _ready() -> void:
 	_timing.add_theme_color_override("font_color", NoirTheme.MUTED)
 	_timing.visible = false
 	column.add_child(_timing)
+	_voice_error = UiWidgets.label("", "VoiceErrorLabel")
+	_voice_error.add_theme_color_override("font_color", NoirTheme.GOLD)
+	_voice_error.visible = false
+	column.add_child(_voice_error)
 	_error = UiWidgets.label("", "ErrorLabel")
 	_error.add_theme_color_override("font_color", NoirTheme.GOLD)
 	_error.visible = false
@@ -95,11 +100,21 @@ func _ready() -> void:
 	var stop_speech := UiWidgets.button(UiStrings.STOP_SPEECH, "StopSpeechButton")
 	stop_speech.pressed.connect(func() -> void: Speaker.stop_and_clear())
 	tools.add_child(stop_speech)
+	if Speaker.last_error != "":
+		_show_voice_error(Speaker.last_error)
+	if not Speaker.voice_error.is_connected(_show_voice_error):
+		Speaker.voice_error.connect(_show_voice_error)
 	if not Game.agent_replied.is_connected(_on_replied):
 		Game.agent_replied.connect(_on_replied)
 		Game.events.connect(_on_events)
 		Game.llm_error.connect(_on_error)
 		Game.busy_changed.connect(_on_busy)
+
+
+func _show_voice_error(kind: String) -> void:
+	var text := kind.strip_edges()
+	_voice_error.text = "" if text == "" else "Голос: %s" % text
+	_voice_error.visible = text != ""
 
 
 func _notification(what: int) -> void:

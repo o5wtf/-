@@ -4,7 +4,8 @@ extends RefCounted
 ## Цены за 1 млн токенов, USD, страница Google AI «Gemini API pricing» на 17 ноября 2026.
 ## Выход включает токены рассуждений. У gemini-3.6-flash до 31 декабря 2026 Introductory rate.
 
-const PATH := "user://config.cfg"
+## Подменяется в тестах, чтобы не писать расход в настоящий user://config.cfg.
+static var store_path: String = "user://config.cfg"
 
 
 static var session_usd: float = 0.0
@@ -29,7 +30,7 @@ static func note(model: String, prompt_tokens: int, thought_tokens: int, output_
 
 static func total_usd() -> float:
 	var file := ConfigFile.new()
-	if file.load(PATH) != OK:
+	if file.load(store_path) != OK:
 		return 0.0
 	return float(file.get_value("spend", "total_usd", 0.0))
 
@@ -59,7 +60,7 @@ static func _after_introductory_rate() -> bool:
 
 static func _add_total(cost: float) -> void:
 	var file := ConfigFile.new()
-	file.load(PATH)
+	file.load(store_path)
 	var total := float(file.get_value("spend", "total_usd", 0.0)) + cost
 	file.set_value("spend", "total_usd", total)
-	file.save(PATH)
+	file.save(store_path)

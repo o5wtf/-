@@ -92,11 +92,19 @@ func _ready() -> void:
 	var contradiction := UiWidgets.button(UiStrings.CONTRADICTION, "ContradictionButton")
 	contradiction.pressed.connect(func() -> void: contradiction_requested.emit())
 	tools.add_child(contradiction)
+	var stop_speech := UiWidgets.button(UiStrings.STOP_SPEECH, "StopSpeechButton")
+	stop_speech.pressed.connect(func() -> void: Speaker.stop_and_clear())
+	tools.add_child(stop_speech)
 	if not Game.agent_replied.is_connected(_on_replied):
 		Game.agent_replied.connect(_on_replied)
 		Game.events.connect(_on_events)
 		Game.llm_error.connect(_on_error)
 		Game.busy_changed.connect(_on_busy)
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_VISIBILITY_CHANGED and is_inside_tree() and not is_visible_in_tree():
+		Speaker.stop_and_clear()
 
 
 func open_agent(next_id: String) -> void:

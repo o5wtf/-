@@ -48,11 +48,12 @@ src/
     llm_config.gd         # LLMConfig: ключ, модели, таймауты (из user://config.cfg)
   save/
     save_state.gd         # SaveState: сохранение и загрузка партии
-  voice/                  # этап «Голос», после текстового прототипа (раздел 3.12)
-    voice_provider.gd     # VoiceProvider: общий интерфейс синтеза и распознавания
-    cloud_voice_provider.gd    # облачная реализация (поставщик — через адаптер)
-    builtin_voice_provider.gd  # встроенная: DisplayServer.tts_* + системный STT, если есть
-    voice_profiles.gd     # голос и манера для каждого агента, связь с эмоцией
+  voice/                  # этап O1: системная озвучка, без микрофона (раздел 3.12)
+    speech_backend.gd     # SpeechBackend: сменный синтез
+    system_tts_backend.gd # SystemTtsBackend: DisplayServer.tts_speak
+    speech_queue.gd       # SpeechQueue: одна реплика один раз, по порядку
+    speech_text.gd        # SpeechText: очистка текста перед озвучкой
+    speaker.gd            # автозагрузка Speaker: очередь, сигнал is_speaking
   autoload/
     game.gd               # автозагрузка Game: сессия, порядок хода, сигналы для UI
     llm.gd                # автозагрузка LLM: создаёт и отдаёт клиента по настройкам
@@ -223,34 +224,31 @@ func mark_contradiction(a: HeardRef, b: HeardRef) -> ManualContradictionResult
 func accuse(killer_id, motive_id, method_id) -> AccusationResult
 ```
 
-### 3.12 VoiceProvider (этап «Голос») — диздок, разделы 10, 12
+### 3.12 Озвучка (этап O1) — только системный голос
 
-Голос — заменяемый модуль. Игровая логика и `Game` работают с текстом; голос только озвучивает ответы агента и превращает речь игрока в текст. Выбор реализации — в настройках (`[voice] provider`), по умолчанию облачная.
+Игра по-прежнему ведёт ход текстом. Озвучка читает уже показанную реплику и не влияет на правила. Микрофона и распознавания речи в этом этапе нет.
 
 ```
-class_name VoiceProvider extends Node      # абстрактный
-signal speech_finished(utterance_id: int)
-signal transcript_ready(text: String, is_final: bool)
-signal voice_error(kind: String, message: String)   # offline | rate_limited | auth | unsupported | permission
-func is_tts_available() -> bool
-func is_stt_available() -> bool
-func speak(text: String, profile: VoiceProfile, emotion: String) -> int   # id реплики
-func stop_speaking() -> void
-func start_listening(language := "ru-RU") -> void
-func stop_listening() -> void              # после остановки приходит итоговый transcript_ready
+class_name SpeechBackend extends Node
+signal started(line_id)
+signal finished(line_id)
+signal speech_error(line_id, kind)
+func speak(line_id, text, voice_hint) -> void
+func stop() -> void
+
+# Автозагрузка Speaker
+signal is_speaking(active: bool)
+func speak_reply(agent_id, reply) -> void
+func stop_and_clear() -> void
+func reset_for_case() -> void
 ```
 
-- **`CloudVoiceProvider`**:
-  - Синтез: HTTP-запрос к выбранному поставщику, полученный звук (обычно PCM или WAV) переводится в `AudioStreamWAV` и играется через `AudioStreamPlayer`.
-  - Распознавание: запись с микрофона (`AudioStreamMicrophone` + `AudioEffectRecord` на отдельной шине), WAV отправляется поставщику.
-  - Поставщик подключается адаптером, конкретный не зафиксирован (открытый вопрос диздока, раздел 12).
-  - Режим `stt_mode = gemini_audio`: отдельного STT нет, аудио вопроса уходит в запрос хода к Gemini (`docs/LLM_PROTOCOL.md`). Модель возвращает расшифровку вопроса отдельным полем, оно попадает в историю диалога.
-- **`BuiltinVoiceProvider`**:
-  - Синтез через `DisplayServer.tts_speak()`, голос выбирается из `DisplayServer.tts_get_voices_for_language("ru")`. Нужно включить `audio/general/text_to_speech` в настройках проекта. Работает на Android и Windows без сети и без ключа.
-  - Распознавание: в Godot встроенного STT нет. Варианты — плагин Android (`SpeechRecognizer`) и расширение GDExtension для Windows (`Windows.Media.SpeechRecognition`, нужен русский языковой пакет). Если STT недоступен, `is_stt_available()` возвращает false, и UI оставляет только текстовый ввод.
-- **Профиль голоса агента:** тембр и высота, скорость; эмоция меняет скорость и громкость, у облачного поставщика — и стиль подачи, если он это умеет. Озвучивается только `reply`, а не ремарка.
-- **Ошибки голоса** не влияют на ход: текст ответа уже показан, озвучка просто не звучит, а вместо голосового ввода остаётся текстовый.
-- **Разрешения:** Android — `RECORD_AUDIO` (запрашивается при первом нажатии на микрофон); проект — `audio/driver/enable_input = true`.
+- Сейчас подключён `SystemTtsBackend`: `DisplayServer.tts_speak`. Голос берётся из `tts_get_voices_for_language("ru")`, если такого нет — любой системный голос. Если голосов нет, в журнал пишется `no_voice`, очередь очищается, ход не ломается.
+- Другой синтез (следующий этап, Gemini TTS) подменяется тем же `SpeechBackend`. `Game` и валидатор при этом не меняются.
+- Очередь говорит каждую реплику один раз (id дела, агента и хода). Новая реплика встаёт в хвост и не перебивает текущую. «Стоп», скрытие допроса и смена экрана останавливают звук и очищают очередь. Новая партия забывает уже сказанные id.
+- В синтез уходит только очищенный текст реплики: без ремарки, тона, эмоции, звёздочек, скобок и служебных слов.
+- Настройка «Озвучка» выключена по умолчанию и лежит в `user://config.cfg` как `voice/enabled`. При миграции настроек до `settings_version=3` отсутствующий флаг записывается как `false`.
+- Журнал: `voice start|finish|error id=… len=…` без текста реплики. `audio/general/text_to_speech` включён. Разрешение микрофона не запрашивается.
 
 ## 4. Ход игрока: поток данных
 
@@ -291,7 +289,7 @@ func stop_listening() -> void              # после остановки пр�
 | 9 Контекст и промпт | PromptBuilder, DialogueState, Summarizer, ResponseValidator |
 | 10 UX допроса | экраны UI, EvidenceMatcher, Notebook |
 | 11 Давление, эмоция, усталость | Balance, RulesEngine |
-| 12 Платформа и ИИ | LLMClient, GeminiClient, LLMConfig, VoiceProvider (этап «Голос»), экспорт |
+| 12 Платформа и ИИ | LLMClient, GeminiClient, LLMConfig, SpeechBackend, экспорт |
 | 13 Схема агента | CaseData, CaseValidator, PromptBuilder |
 | 14 Противоречия | RulesEngine, Notebook |
 | 15 Условия открытия | Conditions |

@@ -39,7 +39,7 @@ static func build_turn(
 		"schema": _turn_schema(_packet_keys(packet), evidence_keys),
 		"model_role": "dialogue",
 		"temperature": 0.9,
-		"max_output_tokens": 8192,
+		"max_output_tokens": LLMConfig.REPLY_MAX_OUTPUT_TOKENS,
 	}
 
 
@@ -256,4 +256,5 @@ static func _turn_schema(packet_keys: PackedStringArray, evidence_keys: PackedSt
 			},
 		},
 		"required": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence"],
+		"propertyOrdering": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence"],
 	}

@@ -3,33 +3,54 @@ extends RefCounted
 ## Ключ и модели. Ключ не пишется в логи.
 ## Порядок ключа: user://config.cfg, затем GEMINI_API_KEY, затем res://config/dev.cfg только в отладочной сборке.
 
-const DEFAULT_DIALOGUE_MODEL := "gemini-3.5-flash"
-const DEFAULT_SUMMARY_MODEL := "gemini-3.5-flash-lite"
-const DEFAULT_FALLBACK_MODEL := "gemini-3.5-flash-lite"
-const FAST_MODEL := "gemini-3.5-flash"
-const LITE_MODEL := "gemini-3.5-flash-lite"
+const SETTINGS_VERSION := 2
+const DEFAULT_DIALOGUE_MODEL := "gemini-3.5-flash-lite"
+const DIALOGUE_MODELS: PackedStringArray = [
+	"gemini-3.5-flash-lite",
+	"gemini-3.1-flash-lite",
+	"gemini-3.6-flash",
+]
+const DEFAULT_THINKING := "MINIMAL"
+## Выход с запасом: при 800 токенах ответ обрывался, когда рассуждения занимали 639.
+const REPLY_MAX_OUTPUT_TOKENS := 16384
 
 var provider: String = "gemini"
 var api_key: String = ""
 var key_source: String = "none"
 var dialogue_model: String = DEFAULT_DIALOGUE_MODEL
-var summary_model: String = DEFAULT_SUMMARY_MODEL
-var fallback_model: String = DEFAULT_FALLBACK_MODEL
-var thinking_level: String = "LOW"
+var summary_model: String = DEFAULT_DIALOGUE_MODEL
+var thinking_level: String = DEFAULT_THINKING
 var timeout_s: float = 45.0
 var ping_timeout_s: float = 32.0
-var min_interval_s: float = 1.0
+var min_interval_s: float = 0.0
+var summary_after_reply: bool = true
+var local_fixes: bool = true
 
 
 static func live_smoke_enabled(env_key: String) -> bool:
 	return env_key.strip_edges() != ""
 
 
+static func is_dialogue_model(model: String) -> bool:
+	return DIALOGUE_MODELS.has(model.strip_edges())
+
+
+static func canonical_model(model: String) -> String:
+	var name := model.strip_edges()
+	if is_dialogue_model(name):
+		return name
+	return DEFAULT_DIALOGUE_MODEL
+
+
 static func load_settings() -> LLMConfig:
+	_migrate_saved_settings()
 	var user_text := _read_text("user://config.cfg")
 	var debug := OS.is_debug_build()
 	var dev_text := _read_text("res://config/dev.cfg") if debug else ""
-	return from_sources(user_text, OS.get_environment("GEMINI_API_KEY"), dev_text, debug)
+	var config := from_sources(user_text, OS.get_environment("GEMINI_API_KEY"), dev_text, debug)
+	config.dialogue_model = canonical_model(config.dialogue_model)
+	config.summary_model = config.dialogue_model
+	return config
 
 
 static func from_sources(user_text: String, env_key: String, dev_text: String, debug: bool) -> LLMConfig:
@@ -38,12 +59,13 @@ static func from_sources(user_text: String, env_key: String, dev_text: String, d
 	var dev := _section(dev_text) if debug else {}
 	config.provider = _first_string(user, dev, "provider", "gemini")
 	config.dialogue_model = _first_string(user, dev, "dialogue_model", DEFAULT_DIALOGUE_MODEL)
-	config.summary_model = _first_string(user, dev, "summary_model", DEFAULT_SUMMARY_MODEL)
-	config.fallback_model = _first_string(user, dev, "fallback_model", DEFAULT_FALLBACK_MODEL)
-	config.thinking_level = _first_string(user, dev, "thinking_level", "LOW")
+	config.summary_model = config.dialogue_model
+	config.thinking_level = _thinking_level(_first_string(user, dev, "thinking_level", DEFAULT_THINKING))
 	config.timeout_s = _first_number(user, dev, "timeout_s", 45.0)
 	config.ping_timeout_s = _first_number(user, dev, "ping_timeout_s", 32.0)
-	config.min_interval_s = _first_number(user, dev, "min_interval_s", 1.0)
+	config.min_interval_s = 0.0
+	config.summary_after_reply = _first_bool(user, dev, "summary_after_reply", true)
+	config.local_fixes = _first_bool(user, dev, "local_fixes", true)
 	var user_key := str(user.get("api_key", "")).strip_edges()
 	var env := env_key.strip_edges()
 	var dev_key := str(dev.get("api_key", "")).strip_edges()
@@ -65,6 +87,33 @@ static func create_client(config: LLMConfig) -> LLMClient:
 	var client := GeminiClient.new()
 	client.apply_config(config)
 	return client
+
+
+static func _migrate_saved_settings() -> void:
+	var path := "user://config.cfg"
+	if not FileAccess.file_exists(path):
+		return
+	var file := ConfigFile.new()
+	if file.load(path) != OK:
+		return
+	var changed := false
+	var model := str(file.get_value("llm", "dialogue_model", "")).strip_edges()
+	if model != "" and not is_dialogue_model(model):
+		file.set_value("llm", "dialogue_model", DEFAULT_DIALOGUE_MODEL)
+		file.set_value("llm", "summary_model", DEFAULT_DIALOGUE_MODEL)
+		changed = true
+	if int(file.get_value("llm", "settings_version", 0)) < SETTINGS_VERSION:
+		file.set_value("llm", "settings_version", SETTINGS_VERSION)
+		changed = true
+	if changed:
+		file.save(path)
+
+
+static func _thinking_level(raw: String) -> String:
+	var level := raw.strip_edges().to_upper()
+	if level == "MINIMAL" or level == "LOW":
+		return level
+	return DEFAULT_THINKING
 
 
 static func _read_text(path: String) -> String:
@@ -100,4 +149,12 @@ static func _first_number(user: Dictionary, dev: Dictionary, key: String, fallba
 		return float(user[key])
 	if dev.has(key):
 		return float(dev[key])
+	return fallback
+
+
+static func _first_bool(user: Dictionary, dev: Dictionary, key: String, fallback: bool) -> bool:
+	if user.has(key):
+		return bool(user[key])
+	if dev.has(key):
+		return bool(dev[key])
 	return fallback

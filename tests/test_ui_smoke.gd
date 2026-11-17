@@ -88,7 +88,7 @@ func test_settings_roundtrip_keeps_key_out_of_status_copy() -> void:
 	var loaded := SettingsStore.load_current()
 	assert_eq(loaded.provider, "mock")
 	assert_eq(loaded.api_key, "test-key-value")
-	assert_eq(loaded.dialogue_model, "gemini-3.8-flash")
+	assert_eq(loaded.dialogue_model, LLMConfig.DEFAULT_DIALOGUE_MODEL)
 	assert_true(absf(loaded.text_scale - 1.1) < 0.001)
 	if previous == "":
 		DirAccess.remove_absolute(path)

@@ -59,3 +59,47 @@ func test_usage_and_turn_counters() -> void:
 	assert_eq(LlmTiming.screen_line(1300, 1, "gemini-3.5-flash-lite"), "ход 1,3 с · 1 запр. · gemini-3.5-flash-lite")
 	assert_eq(LlmTiming.median_int([100, 400, 200]), 200)
 	assert_true(SettingsStore.new().timing_debug)
+	assert_eq(LLMConfig.DEFAULT_DIALOGUE_MODEL, "gemini-3.5-flash-lite")
+	assert_eq(LLMConfig.DIALOGUE_MODELS.size(), 3)
+	var blank := LLMConfig.from_sources("", "", "", false)
+	assert_eq(blank.thinking_level, "MINIMAL")
+	assert_true(blank.summary_after_reply)
+	assert_true(blank.local_fixes)
+	assert_true(absf(SpendMeter.cost_usd("gemini-3.5-flash-lite", 1000000, 0, 0) - 0.30) < 0.000001)
+	assert_true(absf(SpendMeter.cost_usd("gemini-3.5-flash-lite", 0, 1000000, 0) - 2.50) < 0.000001)
+	assert_true(absf(SpendMeter.cost_usd("gemini-3.1-flash-lite", 1000000, 0, 1000000) - 1.75) < 0.000001)
+	var flash_input := 0.75 if int(Time.get_date_dict_from_system()["year"]) < 2027 else 1.50
+	assert_true(absf(SpendMeter.cost_usd("gemini-3.6-flash", 1000000, 0, 0) - flash_input) < 0.000001)
+	assert_eq(SpendMeter.cost_usd("dialogue-model", 1000000, 0, 0), 0.0)
+	var before_session := SpendMeter.session_usd
+	var before_total := SpendMeter.total_usd()
+	SpendMeter.note("gemini-3.5-flash-lite", 1000000, 0, 0)
+	assert_true(absf(SpendMeter.session_usd - before_session - 0.30) < 0.000001)
+	assert_true(absf(SpendMeter.total_usd() - before_total - 0.30) < 0.000001)
+	SpendMeter.session_usd = before_session
+	assert_true(load("res://tests/manual/turn_benchmark.gd") != null)
+	_assert_flash_model_migrates()
+
+
+func _assert_flash_model_migrates() -> void:
+	var path := "user://config.cfg"
+	var previous := FileAccess.get_file_as_string(path) if FileAccess.file_exists(path) else ""
+	var file := ConfigFile.new()
+	file.parse(previous)
+	file.set_value("llm", "dialogue_model", "gemini-3.5-flash")
+	file.set_value("llm", "api_key", "migrate-key")
+	file.set_value("llm", "settings_version", 1)
+	file.save(path)
+	var loaded := SettingsStore.load_current()
+	assert_eq(loaded.dialogue_model, "gemini-3.5-flash-lite")
+	assert_eq(loaded.api_key, "migrate-key")
+	var check := ConfigFile.new()
+	assert_eq(check.load(path), OK)
+	assert_eq(int(check.get_value("llm", "settings_version", 0)), 2)
+	assert_eq(str(check.get_value("llm", "dialogue_model", "")), "gemini-3.5-flash-lite")
+	if previous == "":
+		DirAccess.remove_absolute(path)
+	else:
+		var restore := FileAccess.open(path, FileAccess.WRITE)
+		restore.store_string(previous)
+		restore.close()

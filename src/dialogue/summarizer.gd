@@ -23,7 +23,7 @@ static func build_request(agent_name: String, old_summary: String, messages: Arr
 		},
 		"model_role": "summary",
 		"temperature": 0.2,
-		"max_output_tokens": 1024,
+		"max_output_tokens": 8192,
 	}
 
 

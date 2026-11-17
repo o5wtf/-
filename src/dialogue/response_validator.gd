@@ -17,9 +17,11 @@ const COMMON_WORDS: PackedStringArray = [
 
 
 static func validate(resp: Variant, packet: Array, context: Dictionary) -> Dictionary:
+	var local_fixes: bool = bool(context.get("local_fixes", true))
 	var report := {
 		"ok": true,
 		"violations": PackedStringArray(),
+		"fixes": PackedStringArray(),
 		"statements": [] as Array[Dictionary],
 		"tone": 0,
 		"emotion": str(context.get("previous_emotion", "neutral")),
@@ -29,18 +31,27 @@ static func validate(resp: Variant, packet: Array, context: Dictionary) -> Dicti
 		"requested_evidence": "",
 	}
 	if resp is not Dictionary:
-		_violate(report, "ответ не объект")
+		_violate(report, "пустая реплика")
 		return report
 	var body := _normalize(resp as Dictionary)
 	if not _has_types(body):
-		_violate(report, "в ответе нет обязательных полей или типы неверные")
-		return report
+		if str(body.get("reply", "")).strip_edges() == "":
+			_violate(report, "пустая реплика")
+			return report
+		if not local_fixes:
+			_violate(report, "в ответе нет обязательных полей или типы неверные")
+			return report
+		_fill_defaults(body, context)
+		_log_fix(report, "defaults")
 	var by_key := _index_packet(packet)
 	var stated: Array = body["stated"]
 	var seen := {}
 	for item in stated:
 		if item is not Dictionary:
-			_violate(report, "элемент stated не объект")
+			if local_fixes:
+				_log_fix(report, "drop stated")
+			else:
+				_violate(report, "элемент stated не объект")
 			continue
 		var key := str((item as Dictionary).get("key", ""))
 		var form := str((item as Dictionary).get("form", ""))
@@ -50,21 +61,42 @@ static func validate(resp: Variant, packet: Array, context: Dictionary) -> Dicti
 			continue
 		seen[key] = true
 		if not by_key.has(key):
-			_violate(report, "ключ stated не из пакета")
+			if local_fixes:
+				_log_fix(report, "drop key=%s" % key)
+			else:
+				_violate(report, "ключ stated не из пакета")
 			continue
 		var entry: Dictionary = by_key[key]
-		if not _form_allowed(str(entry.get("mode", "")), form):
-			_violate(report, "форма stated не подходит к записи пакета")
-			continue
+		var mode := str(entry.get("mode", ""))
+		if not _form_allowed(mode, form):
+			if not local_fixes:
+				_violate(report, "форма stated не подходит к записи пакета")
+				continue
+			var downgraded := _downgrade_form(mode, form)
+			if downgraded == "":
+				_log_fix(report, "drop form key=%s" % key)
+				continue
+			_log_fix(report, "form key=%s %s->%s" % [key, form, downgraded])
+			form = downgraded
 		report["statements"].append({
 			"key": key,
 			"fact_id": str(entry.get("fact_id", "")),
 			"form": form,
 		})
 	var reply := _strip_markup(str(body["reply"]))
+	if local_fixes:
+		var limited := _limit_sentences(reply, 4)
+		if limited != reply:
+			_log_fix(report, "sentences")
+			reply = limited
+		if reply.length() > REPLY_MAX:
+			_log_fix(report, "length")
+			reply = reply.substr(0, REPLY_MAX).strip_edges()
 	report["reply"] = reply
 	report["remark"] = str(body["remark"])
-	if reply.length() < 1 or reply.length() > REPLY_MAX:
+	if reply.strip_edges() == "":
+		_violate(report, "пустая реплика")
+	elif not local_fixes and (reply.length() < 1 or reply.length() > REPLY_MAX):
 		_violate(report, "длина реплики не в пределах 1–700")
 	if _has_service_word(reply):
 		_violate(report, "в реплике служебное слово")
@@ -81,6 +113,16 @@ static func validate(resp: Variant, packet: Array, context: Dictionary) -> Dicti
 	report["mentioned_evidence"] = _filter_evidence(body["mentioned_evidence"], allowed_evidence)
 	report["requested_evidence"] = _filter_requested(body["requested_evidence"], allowed_evidence)
 	return report
+
+
+static func needs_regeneration(report: Dictionary) -> bool:
+	if report.get("ok", true):
+		return false
+	for item in report.get("violations", PackedStringArray()):
+		var text := str(item)
+		if text == "возможная утечка" or text == "в реплике служебное слово" or text == "пустая реплика":
+			return true
+	return false
 
 
 static func repair_note(violations: PackedStringArray) -> String:
@@ -147,6 +189,52 @@ static func _index_packet(packet: Array) -> Dictionary:
 		if entry is Dictionary:
 			indexed[str((entry as Dictionary).get("key", ""))] = entry
 	return indexed
+
+
+static func _downgrade_form(mode: String, form: String) -> String:
+	var ladder: PackedStringArray = ["full", "basic", "lie"]
+	var start := ladder.find(form)
+	if start < 0:
+		start = 0
+	for index in range(start, ladder.size()):
+		if _form_allowed(mode, ladder[index]):
+			return ladder[index]
+	return ""
+
+
+static func _limit_sentences(reply: String, limit: int) -> String:
+	var pattern := RegEx.new()
+	pattern.compile("[^.!?…]+[.!?…]+|[^.!?…]+$")
+	var sentences: PackedStringArray = PackedStringArray()
+	for match in pattern.search_all(reply):
+		var sentence := match.get_string().strip_edges()
+		if sentence != "":
+			sentences.append(sentence)
+	if sentences.size() <= limit:
+		return reply
+	return " ".join(sentences.slice(0, limit))
+
+
+static func _fill_defaults(body: Dictionary, context: Dictionary) -> void:
+	if not (body.get("player_tone") is int or body.get("player_tone") is float):
+		body["player_tone"] = 0
+	if body.get("remark") is not String:
+		body["remark"] = ""
+	if body.get("emotion") is not String:
+		body["emotion"] = str(context.get("previous_emotion", "neutral"))
+	if body.get("stated") is not Array:
+		body["stated"] = []
+	if body.get("mentioned_evidence") is not Array:
+		body["mentioned_evidence"] = []
+	if not body.has("requested_evidence"):
+		body["requested_evidence"] = null
+
+
+static func _log_fix(report: Dictionary, message: String) -> void:
+	print("validator fix %s" % message)
+	var fixes: PackedStringArray = report.get("fixes", PackedStringArray())
+	fixes.append(message)
+	report["fixes"] = fixes
 
 
 static func _form_allowed(mode: String, form: String) -> bool:

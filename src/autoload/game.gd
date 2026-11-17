@@ -19,6 +19,7 @@ var last_mentioned_evidence: Array[String] = []
 var last_requested_evidence: String = ""
 var last_turn_line: String = ""
 var last_turn_stats: Dictionary = {}
+var is_busy: bool = false
 
 
 func open_case(path: String) -> CaseLoader.Result:
@@ -62,10 +63,14 @@ func mentioned_evidence(text: String) -> Array[String]:
 
 
 func ask(agent_id: String, player_text: String) -> void:
+	if is_busy:
+		return
 	await _turn(agent_id, player_text, "", "")
 
 
 func present(agent_id: String, evidence_id: String, player_text: String = "") -> void:
+	if is_busy:
+		return
 	var question := player_text.strip_edges()
 	if question == "":
 		question = "Что скажете?"
@@ -110,10 +115,14 @@ func continue_case(path: String) -> Dictionary:
 
 
 func _turn(agent_id: String, player_text: String, event_note: String, evidence_id: String) -> void:
+	if is_busy:
+		return
 	if _engine == null or not _dialogues.has(agent_id):
 		llm_error.emit("no_case", "Дело не открыто.")
 		return
+	is_busy = true
 	busy_changed.emit(true)
+	var turn_config := LLMConfig.load_settings()
 	last_mentioned_evidence = []
 	last_requested_evidence = ""
 	var turn_started := Time.get_ticks_msec()
@@ -126,44 +135,35 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 		turn_events.append_array(_engine.present_evidence(agent_id, evidence_id))
 	turn_events.append_array(_engine.note_question(agent_id))
 	var dialogue: DialogueState = _dialogues[agent_id]
-	if dialogue.needs_summary():
+	if not turn_config.summary_after_reply and dialogue.needs_summary():
 		LlmTiming.note_request(tally, "summary", "summary")
-		await _refresh_summary(agent_id, dialogue)
+		dialogue = await _refresh_summary(agent_id, dialogue)
 	var packet: Array = _engine.get_packet(agent_id)
 	var request := PromptBuilder.build_turn(case_data, state, agent_id, packet, dialogue, player_text, event_note)
 	LlmTiming.note_request(tally, "reply", "reply")
 	var result := await _generate(request)
 	turn_model = str(result.get("model", turn_model))
 	if _is_network_error(result):
-		_publish_turn_timing(turn_started, turn_model, tally)
-		_restore(snapshot)
-		llm_error.emit(str(result.get("error", "")), str(result.get("message", "")))
-		busy_changed.emit(false)
+		_abort_turn(snapshot, turn_started, turn_model, tally, str(result.get("error", "")), str(result.get("message", "")))
 		return
 	if str(result.get("error", "")) == "blocked":
 		LlmTiming.note_request(tally, "regen", "blocked")
 		result = await _generate(_with_suffix(request, "Отвечай сдержаннее, без откровенных подробностей."))
 		turn_model = str(result.get("model", turn_model))
 		if _is_network_error(result):
-			_publish_turn_timing(turn_started, turn_model, tally)
-			_restore(snapshot)
-			llm_error.emit(str(result.get("error", "")), str(result.get("message", "")))
-			busy_changed.emit(false)
+			_abort_turn(snapshot, turn_started, turn_model, tally, str(result.get("error", "")), str(result.get("message", "")))
 			return
 	var agent: CaseData.Agent = case_data.agent_by_id[agent_id]
-	var report := _validate_result(result, packet, agent_id, dialogue, player_text)
-	if not report["ok"]:
+	var report := _validate_result(result, packet, agent_id, dialogue, player_text, turn_config.local_fixes)
+	if _should_regenerate(report, turn_config.local_fixes):
 		LlmTiming.note_request(tally, "regen", "validation")
 		var retry := _with_suffix(request, ResponseValidator.repair_note(report["violations"]))
 		result = await _generate(retry)
 		turn_model = str(result.get("model", turn_model))
 		if _is_network_error(result):
-			_publish_turn_timing(turn_started, turn_model, tally)
-			_restore(snapshot)
-			llm_error.emit(str(result.get("error", "")), str(result.get("message", "")))
-			busy_changed.emit(false)
+			_abort_turn(snapshot, turn_started, turn_model, tally, str(result.get("error", "")), str(result.get("message", "")))
 			return
-		report = _validate_result(result, packet, agent_id, dialogue, player_text)
+		report = _validate_result(result, packet, agent_id, dialogue, player_text, turn_config.local_fixes)
 	var reply := ""
 	var remark := ""
 	var tone := 0
@@ -189,16 +189,21 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 	turn_events.append_array(_engine.apply_tone(agent_id, tone))
 	if Balance.emotion_allowed(emotion):
 		_engine.set_emotion(agent_id, emotion)
+	dialogue = _rebind_dialogue(agent_id, dialogue)
 	dialogue.append_message("player", player_text, state.turn)
 	dialogue.append_message("agent", reply, state.turn, remark)
-	_sync_dialogues()
-	_autosave()
 	if turn_model == "":
 		turn_model = str(result.get("model", ""))
-	_publish_turn_timing(turn_started, turn_model, tally)
+	var text_ms := Time.get_ticks_msec() - turn_started
 	agent_replied.emit(agent_id, reply, remark)
 	events.emit(turn_events)
-	busy_changed.emit(false)
+	if turn_config.summary_after_reply and dialogue.needs_summary():
+		LlmTiming.note_request(tally, "summary", "summary")
+		dialogue = await _refresh_summary(agent_id, dialogue)
+	_sync_dialogues()
+	_autosave()
+	_publish_turn_timing(text_ms, turn_model, tally)
+	_end_busy()
 
 
 func _autosave() -> void:
@@ -225,24 +230,38 @@ func _replace_state(data: Variant) -> void:
 	notebook = Notebook.new(case_data, state)
 
 
-func _refresh_summary(agent_id: String, dialogue: DialogueState) -> void:
+func _refresh_summary(agent_id: String, dialogue: DialogueState) -> DialogueState:
+	var live := _rebind_dialogue(agent_id, dialogue)
+	if not live.needs_summary():
+		return live
 	var agent: CaseData.Agent = case_data.agent_by_id[agent_id]
-	var fold_until := dialogue.messages.size() - 6
-	var folded: Array = dialogue.messages.slice(dialogue.summarized_count, fold_until)
-	var request := Summarizer.build_request(agent.name, dialogue.summary, folded)
+	var fold_until := live.messages.size() - 6
+	var folded: Array = live.messages.slice(live.summarized_count, fold_until)
+	var request := Summarizer.build_request(agent.name, live.summary, folded)
 	var result := await _generate(request)
-	if not result.get("ok", false) or result.get("json") is not Dictionary:
-		return
-	var summary := str((result["json"] as Dictionary).get("summary", "")).strip_edges()
+	live = _rebind_dialogue(agent_id, live)
+	var summary := ""
+	if result.get("ok", false) and result.get("json") is Dictionary:
+		summary = str((result["json"] as Dictionary).get("summary", "")).strip_edges()
 	if summary == "":
-		return
-	dialogue.summary = summary
-	dialogue.summarized_count = fold_until
+		var heard: Array = notebook.entries() if notebook != null else state.heard
+		Summarizer.apply_fallback(live, agent.name, heard)
+		return live
+	live.summary = summary
+	live.summarized_count = fold_until
+	return live
 
 
-func _validate_result(result: Dictionary, packet: Array, agent_id: String, dialogue: DialogueState, player_text: String) -> Dictionary:
+func _rebind_dialogue(agent_id: String, previous: DialogueState) -> DialogueState:
+	var live: DialogueState = _dialogues.get(agent_id) as DialogueState
+	if live == null:
+		return previous
+	return live
+
+
+func _validate_result(result: Dictionary, packet: Array, agent_id: String, dialogue: DialogueState, player_text: String, local_fixes: bool) -> Dictionary:
 	if not result.get("ok", false):
-		return {"ok": false, "violations": PackedStringArray(["ответ модели не получен"]), "statements": []}
+		return {"ok": false, "violations": PackedStringArray(["пустая реплика"]), "statements": []}
 	return ResponseValidator.validate(result.get("json", {}), packet, {
 		"case_data": case_data,
 		"state": state,
@@ -252,12 +271,31 @@ func _validate_result(result: Dictionary, packet: Array, agent_id: String, dialo
 		"previous_emotion": str(state.emotion.get(agent_id, "neutral")),
 		"leak_max_stems": _leak_max_stems,
 		"log_leaks": _log_leaks,
+		"local_fixes": local_fixes,
 		"evidence_keys": PromptBuilder.evidence_keys(case_data, state),
 	})
 
 
-func _publish_turn_timing(started_ms: int, model: String, tally: Dictionary) -> void:
-	var elapsed := Time.get_ticks_msec() - started_ms
+func _should_regenerate(report: Dictionary, local_fixes: bool) -> bool:
+	if local_fixes:
+		return ResponseValidator.needs_regeneration(report)
+	return not report.get("ok", false)
+
+
+func _abort_turn(snapshot: Dictionary, started_ms: int, model: String, tally: Dictionary, error_kind: String, message: String) -> void:
+	_publish_turn_timing(Time.get_ticks_msec() - started_ms, model, tally)
+	_restore(snapshot)
+	_sync_dialogues()
+	llm_error.emit(error_kind, message)
+	_end_busy()
+
+
+func _end_busy() -> void:
+	is_busy = false
+	busy_changed.emit(false)
+
+
+func _publish_turn_timing(elapsed: int, model: String, tally: Dictionary) -> void:
 	var shown := model if model != "" else "-"
 	last_turn_stats = {
 		"ask_to_text_ms": elapsed,
@@ -321,3 +359,8 @@ func _restore(snapshot: Dictionary) -> void:
 		var saved: Variant = fresh.dialogues.get(agent_id, {})
 		if saved is Dictionary:
 			_dialogues[agent_id] = DialogueState.from_dict(saved)
+	for agent_id in _dialogues.keys():
+		var live: DialogueState = _dialogues[agent_id]
+		var saved_body: Variant = state.dialogues.get(agent_id, {})
+		if saved_body is Dictionary and live.to_dict() != (saved_body as Dictionary):
+			_dialogues[agent_id] = DialogueState.from_dict(saved_body)

@@ -87,6 +87,56 @@ func test_blocked_regenerates_with_calmer_note() -> void:
 	mock.free()
 
 
+func test_wrong_form_is_fixed_without_a_second_request() -> void:
+	assert_true(_boot(), "фикстура хода не открылась")
+	var mock := _use_mock()
+	mock.enqueue(_reply("k1", "basic", "Я держусь своей версии."))
+	await Game.ask("a", "Где вы были?")
+	assert_eq(mock.calls.size(), 1)
+	assert_true(_heard("a", "fa", "lie"))
+	mock.free()
+
+
+func test_second_send_is_ignored_while_busy() -> void:
+	assert_true(_boot(), "фикстура хода не открылась")
+	var mock := _use_mock()
+	mock.enqueue(_reply("k1", "lie", "Я держусь своей версии."))
+	Game.agent_replied.connect(func(_id: String, _text: String, _remark: String) -> void:
+		Game.ask("a", "Ещё вопрос?")
+	, CONNECT_ONE_SHOT)
+	await Game.ask("a", "Где вы были?")
+	assert_eq(mock.calls.size(), 1)
+	assert_false(Game.is_busy)
+	mock.free()
+
+
+func test_summary_runs_after_the_reply_and_falls_back() -> void:
+	assert_true(_boot(), "фикстура хода не открылась")
+	var dialogue: DialogueState = Game._dialogues["a"]
+	for index in 10:
+		dialogue.append_message("player" if index % 2 == 0 else "agent", "реплика", 1)
+	var mock := _use_mock()
+	mock.enqueue(_reply("k1", "lie", "Я держусь своей версии."))
+	mock.enqueue({"ok": false, "json": {}, "raw_text": "", "error": "offline", "retry_after_s": 0.0, "message": ""})
+	var replies: Array[String] = []
+	Game.agent_replied.connect(func(_id: String, text: String, _remark: String) -> void:
+		replies.append(text)
+		assert_eq(mock.calls.size(), 1)
+	, CONNECT_ONE_SHOT)
+	await Game.ask("a", "Где вы были?")
+	assert_eq(replies.size(), 1)
+	assert_eq(mock.calls.size(), 2)
+	assert_eq(str(mock.calls[0].get("model_role", "")), "dialogue")
+	assert_eq(str(mock.calls[1].get("model_role", "")), "summary")
+	var live: DialogueState = Game._dialogues["a"]
+	assert_eq(live.messages.size(), 12)
+	assert_eq(live.summarized_count, 6)
+	assert_false(live.needs_summary())
+	assert_true(live.summary.contains("Меня там не было."))
+	assert_true(_heard("a", "fa", "lie"))
+	mock.free()
+
+
 func _boot() -> bool:
 	var loaded := Game.open_case(FIXTURE)
 	return loaded.ok

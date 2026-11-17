@@ -88,6 +88,7 @@ func show_damaged(errors: Array) -> void:
 
 
 func _on_new_case() -> void:
+	Speaker.reset_for_case()
 	if not SettingsStore.has_playable_key():
 		show_settings(true)
 		return
@@ -112,6 +113,7 @@ func _apply_theme() -> void:
 
 
 func _swap(screen: Control) -> void:
+	Speaker.stop_and_clear()
 	if _screen != null and is_instance_valid(_screen):
 		_screen.queue_free()
 	_screen = screen

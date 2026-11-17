@@ -12,6 +12,7 @@ var _loading: bool = false
 var _scale: HSlider
 var _mock: CheckBox
 var _timing: CheckBox
+var _voice: CheckBox
 var _status: Label
 var _show: Button
 var _testing: bool = false
@@ -83,6 +84,12 @@ func _ready() -> void:
 	_timing.text = UiStrings.TIMING_DEBUG
 	_timing.custom_minimum_size = Vector2(0, 48)
 	scroll_box.add_child(_timing)
+	_voice = CheckBox.new()
+	_voice.name = "VoiceEnabled"
+	_voice.text = UiStrings.VOICE_ENABLED
+	_voice.custom_minimum_size = Vector2(0, 48)
+	_voice.toggled.connect(_on_voice_toggled)
+	scroll_box.add_child(_voice)
 	_status = UiWidgets.label("", "StatusLabel")
 	scroll_box.add_child(_status)
 	var save := UiWidgets.button(UiStrings.SAVE, "SaveButton")
@@ -100,6 +107,7 @@ func _load_fields() -> void:
 	_key.text = ""
 	_loading = true
 	_model.select(_model_index(store.dialogue_model))
+	_voice.button_pressed = store.voice_enabled
 	_loading = false
 	_spend.text = _spend_text()
 	_scale.value = store.text_scale
@@ -124,7 +132,8 @@ func _save() -> void:
 	if key == "":
 		key = previous.api_key
 	var provider := "mock" if _mock.button_pressed else "gemini"
-	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed)
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed)
+	Speaker.set_enabled(_voice.button_pressed)
 	_key.text = ""
 	_key.secret = true
 	_show.text = UiStrings.SHOW_KEY
@@ -179,6 +188,18 @@ func _ping_request() -> Dictionary:
 			"required": ["ok"],
 		},
 	}
+
+
+func _on_voice_toggled(pressed: bool) -> void:
+	if _loading:
+		return
+	var previous := SettingsStore.load_current()
+	var key := _key.text.strip_edges()
+	if key == "":
+		key = previous.api_key
+	var provider := "mock" if _mock.button_pressed else "gemini"
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, pressed)
+	Speaker.set_enabled(pressed)
 
 
 func _selected_model() -> String:

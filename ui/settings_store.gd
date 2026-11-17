@@ -10,6 +10,8 @@ var dialogue_model: String = LLMConfig.DEFAULT_DIALOGUE_MODEL
 var text_scale: float = 1.0
 ## Строка времени хода на допросе. Включена, чтобы замер был виден без отдельной настройки.
 var timing_debug: bool = true
+## Системная озвучка реплик. Выключена, пока игрок сам её не включит.
+var voice_enabled: bool = false
 
 
 static func load_current() -> SettingsStore:
@@ -23,10 +25,12 @@ static func load_current() -> SettingsStore:
 		store.text_scale = clampf(float(file.get_value("ui", "text_scale")), 0.85, 1.4)
 	if file.load(PATH) == OK and file.has_section_key("llm", "timing_debug"):
 		store.timing_debug = bool(file.get_value("llm", "timing_debug"))
+	if file.load(PATH) == OK and file.has_section_key("voice", "enabled"):
+		store.voice_enabled = bool(file.get_value("voice", "enabled"))
 	return store
 
 
-static func save_values(provider: String, api_key: String, dialogue_model: String, text_scale: float, timing_debug: Variant = null) -> void:
+static func save_values(provider: String, api_key: String, dialogue_model: String, text_scale: float, timing_debug: Variant = null, voice_enabled: Variant = null) -> void:
 	var file := ConfigFile.new()
 	file.load(PATH)
 	file.set_value("llm", "provider", provider)
@@ -38,6 +42,8 @@ static func save_values(provider: String, api_key: String, dialogue_model: Strin
 	file.set_value("ui", "text_scale", clampf(text_scale, 0.85, 1.4))
 	if timing_debug != null:
 		file.set_value("llm", "timing_debug", bool(timing_debug))
+	if voice_enabled != null:
+		file.set_value("voice", "enabled", bool(voice_enabled))
 	file.save(PATH)
 
 

@@ -18,6 +18,12 @@ run/main_scene="res://src/main.tscn"
 
 Game="*res://src/autoload/game.gd"
 LLM="*res://src/autoload/llm.gd"
+Speaker="*res://src/voice/speaker.gd"
+
+[audio]
+
+; Системная озвучка. Ввод с микрофона не включается.
+general/text_to_speech=true
 
 [display]
 

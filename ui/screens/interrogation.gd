@@ -16,6 +16,7 @@ var _hint_label: Label
 var _thinking: Label
 var _timing: Label
 var _voice_error: Label
+var _voice_retry: Button
 var _error: Label
 var _retry: Button
 var _busy: bool = false
@@ -56,6 +57,10 @@ func _ready() -> void:
 	_voice_error.add_theme_color_override("font_color", NoirTheme.GOLD)
 	_voice_error.visible = false
 	column.add_child(_voice_error)
+	_voice_retry = UiWidgets.button(UiStrings.VOICE_RETRY, "VoiceRetryButton")
+	_voice_retry.visible = false
+	_voice_retry.pressed.connect(func() -> void: Speaker.retry_failed())
+	column.add_child(_voice_retry)
 	_error = UiWidgets.label("", "ErrorLabel")
 	_error.add_theme_color_override("font_color", NoirTheme.GOLD)
 	_error.visible = false
@@ -104,11 +109,18 @@ func _ready() -> void:
 		_show_voice_error(Speaker.last_error)
 	if not Speaker.voice_error.is_connected(_show_voice_error):
 		Speaker.voice_error.connect(_show_voice_error)
+	_voice_retry.visible = not Speaker.retry_line.is_empty()
+	if not Speaker.voice_retry_available.is_connected(_show_voice_retry):
+		Speaker.voice_retry_available.connect(_show_voice_retry)
 	if not Game.agent_replied.is_connected(_on_replied):
 		Game.agent_replied.connect(_on_replied)
 		Game.events.connect(_on_events)
 		Game.llm_error.connect(_on_error)
 		Game.busy_changed.connect(_on_busy)
+
+
+func _show_voice_retry(show_button: bool) -> void:
+	_voice_retry.visible = show_button
 
 
 func _show_voice_error(kind: String) -> void:

@@ -8,8 +8,11 @@ signal started(line_id: String)
 signal finished(line_id: String)
 signal speech_error(line_id: String, kind: String)
 
+## Gemini не подменяется системным голосом: неудачная реплика ждёт кнопку повтора.
+var keeps_failed_line: bool = false
 
-func speak(_line_id: String, _text: String, _voice_hint: String = "") -> void:
+
+func speak(_line_id: String, _text: String, _voice_hint: String = "", _style: String = "") -> void:
 	pass
 
 

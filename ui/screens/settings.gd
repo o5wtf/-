@@ -13,6 +13,7 @@ var _scale: HSlider
 var _mock: CheckBox
 var _timing: CheckBox
 var _voice: CheckBox
+var _engine: OptionButton
 var _voice_status: Label
 var _voice_busy: bool = false
 var _status: Label
@@ -92,6 +93,14 @@ func _ready() -> void:
 	_voice.custom_minimum_size = Vector2(0, 48)
 	_voice.toggled.connect(_on_voice_toggled)
 	scroll_box.add_child(_voice)
+	scroll_box.add_child(UiWidgets.label(UiStrings.VOICE_ENGINE))
+	_engine = OptionButton.new()
+	_engine.name = "VoiceEngine"
+	_engine.custom_minimum_size = Vector2(0, 48)
+	_engine.add_item(UiStrings.VOICE_SYSTEM)
+	_engine.add_item(UiStrings.VOICE_GEMINI)
+	_engine.item_selected.connect(_on_engine_picked)
+	scroll_box.add_child(_engine)
 	var voice_check := UiWidgets.button(UiStrings.VOICE_CHECK, "VoiceCheckButton")
 	voice_check.pressed.connect(_check_voice)
 	scroll_box.add_child(voice_check)
@@ -117,6 +126,7 @@ func _load_fields() -> void:
 	_loading = true
 	_model.select(_model_index(store.dialogue_model))
 	_voice.button_pressed = store.voice_enabled
+	_engine.select(1 if store.voice_engine == "gemini" else 0)
 	_loading = false
 	_spend.text = _spend_text()
 	_scale.value = store.text_scale
@@ -141,8 +151,8 @@ func _save() -> void:
 	if key == "":
 		key = previous.api_key
 	var provider := "mock" if _mock.button_pressed else "gemini"
-	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed)
-	Speaker.set_enabled(_voice.button_pressed)
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value())
+	Speaker.apply_settings()
 	_key.text = ""
 	_key.secret = true
 	_show.text = UiStrings.SHOW_KEY
@@ -217,8 +227,24 @@ func _on_voice_toggled(pressed: bool) -> void:
 	if key == "":
 		key = previous.api_key
 	var provider := "mock" if _mock.button_pressed else "gemini"
-	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, pressed)
-	Speaker.set_enabled(pressed)
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, pressed, _engine_value())
+	Speaker.apply_settings()
+
+
+func _on_engine_picked(_index: int) -> void:
+	if _loading:
+		return
+	var previous := SettingsStore.load_current()
+	var key := _key.text.strip_edges()
+	if key == "":
+		key = previous.api_key
+	var provider := "mock" if _mock.button_pressed else "gemini"
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value())
+	Speaker.apply_settings()
+
+
+func _engine_value() -> String:
+	return "gemini" if _engine.selected == 1 else "system"
 
 
 func _selected_model() -> String:

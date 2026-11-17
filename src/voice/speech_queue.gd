@@ -9,15 +9,23 @@ var pending: Array[Dictionary] = []
 var _seen: Dictionary = {}
 
 
-func enqueue(line_id: String, text: String, voice_hint: String = "") -> bool:
+func enqueue(line_id: String, text: String, voice_hint: String = "", style: String = "", front: bool = false) -> bool:
 	var id := line_id.strip_edges()
 	if id == "" or text.strip_edges() == "":
 		return false
 	if _seen.has(id):
 		return false
 	_seen[id] = true
-	pending.append({"id": id, "text": text, "voice_hint": voice_hint})
+	var item := {"id": id, "text": text, "voice_hint": voice_hint, "style": style}
+	if front:
+		pending.insert(0, item)
+	else:
+		pending.append(item)
 	return true
+
+
+func allow_again(line_id: String) -> void:
+	_seen.erase(line_id.strip_edges())
 
 
 func has(line_id: String) -> bool:

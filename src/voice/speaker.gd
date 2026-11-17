@@ -4,6 +4,7 @@ extends Node
 
 signal is_speaking(active: bool)
 signal voice_error(kind: String)
+signal voice_retry_available(show_button: bool)
 
 var backend: SpeechBackend
 var enabled: bool = false
@@ -11,18 +12,38 @@ var speaking: bool = false
 var last_error: String = ""
 var listen_to_game: bool = true
 var queue: SpeechQueue = SpeechQueue.new()
+var retry_line: Dictionary = {}
 var _lengths: Dictionary = {}
+var _inflight: Dictionary = {}
 
 
 func _ready() -> void:
-	enabled = SettingsStore.load_current().voice_enabled
+	var store := SettingsStore.load_current()
+	enabled = store.voice_enabled
 	if backend == null:
-		backend = SystemTtsBackend.new()
+		backend = _backend_for(store.voice_engine)
 	if backend.get_parent() == null:
 		add_child(backend)
 	_bind_backend()
 	if listen_to_game and not Game.agent_replied.is_connected(_on_replied):
 		Game.agent_replied.connect(_on_replied)
+
+
+func apply_settings() -> void:
+	var store := SettingsStore.load_current()
+	enabled = store.voice_enabled
+	var want := store.voice_engine
+	var current := "gemini" if backend is GeminiTtsBackend else "system"
+	if backend == null or current != want:
+		use_backend(_backend_for(want))
+	if not enabled:
+		stop_and_clear()
+
+
+func _backend_for(engine: String) -> SpeechBackend:
+	if engine == "gemini":
+		return GeminiTtsBackend.new()
+	return SystemTtsBackend.new()
 
 
 func use_backend(next: SpeechBackend) -> void:
@@ -75,10 +96,23 @@ func speak_reply(agent_id: String, reply: String) -> void:
 		return
 	var line_id := line_id_for(agent_id)
 	var text := SpeechText.clean(reply)
-	if not queue.enqueue(line_id, text):
+	if not queue.enqueue(line_id, text, _voice_for(agent_id), _style_for(agent_id)):
 		return
 	_lengths[line_id] = text.length()
 	_pump()
+
+
+func retry_failed() -> void:
+	if retry_line.is_empty() or not enabled:
+		return
+	var item := retry_line.duplicate(true)
+	retry_line = {}
+	voice_retry_available.emit(false)
+	var line_id := str(item.get("id", ""))
+	queue.allow_again(line_id)
+	if queue.enqueue(line_id, str(item.get("text", "")), str(item.get("voice_hint", "")), str(item.get("style", "")), true):
+		_lengths[line_id] = str(item.get("text", "")).length()
+		_pump()
 
 
 func stop_and_clear() -> void:
@@ -86,6 +120,9 @@ func stop_and_clear() -> void:
 	queue.stop()
 	if current != "":
 		_lengths.erase(current)
+	retry_line = {}
+	_inflight = {}
+	voice_retry_available.emit(false)
 	if backend != null:
 		backend.stop()
 	_set_speaking(false)
@@ -118,7 +155,8 @@ func _pump() -> void:
 		_set_speaking(false)
 		return
 	_set_speaking(true)
-	backend.speak(str(item["id"]), str(item["text"]), str(item.get("voice_hint", "")))
+	_inflight = item.duplicate(true)
+	backend.speak(str(item["id"]), str(item["text"]), str(item.get("voice_hint", "")), str(item.get("style", "")))
 
 
 func _bind_backend() -> void:
@@ -133,6 +171,9 @@ func _bind_backend() -> void:
 
 
 func _on_started(line_id: String) -> void:
+	if str(retry_line.get("id", "")) == line_id:
+		retry_line = {}
+		voice_retry_available.emit(false)
 	if last_error != "":
 		last_error = ""
 		voice_error.emit("")
@@ -152,6 +193,14 @@ func _on_error(line_id: String, kind: String) -> void:
 	last_error = kind
 	voice_error.emit(kind)
 	print("voice error id=%s len=%d kind=%s" % [line_id, int(_lengths.get(line_id, 0)), kind])
+	if backend != null and backend.keeps_failed_line and queue.current_id == line_id:
+		retry_line = _inflight.duplicate(true)
+		queue.finish(line_id)
+		queue.allow_again(line_id)
+		_inflight = {}
+		voice_retry_available.emit(true)
+		_set_speaking(false)
+		return
 	if kind == "no_voice":
 		queue.stop()
 		_lengths.clear()
@@ -162,6 +211,19 @@ func _on_error(line_id: String, kind: String) -> void:
 	_lengths.erase(line_id)
 	queue.finish(line_id)
 	_pump()
+
+
+func _voice_for(agent_id: String) -> String:
+	if Game.case_data == null:
+		return ""
+	var agent: CaseData.Agent = Game.case_data.agent_by_id.get(agent_id) as CaseData.Agent
+	return VoiceCast.voice_for(agent)
+
+
+func _style_for(agent_id: String) -> String:
+	if Game.state == null:
+		return ""
+	return VoiceCast.style_for(str(Game.state.emotion.get(agent_id, "")))
 
 
 func _set_speaking(active: bool) -> void:

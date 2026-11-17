@@ -151,6 +151,12 @@ static func _validate_agent(agent: Dictionary, agent_ids: Dictionary, errors: Ar
 					"relationship_unknown",
 					"агент %s: relationships ссылается на неверного агента %s" % [agent_id, _show(other)]
 				))
+	var gender := _string_or_empty(agent.get("gender"))
+	if gender != "" and gender != "male" and gender != "female":
+		errors.append(error("agent_gender", "агент %s: gender '%s' не male/female" % [agent_id, gender]))
+	var tts_voice := _string_or_empty(agent.get("tts_voice"))
+	if tts_voice != "" and not _voice_name_ok(tts_voice):
+		errors.append(error("agent_tts_voice", "агент %s: tts_voice '%s' не имя голоса" % [agent_id, tts_voice]))
 
 
 static func _validate_fact(
@@ -385,6 +391,20 @@ static func _falsy(value: Variant) -> bool:
 			return (value as PackedStringArray).is_empty()
 		_:
 			return false
+
+
+static func _string_or_empty(value: Variant) -> String:
+	if value == null:
+		return ""
+	return str(value).strip_edges()
+
+
+static func _voice_name_ok(value: String) -> bool:
+	if value.length() < 2 or value.length() > 32:
+		return false
+	var pattern := RegEx.new()
+	pattern.compile("^[A-Za-z][A-Za-z0-9]+$")
+	return pattern.search(value) != null
 
 
 static func _is_number(value: Variant) -> bool:

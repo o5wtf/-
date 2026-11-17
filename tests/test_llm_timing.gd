@@ -103,6 +103,7 @@ func _assert_flash_model_migrates() -> void:
 	assert_eq(check.load(path), OK)
 	assert_eq(int(check.get_value("llm", "settings_version", 0)), LLMConfig.SETTINGS_VERSION)
 	assert_false(bool(check.get_value("voice", "enabled", true)))
+	assert_eq(str(check.get_value("voice", "engine", "")), "system")
 	assert_eq(str(check.get_value("llm", "dialogue_model", "")), "gemini-3.5-flash-lite")
 	if previous == "":
 		DirAccess.remove_absolute(path)

@@ -145,6 +145,106 @@ func _backend(driver: ScriptedTts) -> SystemTtsBackend:
 	return backend
 
 
+func test_voice_follows_character_then_gender() -> void:
+	var named := CaseData.Agent.new()
+	named.tts_voice = "Aoede"
+	named.gender = "male"
+	assert_eq(VoiceCast.voice_for(named), "Aoede")
+	var male := CaseData.Agent.new()
+	male.gender = "male"
+	assert_eq(VoiceCast.voice_for(male), "Charon")
+	var female := CaseData.Agent.new()
+	female.gender = "female"
+	assert_eq(VoiceCast.voice_for(female), "Kore")
+	assert_eq(VoiceCast.style_for("nervous"), "nervous")
+	assert_eq(VoiceCast.style_for("neutral"), "")
+	assert_eq(VoiceCast.style_for(""), "")
+
+
+func test_rate_limiter_holds_the_eleventh_request() -> void:
+	var limiter := VoiceRateLimiter.new()
+	for _index in VoiceRateLimiter.LIMIT:
+		limiter.mark(0.0)
+	assert_true(limiter.delay_for(0.0) > 0.0)
+	assert_eq(limiter.delay_for(60.0), 0.0)
+
+
+func test_gemini_request_uses_only_the_tts_model_and_style() -> void:
+	var styled := GeminiTtsBackend.build_request("Привет.", "Kore", "nervous")
+	assert_eq(styled["generationConfig"]["responseModalities"], ["AUDIO"])
+	assert_eq(styled["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"], "Kore")
+	assert_eq(styled["speech_metadata"]["style"], "nervous")
+	assert_false(JSON.stringify(styled).contains("api_key"))
+	var plain := GeminiTtsBackend.build_request("Привет.", "Charon", "")
+	assert_false(plain.has("speech_metadata"))
+	var frames := GeminiTtsBackend.pcm16_to_frames(PackedByteArray([0, 64]))
+	assert_eq(frames.size(), 1)
+	assert_true(absf(frames[0].x - 0.5) < 0.001)
+
+
+func test_gemini_plays_first_chunk_retries_and_counts_spend() -> void:
+	var previous := SpendMeter.store_path
+	SpendMeter.store_path = "user://tts-spend-test.cfg"
+	if FileAccess.file_exists(SpendMeter.store_path):
+		DirAccess.remove_absolute(SpendMeter.store_path)
+	var before := SpendMeter.session_usd
+	var transport := ScriptedGemini.new()
+	transport.scripted.append({"ok": false, "status": 429, "error": "rate_limited", "retry_after": 2.0, "usage": {}})
+	transport.scripted.append({
+		"ok": true,
+		"status": 200,
+		"error": "",
+		"retry_after": 0.0,
+		"usage": {"promptTokenCount": 1000000, "candidatesTokenCount": 1000000},
+		"chunks": [PackedByteArray([0, 64]), PackedByteArray([0, 32])],
+	})
+	var backend := GeminiTtsBackend.new()
+	backend.transport = transport
+	backend.api_key = "unit-test-key"
+	backend._instant = true
+	var sink := PcmSink.new()
+	backend.sink = sink
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(backend)
+	var errors: Array[String] = []
+	backend.speech_error.connect(func(_id: String, kind: String) -> void: errors.append(kind))
+	await backend.speak("line", "Привет.", "Kore", "sad")
+	assert_true(errors.is_empty())
+	assert_eq(transport.calls.size(), 2)
+	assert_true(str(transport.calls[0]["path"]).contains("gemini-3.8-flash-lite-tts:streamGenerateContent?alt=sse"))
+	assert_eq(transport.calls[0]["body"]["speech_metadata"]["style"], "sad")
+	assert_false(JSON.stringify(transport.calls[0]["body"]).contains("unit-test-key"))
+	assert_eq(sink.starts, 1)
+	assert_eq(sink.pushes, 2)
+	assert_true(absf(SpendMeter.session_usd - before - 6.5) < 0.000001)
+	SpendMeter.session_usd = before
+	DirAccess.remove_absolute(SpendMeter.store_path)
+	SpendMeter.store_path = previous
+	backend.free()
+
+
+func test_gemini_failure_does_not_switch_to_system_voice() -> void:
+	var speaker: Node = load("res://src/voice/speaker.gd").new()
+	speaker.set("listen_to_game", false)
+	var gemini := FailingGemini.new()
+	gemini.keeps_failed_line = true
+	speaker.set("backend", gemini)
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(speaker)
+	speaker.set("enabled", true)
+	var queue: SpeechQueue = speaker.get("queue")
+	assert_true(queue.enqueue("only", "Одна реплика.", "Kore", ""))
+	speaker.call("_pump")
+	assert_true(speaker.get("backend") is FailingGemini)
+	assert_eq(gemini.calls, 1)
+	var saved: Dictionary = speaker.get("retry_line")
+	assert_eq(str(saved.get("id", "")), "only")
+	speaker.call("retry_failed")
+	assert_eq(gemini.calls, 2)
+	assert_true(speaker.get("backend") is FailingGemini)
+	speaker.free()
+
+
 func test_speaker_queues_without_interrupting_and_stop_clears() -> void:
 	var speaker: Node = load("res://src/voice/speaker.gd").new()
 	speaker.set("listen_to_game", false)
@@ -206,12 +306,55 @@ class ScriptedTts:
 		return true
 
 
+class ScriptedGemini:
+	extends RefCounted
+
+	var scripted: Array = []
+	var calls: Array = []
+
+	func stream(request: Dictionary) -> Dictionary:
+		calls.append({"path": request.get("path", ""), "body": request.get("body", {})})
+		var outcome: Dictionary = scripted.pop_front()
+		var on_chunk: Variant = request.get("on_chunk")
+		if outcome.get("ok", false) and on_chunk is Callable:
+			for chunk in outcome.get("chunks", []):
+				if chunk is PackedByteArray:
+					(on_chunk as Callable).call(chunk)
+		return outcome
+
+
+class PcmSink:
+	extends RefCounted
+
+	var starts: int = 0
+	var pushes: int = 0
+
+	func start() -> void:
+		starts += 1
+
+	func push(_frames: PackedVector2Array) -> void:
+		pushes += 1
+
+
+class FailingGemini:
+	extends SpeechBackend
+
+	var calls: int = 0
+
+	func speak(line_id: String, _text: String, _voice_hint: String = "", _style: String = "") -> void:
+		calls += 1
+		speech_error.emit(line_id, "timeout")
+
+	func stop() -> void:
+		pass
+
+
 class FakeBackend:
 	extends SpeechBackend
 
 	var calls: Array[String] = []
 
-	func speak(line_id: String, _text: String, _voice_hint: String = "") -> void:
+	func speak(line_id: String, _text: String, _voice_hint: String = "", _style: String = "") -> void:
 		calls.append(line_id)
 		started.emit(line_id)
 

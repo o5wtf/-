@@ -30,7 +30,7 @@ func _ready() -> void:
 	driver.call("bind", _on_started, _on_finished, _on_canceled)
 
 
-func speak(line_id: String, text: String, voice_hint: String = "") -> void:
+func speak(line_id: String, text: String, voice_hint: String = "", _style: String = "") -> void:
 	var token := _generation
 	var spoken := text.strip_edges()
 	if spoken == "":

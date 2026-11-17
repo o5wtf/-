@@ -105,6 +105,12 @@ def validate(case):
         for other in (a.get("relationships") or {}):
             if other not in agent_ids or other == aid:
                 err(f"агент {aid}: relationships ссылается на неверного агента {other}")
+        gender = a.get("gender") or ""
+        if gender not in ("", "male", "female"):
+            err(f"агент {aid}: gender '{gender}' не male/female")
+        tts_voice = a.get("tts_voice") or ""
+        if tts_voice and not (tts_voice[:1].isalpha() and tts_voice.isalnum() and 2 <= len(tts_voice) <= 32):
+            err(f"агент {aid}: tts_voice '{tts_voice}' не имя голоса")
 
     # Факты
     lie_facts_in_contradictions = set()

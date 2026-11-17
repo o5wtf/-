@@ -49,6 +49,8 @@ static func _prices(model: String) -> Dictionary:
 			if _after_introductory_rate():
 				return {"input": 1.50, "output": 7.50}
 			return {"input": 0.75, "output": 3.75}
+		"gemini-3.8-flash-lite-tts":
+			return {"input": GeminiTtsBackend.INPUT_USD_PER_MILLION, "output": GeminiTtsBackend.OUTPUT_USD_PER_MILLION}
 		_:
 			return {}
 

@@ -12,6 +12,8 @@ var text_scale: float = 1.0
 var timing_debug: bool = true
 ## Системная озвучка реплик. Выключена, пока игрок сам её не включит.
 var voice_enabled: bool = false
+## system | gemini. По умолчанию системный голос, без подмены при сбое Gemini.
+var voice_engine: String = "system"
 
 
 static func load_current() -> SettingsStore:
@@ -27,10 +29,16 @@ static func load_current() -> SettingsStore:
 		store.timing_debug = bool(file.get_value("llm", "timing_debug"))
 	if file.load(PATH) == OK and file.has_section_key("voice", "enabled"):
 		store.voice_enabled = bool(file.get_value("voice", "enabled"))
+	if file.load(PATH) == OK and file.has_section_key("voice", "engine"):
+		store.voice_engine = canonical_engine(str(file.get_value("voice", "engine")))
 	return store
 
 
-static func save_values(provider: String, api_key: String, dialogue_model: String, text_scale: float, timing_debug: Variant = null, voice_enabled: Variant = null) -> void:
+static func canonical_engine(engine: String) -> String:
+	return "gemini" if engine.strip_edges() == "gemini" else "system"
+
+
+static func save_values(provider: String, api_key: String, dialogue_model: String, text_scale: float, timing_debug: Variant = null, voice_enabled: Variant = null, voice_engine: Variant = null) -> void:
 	var file := ConfigFile.new()
 	file.load(PATH)
 	file.set_value("llm", "provider", provider)
@@ -44,6 +52,8 @@ static func save_values(provider: String, api_key: String, dialogue_model: Strin
 		file.set_value("llm", "timing_debug", bool(timing_debug))
 	if voice_enabled != null:
 		file.set_value("voice", "enabled", bool(voice_enabled))
+	if voice_engine != null:
+		file.set_value("voice", "engine", canonical_engine(str(voice_engine)))
 	file.save(PATH)
 
 

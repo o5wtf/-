@@ -17,6 +17,7 @@ var transport: Object = null
 var api_key: String = ""
 var limiter: VoiceRateLimiter = VoiceRateLimiter.new()
 var sink: Object = null
+var use_cache: bool = true
 var _instant: bool = false
 var _clock_s: float = 0.0
 var _generation: int = 0
@@ -28,6 +29,12 @@ var _download_done: bool = false
 var _device_capacity: int = 0
 var _pcm_carry: PackedByteArray = PackedByteArray()
 var _pending: PackedVector2Array = PackedVector2Array()
+var _capture: PackedByteArray = PackedByteArray()
+var _silent: bool = false
+var _live: bool = false
+var _prefetch_gen: int = 0
+## Вызывается один раз перед ожиданием лимита. Нужен, чтобы живая реплика обогнала подготовку.
+var before_wait: Callable = Callable()
 
 
 func _ready() -> void:
@@ -42,22 +49,31 @@ func _ready() -> void:
 
 
 func speak(line_id: String, text: String, voice_hint: String = "", style: String = "") -> void:
+	_begin_live()
 	var token := _generation
 	var spoken := text.strip_edges()
 	_line_id = line_id
 	_reset_audio()
+	_line_id = line_id
 	if spoken == "":
 		speech_error.emit(line_id, "empty")
+		_end_live()
 		return
 	if api_key.strip_edges() == "":
 		speech_error.emit(line_id, "auth")
+		_end_live()
 		return
 	var voice := voice_hint.strip_edges()
 	if voice == "":
 		voice = VoiceCast.FEMALE
+	if _play_cached(token, spoken, voice, style):
+		await _wait_until_heard(token)
+		_end_live()
+		return
 	var attempt := 0
 	while attempt < MAX_ATTEMPTS:
 		if token != _generation:
+			_end_live()
 			return
 		var wait := limiter.delay_for(_now())
 		if wait > 0.0:
@@ -66,11 +82,13 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 			else:
 				await get_tree().create_timer(wait).timeout
 		if token != _generation:
+			_end_live()
 			return
 		limiter.mark(_now())
 		_reset_audio()
 		var result: Dictionary = await _send(spoken, voice, style)
 		if token != _generation or str(result.get("error", "")) == "stopped":
+			_end_live()
 			return
 		var status := int(result.get("status", 0))
 		if result.get("ok", false):
@@ -79,9 +97,11 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 			_maybe_open(true)
 			if _started_line:
 				await _wait_until_heard(token)
+				_store_capture(spoken, voice, style)
 			else:
 				var shown_status := status if status > 0 else 200
 				speech_error.emit(line_id, format_voice_error("no_audio", shown_status, api_key))
+			_end_live()
 			return
 		var kind := str(result.get("error", "bad_response"))
 		if kind == "":
@@ -93,6 +113,7 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 		_close_playback()
 		if attempt >= MAX_ATTEMPTS or not _retries(kind):
 			speech_error.emit(line_id, format_voice_error(kind, status, api_key))
+			_end_live()
 			return
 		var pause := float(result.get("retry_after", 1.0))
 		if pause < 0.0:
@@ -102,10 +123,65 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 		else:
 			await get_tree().create_timer(pause).timeout
 	speech_error.emit(line_id, format_voice_error("bad_response", 0, api_key))
+	_end_live()
+
+
+func prefetch(text: String, voice_hint: String = "", style: String = "") -> String:
+	var token := _prefetch_gen
+	var spoken := text.strip_edges()
+	if spoken == "":
+		return "skip"
+	var voice := voice_hint.strip_edges()
+	if voice == "":
+		voice = VoiceCast.FEMALE
+	var key := _cache_key(spoken, voice, style)
+	if use_cache and not TtsCache.read(key).is_empty():
+		return "cached"
+	if api_key.strip_edges() == "":
+		return "auth"
+	while true:
+		if before_wait.is_valid():
+			var hook := before_wait
+			before_wait = Callable()
+			await hook.call()
+		if token != _prefetch_gen or _live:
+			return "yielded"
+		var wait := limiter.delay_for(_now())
+		if wait <= 0.0:
+			break
+		if _instant:
+			await get_tree().process_frame
+			if token != _prefetch_gen or _live:
+				return "yielded"
+			_clock_s += minf(wait, 1.0)
+		else:
+			await get_tree().create_timer(minf(wait, 1.0)).timeout
+	if token != _prefetch_gen or _live:
+		return "yielded"
+	limiter.mark(_now())
+	_silent = true
+	_line_id = "prefetch"
+	_reset_audio()
+	_line_id = "prefetch"
+	var result: Dictionary = await _send(spoken, voice, style)
+	var captured := _capture.duplicate()
+	_silent = false
+	if token != _prefetch_gen or _live or str(result.get("error", "")) == "stopped":
+		return "yielded"
+	if not result.get("ok", false) or captured.is_empty():
+		return "error"
+	_note_usage(result.get("usage", {}))
+	if use_cache:
+		TtsCache.write(key, captured)
+	_reset_audio()
+	return "stored"
 
 
 func stop() -> void:
 	_generation += 1
+	_prefetch_gen += 1
+	_live = false
+	_silent = false
 	_reset_audio()
 	_close_playback()
 	if transport != null and transport.has_method("cancel"):
@@ -210,13 +286,48 @@ func _push_pcm(bytes: PackedByteArray) -> void:
 	var frames := pcm16_to_frames(ready)
 	if frames.is_empty():
 		return
+	_capture.append_array(ready)
 	_pending.append_array(frames)
 	_maybe_open(false)
 	_feed()
 
 
+func _begin_live() -> void:
+	_live = true
+	_prefetch_gen += 1
+	_silent = false
+	if transport != null and transport.has_method("cancel"):
+		transport.call("cancel")
+
+
+func _end_live() -> void:
+	_live = false
+
+
+func _cache_key(text: String, voice: String, style: String) -> String:
+	return TtsCache.key_for(MODEL, voice, style, text)
+
+
+func _play_cached(token: int, text: String, voice: String, style: String) -> bool:
+	if not use_cache or token != _generation:
+		return false
+	var cached := TtsCache.read(_cache_key(text, voice, style))
+	if cached.is_empty():
+		return false
+	_push_pcm(cached)
+	_download_done = true
+	_maybe_open(true)
+	return _started_line
+
+
+func _store_capture(text: String, voice: String, style: String) -> void:
+	if not use_cache or _capture.is_empty():
+		return
+	TtsCache.write(_cache_key(text, voice, style), _capture)
+
+
 func _maybe_open(download_finished: bool) -> void:
-	if _started_line or _line_id == "" or _pending.is_empty():
+	if _silent or _started_line or _line_id == "" or _pending.is_empty():
 		return
 	var hardware := sink == null
 	if hardware and not download_finished and _pending.size() < int(SAMPLE_RATE * PREFILL_SECONDS):
@@ -306,6 +417,7 @@ func _reset_audio() -> void:
 	_device_capacity = 0
 	_pcm_carry = PackedByteArray()
 	_pending = PackedVector2Array()
+	_capture = PackedByteArray()
 
 
 func _open_playback() -> void:

@@ -27,6 +27,7 @@ static func validate(resp: Variant, packet: Array, context: Dictionary) -> Dicti
 		"emotion": str(context.get("previous_emotion", "neutral")),
 		"reply": "",
 		"remark": "",
+		"speech_tone": "",
 		"mentioned_evidence": [] as Array[String],
 		"requested_evidence": "",
 	}
@@ -94,6 +95,10 @@ static func validate(resp: Variant, packet: Array, context: Dictionary) -> Dicti
 			reply = reply.substr(0, REPLY_MAX).strip_edges()
 	report["reply"] = reply
 	report["remark"] = str(body["remark"])
+	var speech_tone := VoiceTone.normalize(str(body.get("tone", "")))
+	if str(body.get("tone", "")).strip_edges() != "" and speech_tone == "":
+		_log_fix(report, "tone")
+	report["speech_tone"] = speech_tone
 	if reply.strip_edges() == "":
 		_violate(report, "пустая реплика")
 	elif not local_fixes and (reply.length() < 1 or reply.length() > REPLY_MAX):

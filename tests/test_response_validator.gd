@@ -13,6 +13,29 @@ func test_lite_reply_types_are_coerced() -> void:
 	assert_eq(report["emotion"], "neutral")
 
 
+func test_speech_tone_is_separate_from_the_reply() -> void:
+	var known := _body([])
+	known["tone"] = "Саркастично"
+	var report := ResponseValidator.validate(known, [_basic()], _context())
+	assert_true(report["ok"])
+	assert_eq(report["speech_tone"], "саркастично")
+	assert_eq(report["reply"], "Короткий спокойный ответ.")
+	assert_false(str(report["reply"]).contains("саркастично"))
+	var unknown := _body([])
+	unknown["tone"] = "яростно"
+	var dropped := ResponseValidator.validate(unknown, [_basic()], _context())
+	assert_true(dropped["ok"])
+	assert_eq(dropped["speech_tone"], "")
+	assert_eq(VoiceTone.for_speech("нервно", false), "")
+	assert_eq(VoiceTone.for_speech("нервно", true), "нервно")
+	assert_eq(VoiceTone.normalize("раздраженно"), "раздражённо")
+	var styled := GeminiTtsBackend.build_request("Я был дома.", "Kore", VoiceTone.for_speech("нервно", true))
+	assert_eq(styled["contents"][0]["parts"][0]["text"], "Я был дома.")
+	assert_eq(styled["contents"][0]["parts"][0]["speechMetadata"]["style"], "нервно")
+	var plain := GeminiTtsBackend.build_request("Я был дома.", "Kore", VoiceTone.for_speech("яростно", true))
+	assert_false(plain["contents"][0]["parts"][0].has("speechMetadata"))
+
+
 func test_format_requires_fields() -> void:
 	var report := ResponseValidator.validate({"reply": "Есть только реплика."}, [_basic()], _context())
 	assert_true(report["ok"])

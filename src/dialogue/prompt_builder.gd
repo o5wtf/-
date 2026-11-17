@@ -81,6 +81,7 @@ static func _system_prompt(case_data: CaseData, agent: CaseData.Agent) -> String
 	head += "- reply: твоя реплика.\n"
 	head += "- remark: короткая ремарка о тебе от третьего лица, до 12 слов, без новых фактов. Например: «отводит взгляд».\n"
 	head += "- emotion: твоё состояние после ответа, одно значение из списка.\n"
+	head += "- tone: как звучит reply, одно слово из списка. Это не произносится и не входит в reply.\n"
 	head += "- stated: ключи записей, содержание которых ты действительно сказал в reply, с формой: lie — сказал свою ложь; basic — сказал полуправду или краткую правду; full — сказал полную правду. Ничего из записей не сказал — пустой список.\n"
 	head += "- mentioned_evidence: ключи улик, которые следователь упомянул в вопросе.\n"
 	head += "- requested_evidence: ключ улики, которую ты сам требуешь показать («Докажите!»), только если это в твоём характере; иначе null."
@@ -212,6 +213,13 @@ static func _evidence_keys(case_data: CaseData, state: GameState) -> PackedStrin
 	return keys
 
 
+static func _tone_enum() -> Array:
+	var values: Array = []
+	for choice in VoiceTone.CHOICES:
+		values.append(choice)
+	return values
+
+
 static func _enum_or_none(keys: PackedStringArray) -> Array:
 	if keys.is_empty():
 		return ["none"]
@@ -235,6 +243,7 @@ static func _turn_schema(packet_keys: PackedStringArray, evidence_keys: PackedSt
 			"reply": {"type": "string", "description": "Реплика персонажа, 1–4 предложения, по-русски"},
 			"remark": {"type": "string", "description": "Ремарка от третьего лица, до 12 слов"},
 			"emotion": {"type": "string", "enum": emotion_enum},
+			"tone": {"type": "string", "enum": _tone_enum()},
 			"stated": {
 				"type": "array",
 				"items": {
@@ -255,6 +264,6 @@ static func _turn_schema(packet_keys: PackedStringArray, evidence_keys: PackedSt
 				"description": "Ключ улики e1… или null",
 			},
 		},
-		"required": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence"],
-		"propertyOrdering": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence"],
+		"required": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone"],
+		"propertyOrdering": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone"],
 	}

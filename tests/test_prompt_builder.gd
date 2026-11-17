@@ -81,8 +81,9 @@ func test_schema_enums_match_packet_and_evidence() -> void:
 	var built := _sample_request(0, 0)
 	var schema: Dictionary = built["schema"]
 	var properties: Dictionary = schema["properties"]
-	assert_eq(schema["required"], ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence"])
-	assert_eq(schema["propertyOrdering"], ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence"])
+	assert_eq(schema["required"], ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone"])
+	assert_eq(schema["propertyOrdering"], ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone"])
+	assert_eq(properties["tone"]["enum"], ["нейтрально", "нервно", "устало", "раздражённо", "испуганно", "грустно", "уверенно", "уклончиво", "саркастично"])
 	assert_eq(built["max_output_tokens"], LLMConfig.REPLY_MAX_OUTPUT_TOKENS)
 	assert_eq(properties["stated"]["items"]["properties"]["key"]["enum"], ["k1", "k2", "k3"])
 	assert_eq(properties["stated"]["items"]["properties"]["form"]["enum"], ["lie", "basic", "full"])

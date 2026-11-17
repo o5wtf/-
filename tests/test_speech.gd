@@ -355,6 +355,102 @@ func test_gemini_error_shows_http_status_without_the_key() -> void:
 	backend.free()
 
 
+func test_body_chunk_reads_only_while_the_status_is_body() -> void:
+	var reads := [0]
+	var skipped := GeminiTtsBackend.body_chunk(HTTPClient.STATUS_DISCONNECTED, func() -> PackedByteArray:
+		reads[0] += 1
+		return PackedByteArray([1])
+	)
+	assert_eq(skipped.size(), 0)
+	assert_eq(int(reads[0]), 0)
+	var taken := GeminiTtsBackend.body_chunk(HTTPClient.STATUS_BODY, func() -> PackedByteArray:
+		reads[0] += 1
+		return PackedByteArray([4, 5])
+	)
+	assert_eq(int(reads[0]), 1)
+	assert_eq(taken.size(), 2)
+	assert_eq(int(taken[0]), 4)
+
+
+func test_gemini_playback_keeps_frames_when_audio_arrives_five_times_faster() -> void:
+	assert_eq(GeminiTtsBackend.BUFFER_SECONDS, 1.0)
+	assert_true(GeminiTtsBackend.PREFILL_SECONDS > 0.0)
+	var total := 50
+	var capacity := 10
+	var transport := ScriptedGemini.new()
+	transport.scripted.append({
+		"ok": true,
+		"status": 200,
+		"error": "",
+		"retry_after": 0.0,
+		"usage": {},
+		"chunks": [_pcm_bytes(total)],
+	})
+	var playback := LimitedPlayback.new()
+	playback.capacity = capacity
+	var backend := GeminiTtsBackend.new()
+	backend.transport = transport
+	backend.api_key = "unit-test-key"
+	backend._instant = true
+	backend.sink = playback
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(backend)
+	var finishes := [0]
+	var buffered_at_finish := [-1]
+	backend.finished.connect(func(_id: String) -> void:
+		finishes[0] += 1
+		buffered_at_finish[0] = playback.buffered
+	)
+	await backend.speak("line", "Длинная реплика.", "Kore", "")
+	assert_eq(finishes[0], 1)
+	assert_eq(buffered_at_finish[0], 0)
+	assert_eq(playback.accepted.size(), total)
+	assert_eq(playback.overflow, 0)
+	assert_true(playback.max_batch <= capacity)
+	assert_eq(playback.advances, total / capacity)
+	assert_eq(backend._pending.size(), 0)
+	for index in total:
+		var sample := playback.accepted[index].x * 32768.0
+		assert_true(absf(sample - float(index)) < 0.01, "кадр %d" % index)
+	backend.free()
+
+
+func test_gemini_stop_clears_the_unplayed_queue() -> void:
+	var total := 50
+	var transport := ScriptedGemini.new()
+	transport.scripted.append({
+		"ok": true,
+		"status": 200,
+		"error": "",
+		"retry_after": 0.0,
+		"usage": {},
+		"chunks": [_pcm_bytes(total)],
+	})
+	var playback := LimitedPlayback.new()
+	playback.capacity = 10
+	playback.stop_after_advances = 1
+	var backend := GeminiTtsBackend.new()
+	playback.host = backend
+	backend.transport = transport
+	backend.api_key = "unit-test-key"
+	backend._instant = true
+	backend.sink = playback
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(backend)
+	var finishes := [0]
+	backend.finished.connect(func(_id: String) -> void: finishes[0] += 1)
+	await backend.speak("line", "Оборвать.", "Kore", "")
+	assert_eq(finishes[0], 0)
+	assert_eq(playback.overflow, 0)
+	assert_true(playback.accepted.size() < total)
+	assert_true(playback.accepted.size() > 0)
+	assert_eq(backend._pending.size(), 0)
+	for index in playback.accepted.size():
+		var sample := playback.accepted[index].x * 32768.0
+		assert_true(absf(sample - float(index)) < 0.01, "кадр %d" % index)
+	backend.free()
+
+
 func test_speaker_queues_without_interrupting_and_stop_clears() -> void:
 	var speaker: Node = load("res://src/voice/speaker.gd").new()
 	speaker.set("listen_to_game", false)
@@ -387,6 +483,15 @@ func test_speaker_queues_without_interrupting_and_stop_clears() -> void:
 	speaker.free()
 	assert_true(states[0])
 	assert_false(states[states.size() - 1])
+
+
+func _pcm_bytes(count: int) -> PackedByteArray:
+	var bytes := PackedByteArray()
+	bytes.resize(count * 2)
+	for index in count:
+		bytes[index * 2] = index % 256
+		bytes[index * 2 + 1] = int(index / 256.0) % 256
+	return bytes
 
 
 func _tts_sse(crlf: bool, payloads: Array, usage_on_last: bool) -> String:
@@ -453,6 +558,46 @@ class ScriptedTts:
 
 	func has_tts() -> bool:
 		return true
+
+
+class LimitedPlayback:
+	extends RefCounted
+
+	var capacity: int = 10
+	var buffered: int = 0
+	var overflow: int = 0
+	var max_batch: int = 0
+	var advances: int = 0
+	var stop_after_advances: int = 0
+	var host: Object = null
+	var accepted: PackedVector2Array = PackedVector2Array()
+
+	func frames_available() -> int:
+		return maxi(capacity - buffered, 0)
+
+	func buffered_frames() -> int:
+		return buffered
+
+	func start() -> void:
+		pass
+
+	func push(frames: PackedVector2Array) -> void:
+		max_batch = maxi(max_batch, frames.size())
+		var room := frames_available()
+		if frames.size() > room:
+			overflow += frames.size() - room
+		var count := mini(frames.size(), room)
+		for index in count:
+			accepted.append(frames[index])
+		buffered += count
+
+	func advance() -> void:
+		advances += 1
+		buffered = maxi(buffered - capacity, 0)
+		if stop_after_advances > 0 and advances >= stop_after_advances and host != null:
+			var target: Object = host
+			host = null
+			target.call("stop")
 
 
 class ScriptedGemini:

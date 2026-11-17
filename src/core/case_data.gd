@@ -62,6 +62,8 @@ class Agent:
 	var gender: String = ""
 	## Имя заранее заданного голоса Gemini TTS. Пусто — выбор по gender.
 	var tts_voice: String = ""
+	## Короткое приветствие для синтеза. Пусто — заранее ничего не готовим.
+	var greeting: String = ""
 	var relationships: Dictionary = {}
 	var facts: Array[Fact] = []
 

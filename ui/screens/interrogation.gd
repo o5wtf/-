@@ -131,7 +131,7 @@ func _show_voice_error(kind: String) -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_VISIBILITY_CHANGED and is_inside_tree() and not is_visible_in_tree():
-		Speaker.stop_and_clear()
+		Speaker.stop_and_clear(false)
 
 
 func open_agent(next_id: String) -> void:

@@ -102,6 +102,7 @@ Content-Type: application/json
 - reply: твоя реплика.
 - remark: короткая ремарка о тебе от третьего лица, до 12 слов, без новых фактов. Например: «отводит взгляд».
 - emotion: твоё состояние после ответа, одно значение из списка.
+- tone: как звучит reply, одно слово из списка (нейтрально, нервно, устало, раздражённо, испуганно, грустно, уверенно, уклончиво, саркастично). В reply это слово не входит и вслух само по себе не читается.
 - stated: ключи записей, содержание которых ты действительно сказал в reply, с формой: lie — сказал свою ложь; basic — сказал полуправду или краткую правду; full — сказал полную правду. Ничего из записей не сказал — пустой список.
 - mentioned_evidence: ключи улик, которые следователь упомянул в вопросе.
 - requested_evidence: ключ улики, которую ты сам требуешь показать («Докажите!»), только если это в твоём характере; иначе null.
@@ -189,7 +190,8 @@ e1 — Журнал посещений
   "emotion": "nervous",
   "stated": [ { "key": "k2", "form": "lie" } ],
   "mentioned_evidence": [],
-  "requested_evidence": null
+  "requested_evidence": null,
+  "tone": "нервно"
 }
 ```
 
@@ -217,10 +219,11 @@ e1 — Журнал посещений
       }
     },
     "mentioned_evidence": { "type": "array", "items": { "type": "string", "enum": ["e1"] } },
-    "requested_evidence": { "type": ["string", "null"], "description": "Ключ улики e1… или null" }
+    "requested_evidence": { "type": ["string", "null"], "description": "Ключ улики e1… или null" },
+    "tone": { "type": "string", "enum": ["нейтрально", "нервно", "устало", "раздражённо", "испуганно", "грустно", "уверенно", "уклончиво", "саркастично"] }
   },
-  "required": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence"],
-  "propertyOrdering": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence"]
+  "required": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone"],
+  "propertyOrdering": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone"]
 }
 ```
 

@@ -206,6 +206,7 @@ func test_gemini_plays_first_chunk_retries_and_counts_spend() -> void:
 	var backend := GeminiTtsBackend.new()
 	backend.transport = transport
 	backend.api_key = "unit-test-key"
+	backend.use_cache = false
 	backend._instant = true
 	var sink := PcmSink.new()
 	backend.sink = sink
@@ -316,6 +317,7 @@ func test_gemini_odd_pcm_survives_a_split_sample() -> void:
 	var backend := GeminiTtsBackend.new()
 	backend.transport = transport
 	backend.api_key = "unit-test-key"
+	backend.use_cache = false
 	backend._instant = true
 	var sink := PcmSink.new()
 	backend.sink = sink
@@ -341,6 +343,7 @@ func test_gemini_error_shows_http_status_without_the_key() -> void:
 	var backend := GeminiTtsBackend.new()
 	backend.transport = transport
 	backend.api_key = secret
+	backend.use_cache = false
 	backend._instant = true
 	var root := (Engine.get_main_loop() as SceneTree).root
 	root.add_child(backend)
@@ -352,6 +355,163 @@ func test_gemini_error_shows_http_status_without_the_key() -> void:
 	assert_eq(transport.calls.size(), 2)
 	assert_false(errors[0].contains(secret))
 	assert_false(errors[1].contains(secret))
+	backend.free()
+
+
+func test_tts_cache_hit_skips_the_request_and_spend() -> void:
+	var previous_root := TtsCache.root_path
+	var previous_cap := TtsCache.max_bytes
+	TtsCache.root_path = "user://tts-cache-hit-test"
+	TtsCache.erase_all()
+	var previous_spend := SpendMeter.store_path
+	SpendMeter.store_path = "user://tts-cache-spend.cfg"
+	if FileAccess.file_exists(SpendMeter.store_path):
+		DirAccess.remove_absolute(SpendMeter.store_path)
+	var before := SpendMeter.session_usd
+	var text := "Кэш реплики."
+	var key := TtsCache.key_for(GeminiTtsBackend.MODEL, "Kore", "нервно", text)
+	TtsCache.write(key, PackedByteArray([0, 64, 0, 32]))
+	var index := FileAccess.get_file_as_string(TtsCache.root_path + "/index.cfg")
+	assert_false(index.contains(text))
+	assert_false(index.contains("unit-test-key"))
+	var transport := ScriptedGemini.new()
+	var backend := GeminiTtsBackend.new()
+	backend.transport = transport
+	backend.api_key = "unit-test-key"
+	backend.use_cache = true
+	backend._instant = true
+	var sink := PcmSink.new()
+	backend.sink = sink
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(backend)
+	await backend.speak("line", text, "Kore", "нервно")
+	assert_eq(transport.calls.size(), 0)
+	assert_eq(sink.starts, 1)
+	assert_eq(sink.peaks.size(), 2)
+	assert_true(absf(SpendMeter.session_usd - before) < 0.000001)
+	SpendMeter.session_usd = before
+	if FileAccess.file_exists(SpendMeter.store_path):
+		DirAccess.remove_absolute(SpendMeter.store_path)
+	SpendMeter.store_path = previous_spend
+	TtsCache.erase_all()
+	TtsCache.root_path = previous_root
+	TtsCache.max_bytes = previous_cap
+	backend.free()
+
+
+func test_tts_cache_evicts_the_least_recent_entry() -> void:
+	var previous_root := TtsCache.root_path
+	var previous_cap := TtsCache.max_bytes
+	TtsCache.root_path = "user://tts-cache-lru-test"
+	TtsCache.max_bytes = 40
+	TtsCache.erase_all()
+	var first := TtsCache.key_for("m", "Kore", "", "один")
+	var second := TtsCache.key_for("m", "Kore", "", "два")
+	var third := TtsCache.key_for("m", "Kore", "", "три")
+	var fourth := TtsCache.key_for("m", "Kore", "", "четыре")
+	var fifth := TtsCache.key_for("m", "Kore", "", "пять")
+	var blob := PackedByteArray()
+	blob.resize(10)
+	TtsCache.write(first, blob)
+	TtsCache.write(second, blob)
+	TtsCache.write(third, blob)
+	TtsCache.write(fourth, blob)
+	assert_eq(TtsCache.read(second).size(), 10)
+	TtsCache.write(fifth, blob)
+	assert_eq(TtsCache.read(first).size(), 0)
+	assert_eq(TtsCache.read(second).size(), 10)
+	assert_eq(TtsCache.read(fifth).size(), 10)
+	var broken := TtsCache.key_for("m", "Kore", "", "битый")
+	TtsCache.write(broken, blob)
+	var planted := FileAccess.open(TtsCache.root_path + "/" + broken + ".pcm", FileAccess.WRITE)
+	planted.store_buffer(PackedByteArray([1]))
+	planted.close()
+	assert_eq(TtsCache.read(broken).size(), 0)
+	TtsCache.erase_all()
+	TtsCache.root_path = previous_root
+	TtsCache.max_bytes = previous_cap
+
+
+func test_greeting_prefetch_yields_to_the_live_line() -> void:
+	var case_data := CaseData.new()
+	var quiet := CaseData.Agent.new()
+	quiet.id = "quiet"
+	quiet.name = "Тихий"
+	quiet.gender = "male"
+	var speaker_agent := CaseData.Agent.new()
+	speaker_agent.id = "host"
+	speaker_agent.name = "Хозяин"
+	speaker_agent.gender = "female"
+	speaker_agent.greeting = "Добрый день."
+	case_data.agents = [quiet, speaker_agent]
+	assert_eq(GreetingPlan.jobs(case_data, false, true).size(), 0)
+	assert_eq(GreetingPlan.jobs(case_data, true, false).size(), 0)
+	var jobs: Array = GreetingPlan.jobs(case_data, true, true)
+	assert_eq(jobs.size(), 1)
+	assert_eq(str(jobs[0]["text"]), "Добрый день.")
+	assert_eq(str(jobs[0]["voice"]), "Kore")
+	var limiter := VoiceRateLimiter.new()
+	for _index in VoiceRateLimiter.LIMIT:
+		limiter.mark(0.0)
+	var transport := ScriptedGemini.new()
+	transport.scripted.append({
+		"ok": true,
+		"status": 200,
+		"error": "",
+		"retry_after": 0.0,
+		"usage": {},
+		"chunks": [PackedByteArray([0, 64])],
+	})
+	var backend := GeminiTtsBackend.new()
+	backend.transport = transport
+	backend.api_key = "unit-test-key"
+	backend.use_cache = false
+	backend.limiter = limiter
+	backend._instant = true
+	backend._clock_s = 0.0
+	var sink := PcmSink.new()
+	backend.sink = sink
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(backend)
+	backend.before_wait = func() -> void:
+		await backend.speak("live", "Сейчас говорю.", "Kore", "")
+	var status: String = await backend.prefetch(str(jobs[0]["text"]), str(jobs[0]["voice"]), "")
+	assert_eq(status, "yielded")
+	assert_eq(transport.calls.size(), 1)
+	var sent: Dictionary = transport.calls[0]["body"]["contents"][0]["parts"][0]
+	assert_eq(str(sent["text"]), "Сейчас говорю.")
+	assert_eq(transport.calls.size(), 1)
+	assert_eq(limiter.stamps.size(), 1)
+	backend.free()
+
+
+func test_stop_during_prefetch_sends_nothing() -> void:
+	var limiter := VoiceRateLimiter.new()
+	for _index in VoiceRateLimiter.LIMIT:
+		limiter.mark(0.0)
+	var transport := ScriptedGemini.new()
+	var backend := GeminiTtsBackend.new()
+	backend.transport = transport
+	backend.api_key = "unit-test-key"
+	backend.use_cache = false
+	backend.limiter = limiter
+	backend._instant = true
+	backend._clock_s = 0.0
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(backend)
+	backend.before_wait = func() -> void:
+		backend.stop()
+		await (Engine.get_main_loop() as SceneTree).process_frame
+	var status: String = await backend.prefetch("Подожди.", "Charon", "")
+	assert_eq(status, "yielded")
+	assert_eq(transport.calls.size(), 0)
+	var speaker: Node = load("res://src/voice/speaker.gd").new()
+	speaker.set("listen_to_game", false)
+	speaker.set("_prefetch_jobs", [{"text": "Ещё раз.", "voice": "Kore", "style": ""}])
+	speaker.call("stop_and_clear", true)
+	var left: Array = speaker.get("_prefetch_jobs")
+	assert_eq(left.size(), 0)
+	speaker.free()
 	backend.free()
 
 
@@ -391,6 +551,7 @@ func test_gemini_playback_keeps_frames_when_audio_arrives_five_times_faster() ->
 	var backend := GeminiTtsBackend.new()
 	backend.transport = transport
 	backend.api_key = "unit-test-key"
+	backend.use_cache = false
 	backend._instant = true
 	backend.sink = playback
 	var root := (Engine.get_main_loop() as SceneTree).root
@@ -433,6 +594,7 @@ func test_gemini_stop_clears_the_unplayed_queue() -> void:
 	playback.host = backend
 	backend.transport = transport
 	backend.api_key = "unit-test-key"
+	backend.use_cache = false
 	backend._instant = true
 	backend.sink = playback
 	var root := (Engine.get_main_loop() as SceneTree).root

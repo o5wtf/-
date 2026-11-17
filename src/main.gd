@@ -113,7 +113,7 @@ func _apply_theme() -> void:
 
 
 func _swap(screen: Control) -> void:
-	Speaker.stop_and_clear()
+	Speaker.stop_and_clear(false)
 	if _screen != null and is_instance_valid(_screen):
 		_screen.queue_free()
 	_screen = screen

@@ -15,6 +15,9 @@ var queue: SpeechQueue = SpeechQueue.new()
 var retry_line: Dictionary = {}
 var _lengths: Dictionary = {}
 var _inflight: Dictionary = {}
+var _prefetch_jobs: Array = []
+var _prefetch_busy: bool = false
+var _prefetch_token: int = 0
 
 
 func _ready() -> void:
@@ -27,6 +30,8 @@ func _ready() -> void:
 	_bind_backend()
 	if listen_to_game and not Game.agent_replied.is_connected(_on_replied):
 		Game.agent_replied.connect(_on_replied)
+	if listen_to_game and not Game.case_opened.is_connected(_on_case_opened):
+		Game.case_opened.connect(_on_case_opened)
 
 
 func apply_settings() -> void:
@@ -115,7 +120,11 @@ func retry_failed() -> void:
 		_pump()
 
 
-func stop_and_clear() -> void:
+func stop_and_clear(cancel_prefetch: bool = true) -> void:
+	if cancel_prefetch:
+		_prefetch_token += 1
+		_prefetch_jobs.clear()
+		_prefetch_busy = false
 	var current := queue.current_id
 	queue.stop()
 	if current != "":
@@ -126,6 +135,8 @@ func stop_and_clear() -> void:
 	if backend != null:
 		backend.stop()
 	_set_speaking(false)
+	if not cancel_prefetch:
+		_kick_prefetch()
 
 
 func reset_for_case() -> void:
@@ -187,6 +198,7 @@ func _on_finished(line_id: String) -> void:
 	_lengths.erase(line_id)
 	queue.finish(line_id)
 	_pump()
+	_kick_prefetch()
 
 
 func _on_error(line_id: String, kind: String) -> void:
@@ -200,6 +212,7 @@ func _on_error(line_id: String, kind: String) -> void:
 		_inflight = {}
 		voice_retry_available.emit(true)
 		_set_speaking(false)
+		_kick_prefetch()
 		return
 	if kind == "no_voice":
 		queue.stop()
@@ -211,6 +224,7 @@ func _on_error(line_id: String, kind: String) -> void:
 	_lengths.erase(line_id)
 	queue.finish(line_id)
 	_pump()
+	_kick_prefetch()
 
 
 func _voice_for(agent_id: String) -> String:
@@ -220,10 +234,52 @@ func _voice_for(agent_id: String) -> String:
 	return VoiceCast.voice_for(agent)
 
 
-func _style_for(agent_id: String) -> String:
-	if Game.state == null:
-		return ""
-	return VoiceCast.style_for(str(Game.state.emotion.get(agent_id, "")))
+func _style_for(_agent_id: String) -> String:
+	return VoiceTone.for_speech(Game.speech_style, SettingsStore.load_current().voice_intonation)
+
+
+func _on_case_opened() -> void:
+	_prefetch_token += 1
+	_prefetch_jobs.clear()
+	var store := SettingsStore.load_current()
+	if not enabled or store.voice_engine != "gemini":
+		return
+	var token := _prefetch_token
+	for job in GreetingPlan.jobs(Game.case_data, true, true):
+		if job is Dictionary:
+			_prefetch_jobs.append(job)
+	if token == _prefetch_token:
+		_kick_prefetch()
+
+
+func _kick_prefetch() -> void:
+	if _prefetch_busy or _prefetch_jobs.is_empty():
+		return
+	if speaking or queue.current_id != "" or not queue.pending.is_empty():
+		return
+	if backend == null or not backend.has_method("prefetch"):
+		return
+	_prefetch_busy = true
+	_run_prefetch(_prefetch_token)
+
+
+func _run_prefetch(token: int) -> void:
+	while token == _prefetch_token and not _prefetch_jobs.is_empty():
+		if speaking or queue.current_id != "" or not queue.pending.is_empty():
+			break
+		var job: Dictionary = _prefetch_jobs[0]
+		var status: String = await backend.prefetch(str(job.get("text", "")), str(job.get("voice", "")), str(job.get("style", "")))
+		if token != _prefetch_token:
+			_prefetch_busy = false
+			return
+		if status == "yielded":
+			if speaking or queue.current_id != "" or not queue.pending.is_empty():
+				break
+			continue
+		_prefetch_jobs.pop_front()
+		if status != "cached" and status != "stored":
+			continue
+	_prefetch_busy = false
 
 
 func _set_speaking(active: bool) -> void:

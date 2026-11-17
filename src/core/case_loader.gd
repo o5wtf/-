@@ -89,6 +89,7 @@ static func _agent(raw: Dictionary) -> CaseData.Agent:
 	agent.starting_fatigue = _int(raw.get("starting_fatigue", 0))
 	agent.gender = _string(raw.get("gender"))
 	agent.tts_voice = _string(raw.get("tts_voice"))
+	agent.greeting = _string(raw.get("greeting"))
 	if raw.get("relationships") is Dictionary:
 		agent.relationships = (raw.get("relationships") as Dictionary).duplicate(true)
 	for fact_raw in _array(raw.get("facts")):

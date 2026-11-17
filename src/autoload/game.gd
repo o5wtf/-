@@ -2,6 +2,7 @@ extends Node
 ## Сессия партии: ход, сигналы для UI, блокнот. Экранов здесь нет.
 
 signal agent_replied(agent_id: String, text: String, remark: String)
+signal case_opened
 signal events(list: Array)
 signal llm_error(kind: String, message: String)
 signal busy_changed(is_busy: bool)
@@ -19,6 +20,8 @@ var last_mentioned_evidence: Array[String] = []
 var last_requested_evidence: String = ""
 var last_turn_line: String = ""
 var last_turn_stats: Dictionary = {}
+## Интонация последней реплики для синтеза. В текст реплики не входит.
+var speech_style: String = ""
 var is_busy: bool = false
 
 
@@ -44,6 +47,7 @@ func open_case(path: String) -> CaseLoader.Result:
 		_dialogues[agent.id] = DialogueState.new()
 		state.dialogues[agent.id] = (_dialogues[agent.id] as DialogueState).to_dict()
 	notebook = Notebook.new(case_data, state)
+	case_opened.emit()
 	var config := LLMConfig.load_settings()
 	_leak_max_stems = 1
 	_log_leaks = true
@@ -168,6 +172,7 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 	var remark := ""
 	var tone := 0
 	var emotion := str(state.emotion.get(agent_id, agent.starting_emotion))
+	speech_style = ""
 	var statements: Array = []
 	if report["ok"] and result.get("ok", false):
 		reply = str(report["reply"])
@@ -175,6 +180,7 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 		tone = int(report["tone"])
 		emotion = str(report["emotion"])
 		statements = report["statements"]
+		speech_style = VoiceTone.for_speech(str(report.get("speech_tone", "")), SettingsStore.load_current().voice_intonation)
 		for item in report["mentioned_evidence"]:
 			last_mentioned_evidence.append(str(item))
 		last_requested_evidence = str(report.get("requested_evidence", ""))

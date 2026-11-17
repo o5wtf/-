@@ -173,9 +173,14 @@ func test_gemini_request_uses_only_the_tts_model_and_style() -> void:
 	var styled := GeminiTtsBackend.build_request("Привет.", "Kore", "nervous")
 	assert_eq(styled["generationConfig"]["responseModalities"], ["AUDIO"])
 	assert_eq(styled["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"], "Kore")
-	assert_eq(styled["speech_metadata"]["style"], "nervous")
+	var part: Dictionary = styled["contents"][0]["parts"][0]
+	assert_eq(part["speechMetadata"]["style"], "nervous")
+	assert_false(styled.has("speech_metadata"))
+	assert_false(JSON.stringify(styled).contains("speech_metadata"))
 	assert_false(JSON.stringify(styled).contains("api_key"))
 	var plain := GeminiTtsBackend.build_request("Привет.", "Charon", "")
+	var plain_part: Dictionary = plain["contents"][0]["parts"][0]
+	assert_false(plain_part.has("speechMetadata"))
 	assert_false(plain.has("speech_metadata"))
 	var frames := GeminiTtsBackend.pcm16_to_frames(PackedByteArray([0, 64]))
 	assert_eq(frames.size(), 1)
@@ -212,7 +217,9 @@ func test_gemini_plays_first_chunk_retries_and_counts_spend() -> void:
 	assert_true(errors.is_empty())
 	assert_eq(transport.calls.size(), 2)
 	assert_true(str(transport.calls[0]["path"]).contains("gemini-3.8-flash-lite-tts:streamGenerateContent?alt=sse"))
-	assert_eq(transport.calls[0]["body"]["speech_metadata"]["style"], "sad")
+	var sent: Dictionary = transport.calls[0]["body"]["contents"][0]["parts"][0]
+	assert_eq(sent["speechMetadata"]["style"], "sad")
+	assert_false(transport.calls[0]["body"].has("speech_metadata"))
 	assert_false(JSON.stringify(transport.calls[0]["body"]).contains("unit-test-key"))
 	assert_eq(sink.starts, 1)
 	assert_eq(sink.pushes, 2)
@@ -243,6 +250,109 @@ func test_gemini_failure_does_not_switch_to_system_voice() -> void:
 	assert_eq(gemini.calls, 2)
 	assert_true(speaker.get("backend") is FailingGemini)
 	speaker.free()
+
+
+func test_gemini_sse_reads_crlf_events_as_chunks_arrive() -> void:
+	var crlf := _tts_sse(true, ["AEA=", "ACA=", "AEA="], true)
+	assert_true(crlf.contains("\r\n\r\n"))
+	assert_eq(crlf.split("\n\n", false).size(), 1)
+	var lf := _tts_sse(false, ["AEA=", "ACA=", "AEA="], true)
+	assert_true(lf.split("\n\n", false).size() >= 3)
+	var expected := [PackedByteArray([0, 64]), PackedByteArray([0, 32]), PackedByteArray([0, 64])]
+	for body in [crlf, lf]:
+		var whole := _decode_sse(body, body.to_utf8_buffer().size())
+		_assert_packets(whole["packets"], expected)
+		assert_eq(int(whole["usage"].get("promptTokenCount", -1)), 11)
+		assert_eq(int(whole["usage"].get("candidatesTokenCount", -1)), 48)
+		assert_eq(int(whole["audio_parts"]), 3)
+		for width in range(1, 10):
+			var split := _decode_sse(body, width)
+			_assert_packets(split["packets"], expected, "width %d" % width)
+			assert_eq(int(split["usage"].get("promptTokenCount", -1)), 11, "width %d" % width)
+	var early := GeminiSseDecoder.new()
+	var marker := crlf.find("\r\n\r\n")
+	assert_true(marker > 0)
+	var cut := marker + 4
+	var first := early.push(crlf.substr(0, cut).to_utf8_buffer())
+	assert_eq(first.size(), 1)
+	_assert_bytes(first[0], PackedByteArray([0, 64]))
+	assert_false(early.usage.has("promptTokenCount"))
+	var rest := early.push(crlf.substr(cut).to_utf8_buffer())
+	rest.append_array(early.finish())
+	assert_eq(rest.size(), 2)
+	assert_eq(int(early.usage.get("candidatesTokenCount", -1)), 48)
+	var trimmed := crlf.substr(0, crlf.length() - 4)
+	var flushed := _decode_sse(trimmed, 3)
+	_assert_packets(flushed["packets"], expected)
+	var lf_trimmed := lf.substr(0, lf.length() - 2)
+	_assert_packets(_decode_sse(lf_trimmed, 5)["packets"], expected)
+
+
+func test_gemini_odd_pcm_survives_a_split_sample() -> void:
+	var body := _tts_sse(true, ["AEAA", "IA=="], false)
+	var split := _decode_sse(body, 1)
+	_assert_packets(split["packets"], [PackedByteArray([0, 64, 0]), PackedByteArray([32])])
+	var carry := PackedByteArray()
+	var ready := PackedByteArray()
+	for packet in split["packets"]:
+		var aligned := GeminiTtsBackend.take_aligned(carry, packet as PackedByteArray)
+		carry = aligned["carry"] as PackedByteArray
+		ready.append_array(aligned["ready"] as PackedByteArray)
+	assert_eq(carry.size(), 0)
+	_assert_bytes(ready, PackedByteArray([0, 64, 0, 32]))
+	var alone := GeminiTtsBackend.take_aligned(PackedByteArray(), PackedByteArray([0]))
+	assert_eq((alone["ready"] as PackedByteArray).size(), 0)
+	var joined := GeminiTtsBackend.take_aligned(alone["carry"], PackedByteArray([64]))
+	_assert_bytes(joined["ready"], PackedByteArray([0, 64]))
+	var transport := ScriptedGemini.new()
+	transport.scripted.append({
+		"ok": true,
+		"status": 200,
+		"error": "",
+		"retry_after": 0.0,
+		"usage": {},
+		"chunks": [PackedByteArray([0, 64, 0]), PackedByteArray([32])],
+	})
+	var backend := GeminiTtsBackend.new()
+	backend.transport = transport
+	backend.api_key = "unit-test-key"
+	backend._instant = true
+	var sink := PcmSink.new()
+	backend.sink = sink
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(backend)
+	await backend.speak("line", "Раз.", "Kore", "")
+	assert_eq(sink.starts, 1)
+	assert_eq(sink.peaks.size(), 2)
+	assert_true(absf(sink.peaks[0] - 0.5) < 0.001)
+	assert_true(absf(sink.peaks[1] - 0.25) < 0.001)
+	assert_false(JSON.stringify(transport.calls[0]["body"]).contains("unit-test-key"))
+	backend.free()
+
+
+func test_gemini_error_shows_http_status_without_the_key() -> void:
+	var secret := "unit-test-key"
+	assert_eq(GeminiTtsBackend.format_voice_error("bad_response", 400, secret), "bad_response http=400")
+	assert_eq(GeminiTtsBackend.format_voice_error("no_audio", 200, secret), "no_audio http=200")
+	assert_false(GeminiTtsBackend.format_voice_error("bad_response %s" % secret, 400, secret).contains(secret))
+	var transport := ScriptedGemini.new()
+	transport.scripted.append({"ok": false, "status": 400, "error": "bad_response", "retry_after": 0.0, "usage": {}})
+	transport.scripted.append({"ok": true, "status": 200, "error": "", "retry_after": 0.0, "usage": {}, "chunks": []})
+	var backend := GeminiTtsBackend.new()
+	backend.transport = transport
+	backend.api_key = secret
+	backend._instant = true
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(backend)
+	var errors: Array[String] = []
+	backend.speech_error.connect(func(_id: String, kind: String) -> void: errors.append(kind))
+	await backend.speak("line", "Раз.", "Kore", "")
+	await backend.speak("line", "Два.", "Kore", "")
+	assert_eq(errors, ["bad_response http=400", "no_audio http=200"])
+	assert_eq(transport.calls.size(), 2)
+	assert_false(errors[0].contains(secret))
+	assert_false(errors[1].contains(secret))
+	backend.free()
 
 
 func test_speaker_queues_without_interrupting_and_stop_clears() -> void:
@@ -277,6 +387,45 @@ func test_speaker_queues_without_interrupting_and_stop_clears() -> void:
 	speaker.free()
 	assert_true(states[0])
 	assert_false(states[states.size() - 1])
+
+
+func _tts_sse(crlf: bool, payloads: Array, usage_on_last: bool) -> String:
+	var nl := "\r\n" if crlf else "\n"
+	var body := ""
+	for index in payloads.size():
+		var b64 := str(payloads[index])
+		var extra := ""
+		if usage_on_last and index == payloads.size() - 1:
+			extra = ',"usageMetadata": {"promptTokenCount": 11, "candidatesTokenCount": 48}, "modelVersion": "gemini-3.8-flash-lite-tts"'
+		var json := '{"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "audio/l16; rate=24000; channels=1","data": "%s"}}],"role": "model"}}]%s}' % [b64, extra]
+		body += "data: %s%s%s" % [json, nl, nl]
+	return body
+
+
+func _decode_sse(body: String, width: int) -> Dictionary:
+	var decoder := GeminiSseDecoder.new()
+	var raw := body.to_utf8_buffer()
+	var packets: Array = []
+	var offset := 0
+	var step := maxi(width, 1)
+	while offset < raw.size():
+		var end := mini(offset + step, raw.size())
+		packets.append_array(decoder.push(raw.slice(offset, end)))
+		offset = end
+	packets.append_array(decoder.finish())
+	return {"packets": packets, "usage": decoder.usage, "audio_parts": decoder.audio_parts}
+
+
+func _assert_packets(actual: Array, expected: Array, message: String = "") -> void:
+	assert_eq(actual.size(), expected.size(), message)
+	for index in mini(actual.size(), expected.size()):
+		_assert_bytes(actual[index], expected[index], message)
+
+
+func _assert_bytes(actual: PackedByteArray, expected: PackedByteArray, message: String = "") -> void:
+	assert_eq(actual.size(), expected.size(), message)
+	for index in mini(actual.size(), expected.size()):
+		assert_eq(int(actual[index]), int(expected[index]), message)
 
 
 class ScriptedTts:
@@ -332,8 +481,12 @@ class PcmSink:
 	func start() -> void:
 		starts += 1
 
-	func push(_frames: PackedVector2Array) -> void:
+	var peaks: Array[float] = []
+
+	func push(frames: PackedVector2Array) -> void:
 		pushes += 1
+		for frame in frames:
+			peaks.append(frame.x)
 
 
 class FailingGemini:

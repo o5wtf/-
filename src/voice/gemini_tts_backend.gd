@@ -1,7 +1,8 @@
 class_name GeminiTtsBackend
 extends SpeechBackend
-## Gemini 3.8 Flash-Lite TTS. Поток PCM 24 кГц, воспроизведение с первого куска.
-## При ошибке после повторов системный голос не включается: это решает очередь.
+## Gemini 3.8 Flash-Lite TTS. PCM 24 кГц начинается с первого целого сэмпла.
+## События SSE разбираются по мере чтения тела. При ошибке после повторов
+## системный голос не включается: это решает очередь.
 
 
 const MODEL := "gemini-3.8-flash-lite-tts"
@@ -21,6 +22,7 @@ var _player: AudioStreamPlayer = null
 var _playback: AudioStreamGeneratorPlayback = null
 var _line_id: String = ""
 var _started_line: bool = false
+var _pcm_carry: PackedByteArray = PackedByteArray()
 
 
 func _ready() -> void:
@@ -39,6 +41,7 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 	var spoken := text.strip_edges()
 	_line_id = line_id
 	_started_line = false
+	_pcm_carry = PackedByteArray()
 	if spoken == "":
 		speech_error.emit(line_id, "empty")
 		return
@@ -61,20 +64,31 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 		if token != _generation:
 			return
 		limiter.mark(_now())
+		_pcm_carry = PackedByteArray()
 		var result: Dictionary = await _send(spoken, voice, style)
 		if token != _generation or str(result.get("error", "")) == "stopped":
 			return
+		var status := int(result.get("status", 0))
 		if result.get("ok", false):
 			_note_usage(result.get("usage", {}))
 			if _started_line:
 				finished.emit(line_id)
 			else:
-				speech_error.emit(line_id, "bad_response")
+				var shown_status := status if status > 0 else 200
+				speech_error.emit(line_id, format_voice_error("no_audio", shown_status, api_key))
 			return
 		var kind := str(result.get("error", "bad_response"))
+		if kind == "":
+			kind = "bad_response"
+		if kind == "no_audio":
+			_note_usage(result.get("usage", {}))
 		attempt += 1
+		if _started_line:
+			_close_playback()
+			_started_line = false
+		_pcm_carry = PackedByteArray()
 		if attempt >= MAX_ATTEMPTS or not _retries(kind):
-			speech_error.emit(line_id, kind)
+			speech_error.emit(line_id, format_voice_error(kind, status, api_key))
 			return
 		var pause := float(result.get("retry_after", 1.0))
 		if pause < 0.0:
@@ -83,12 +97,13 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 			_clock_s += pause
 		else:
 			await get_tree().create_timer(pause).timeout
-	speech_error.emit(line_id, "bad_response")
+	speech_error.emit(line_id, format_voice_error("bad_response", 0, api_key))
 
 
 func stop() -> void:
 	_generation += 1
 	_started_line = false
+	_pcm_carry = PackedByteArray()
 	_close_playback()
 	if transport != null and transport.has_method("cancel"):
 		transport.call("cancel")
@@ -99,8 +114,12 @@ func diagnostics() -> Dictionary:
 
 
 static func build_request(text: String, voice_name: String, style: String) -> Dictionary:
-	var body := {
-		"contents": [{"role": "user", "parts": [{"text": text}]}],
+	var part := {"text": text}
+	var tone := style.strip_edges()
+	if tone != "":
+		part["speechMetadata"] = {"style": tone}
+	return {
+		"contents": [{"role": "user", "parts": [part]}],
 		"generationConfig": {
 			"responseModalities": ["AUDIO"],
 			"speechConfig": {
@@ -110,10 +129,28 @@ static func build_request(text: String, voice_name: String, style: String) -> Di
 			},
 		},
 	}
-	var tone := style.strip_edges()
-	if tone != "":
-		body["speech_metadata"] = {"style": tone}
-	return body
+
+
+static func format_voice_error(kind: String, status: int, secret: String = "") -> String:
+	var clean := kind.strip_edges()
+	if clean == "":
+		clean = "bad_response"
+	var shown := clean
+	if status > 0:
+		shown = "%s http=%d" % [clean, status]
+	var hidden := secret.strip_edges()
+	if hidden.length() >= 8 and shown.contains(hidden):
+		shown = shown.replace(hidden, "[redacted]")
+	return shown
+
+
+## Склеивает PCM16 между кусками. Нечётный хвост остаётся до следующего куска.
+static func take_aligned(carry: PackedByteArray, incoming: PackedByteArray) -> Dictionary:
+	var joined := PackedByteArray()
+	joined.append_array(carry)
+	joined.append_array(incoming)
+	var even := joined.size() - (joined.size() % 2)
+	return {"ready": joined.slice(0, even), "carry": joined.slice(even)}
 
 
 static func pcm16_to_frames(bytes: PackedByteArray) -> PackedVector2Array:
@@ -144,9 +181,14 @@ func _send(text: String, voice_name: String, style: String) -> Dictionary:
 
 
 func _push_pcm(bytes: PackedByteArray) -> void:
-	if bytes.is_empty() or _line_id == "":
+	if _line_id == "":
 		return
-	var frames := pcm16_to_frames(bytes)
+	var aligned := take_aligned(_pcm_carry, bytes)
+	_pcm_carry = aligned["carry"] as PackedByteArray
+	var ready := aligned["ready"] as PackedByteArray
+	if ready.is_empty():
+		return
+	var frames := pcm16_to_frames(ready)
 	if frames.is_empty():
 		return
 	if not _started_line:
@@ -240,73 +282,52 @@ class GeminiTtsTransport:
 			http.poll()
 			await get_tree().process_frame
 		var status := http.get_response_code()
-		var buffer := PackedByteArray()
+		var decoder: GeminiSseDecoder = null
+		var error_body := PackedByteArray()
+		if status == 200:
+			decoder = GeminiSseDecoder.new()
+		var on_chunk: Variant = request.get("on_chunk", Callable())
 		while http.get_status() == HTTPClient.STATUS_BODY:
 			if cancelled:
-				return _outcome(false, 0, "stopped", 0.0, {})
+				return _outcome(false, status, "stopped", 0.0, {})
 			if Time.get_ticks_msec() >= deadline:
-				return _outcome(false, 0, "timeout", 1.0, {})
+				return _outcome(false, status, "timeout", 1.0, {})
 			http.poll()
 			var chunk := http.read_response_body_chunk()
-			if chunk.size() > 0:
-				buffer.append_array(chunk)
-			else:
+			if chunk.is_empty():
 				await get_tree().process_frame
-		var raw := buffer.get_string_from_utf8()
-		if status != 200:
+				continue
+			while not chunk.is_empty():
+				if decoder == null:
+					error_body.append_array(chunk)
+				else:
+					for pcm in decoder.push(chunk):
+						_emit_pcm(on_chunk, pcm)
+				chunk = http.read_response_body_chunk()
+		var tail := http.read_response_body_chunk()
+		while not tail.is_empty():
+			if decoder == null:
+				error_body.append_array(tail)
+			else:
+				for pcm in decoder.push(tail):
+					_emit_pcm(on_chunk, pcm)
+			tail = http.read_response_body_chunk()
+		if decoder == null:
+			var raw := error_body.get_string_from_utf8()
 			return _outcome(false, status, _kind(status), _retry_after(raw), {})
-		var usage := {}
-		var on_chunk: Variant = request.get("on_chunk", Callable())
-		for event in raw.split("\n\n", false):
-			var data := _sse_data(event)
-			if data == "" or data == "[DONE]":
-				continue
-			var parsed: Variant = JSON.parse_string(data)
-			if parsed is not Dictionary:
-				continue
-			var root := parsed as Dictionary
-			if root.has("usageMetadata") and root["usageMetadata"] is Dictionary:
-				usage = root["usageMetadata"]
-			for pcm in _audio_chunks(root):
-				if on_chunk is Callable:
-					(on_chunk as Callable).call(pcm)
-		return _outcome(true, status, "", 0.0, usage)
+		for pcm in decoder.finish():
+			_emit_pcm(on_chunk, pcm)
+		if decoder.audio_parts == 0:
+			return _outcome(false, status, "no_audio", 0.0, decoder.usage)
+		return _outcome(true, status, "", 0.0, decoder.usage)
 
 	func _outcome(ok: bool, status: int, error_kind: String, retry_after: float, usage: Dictionary) -> Dictionary:
 		return {"ok": ok, "status": status, "error": error_kind, "retry_after": retry_after, "usage": usage}
 
-	func _sse_data(event: String) -> String:
-		var lines: PackedStringArray = PackedStringArray()
-		for line in event.split("\n"):
-			if line.begins_with("data:"):
-				lines.append(line.substr(5).strip_edges())
-		return "\n".join(lines)
-
-	func _audio_chunks(root: Dictionary) -> Array[PackedByteArray]:
-		var found: Array[PackedByteArray] = []
-		var candidates: Variant = root.get("candidates", [])
-		if candidates is not Array:
-			return found
-		for candidate in candidates:
-			if candidate is not Dictionary:
-				continue
-			var content: Variant = (candidate as Dictionary).get("content", {})
-			if content is not Dictionary:
-				continue
-			var parts: Variant = (content as Dictionary).get("parts", [])
-			if parts is not Array:
-				continue
-			for part in parts:
-				if part is not Dictionary:
-					continue
-				var inline: Variant = (part as Dictionary).get("inlineData", {})
-				if inline is not Dictionary:
-					continue
-				var encoded := str((inline as Dictionary).get("data", ""))
-				if encoded == "":
-					continue
-				found.append(Marshalls.base64_to_raw(encoded))
-		return found
+	func _emit_pcm(on_chunk: Variant, pcm: PackedByteArray) -> void:
+		if pcm.is_empty() or on_chunk is not Callable:
+			return
+		(on_chunk as Callable).call(pcm)
 
 	func _kind(status: int) -> String:
 		if status == 429:

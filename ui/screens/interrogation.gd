@@ -14,6 +14,7 @@ var _prompt: ChatInput
 var _hint: HBoxContainer
 var _hint_label: Label
 var _thinking: Label
+var _timing: Label
 var _error: Label
 var _retry: Button
 var _busy: bool = false
@@ -46,6 +47,10 @@ func _ready() -> void:
 	_thinking.add_theme_color_override("font_color", NoirTheme.GOLD)
 	_thinking.visible = false
 	column.add_child(_thinking)
+	_timing = UiWidgets.label("", "TurnTimingLabel")
+	_timing.add_theme_color_override("font_color", NoirTheme.MUTED)
+	_timing.visible = false
+	column.add_child(_timing)
 	_error = UiWidgets.label("", "ErrorLabel")
 	_error.add_theme_color_override("font_color", NoirTheme.GOLD)
 	_error.visible = false
@@ -227,6 +232,7 @@ func _on_replied(reply_agent: String, text: String, remark: String) -> void:
 		return
 	_push({"kind": "agent", "text": text, "remark": remark})
 	_render_header()
+	_show_turn_timing()
 	_apply_model_hints()
 
 
@@ -248,6 +254,13 @@ func _on_error(kind: String, message: String) -> void:
 	_error.text = text
 	_error.visible = true
 	_retry.visible = true
+	_show_turn_timing()
+
+
+func _show_turn_timing() -> void:
+	var enabled := SettingsStore.load_current().timing_debug
+	_timing.text = Game.last_turn_line
+	_timing.visible = enabled and Game.last_turn_line != ""
 
 
 func _on_busy(is_busy: bool) -> void:

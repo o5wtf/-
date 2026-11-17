@@ -3,10 +3,10 @@ extends TestCase
 const SCENES := {
 	"res://src/main.tscn": ["NewCaseButton", "ContinueButton", "RestartButton", "SettingsButton"],
 	"res://ui/screens/main_menu.tscn": ["NewCaseButton", "ContinueButton", "RestartButton", "SettingsButton"],
-	"res://ui/screens/settings.tscn": ["KeyField", "ShowKeyButton", "TestConnectionButton", "ModelField", "ScaleSlider", "MockCheck", "SaveButton", "BackButton"],
+	"res://ui/screens/settings.tscn": ["KeyField", "ShowKeyButton", "TestConnectionButton", "ModelField", "ScaleSlider", "MockCheck", "TimingDebug", "SaveButton", "BackButton"],
 	"res://ui/screens/briefing.tscn": ["TitleLabel", "BriefingLabel", "StartButton"],
 	"res://ui/screens/suspects.tscn": ["List"],
-	"res://ui/screens/interrogation.tscn": ["SendButton", "PromptField", "EvidenceButton", "NotebookButton", "ContradictionButton", "HintYesButton", "RetryButton"],
+	"res://ui/screens/interrogation.tscn": ["SendButton", "PromptField", "EvidenceButton", "NotebookButton", "ContradictionButton", "HintYesButton", "RetryButton", "TurnTimingLabel"],
 	"res://ui/screens/notebook.tscn": ["FilterButton", "CheckButton"],
 	"res://ui/screens/evidence_board.tscn": ["Grid", "PresentButton"],
 	"res://ui/screens/accusation.tscn": ["KillerOption", "MotiveOption", "MethodOption", "AccuseButton", "BackButton", "TimelineLabel"],
@@ -88,7 +88,7 @@ func test_settings_roundtrip_keeps_key_out_of_status_copy() -> void:
 	var loaded := SettingsStore.load_current()
 	assert_eq(loaded.provider, "mock")
 	assert_eq(loaded.api_key, "test-key-value")
-	assert_eq(loaded.dialogue_model, "gemini-3.8-flash")
+	assert_eq(loaded.dialogue_model, LLMConfig.DEFAULT_DIALOGUE_MODEL)
 	assert_true(absf(loaded.text_scale - 1.1) < 0.001)
 	if previous == "":
 		DirAccess.remove_absolute(path)

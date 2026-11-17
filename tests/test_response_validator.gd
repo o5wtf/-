@@ -15,20 +15,22 @@ func test_lite_reply_types_are_coerced() -> void:
 
 func test_format_requires_fields() -> void:
 	var report := ResponseValidator.validate({"reply": "Есть только реплика."}, [_basic()], _context())
-	assert_false(report["ok"])
-	assert_true(report["violations"][0].contains("обязательных"))
+	assert_true(report["ok"])
+	assert_eq(report["reply"], "Есть только реплика.")
 
 
 func test_stated_forms_follow_packet_mode() -> void:
 	var lie := ResponseValidator.validate(_body([{"key": "k1", "form": "basic"}]), [_lie()], _context())
-	assert_false(lie["ok"])
+	assert_true(lie["ok"])
+	assert_eq(lie["statements"][0]["form"], "lie")
+	assert_true(",".join(lie["fixes"]).contains("basic->lie"))
 	var both := ResponseValidator.validate(_body([
 		{"key": "k1", "form": "basic"},
 		{"key": "k1", "form": "full"},
 		{"key": "none", "form": "full"},
 		{"key": "k9", "form": "full"},
 	]), [_full()], _context())
-	assert_false(both["ok"])
+	assert_true(both["ok"])
 	assert_eq(both["statements"].size(), 1)
 	assert_eq(both["statements"][0]["fact_id"], "visible")
 	assert_eq(both["statements"][0]["form"], "basic")
@@ -89,6 +91,14 @@ func test_tone_is_clamped_and_emotion_falls_back() -> void:
 	var dropped := ResponseValidator.validate(_body_with_evidence(), [_basic()], context)
 	assert_eq(dropped["mentioned_evidence"], ["e1"])
 	assert_eq(dropped["requested_evidence"], "")
+
+
+func test_extra_sentences_are_trimmed_locally() -> void:
+	var reply := "Первое. Второе. Третье. Четвёртое. Пятое."
+	var report := ResponseValidator.validate(_body([], reply), [_basic()], _context())
+	assert_true(report["ok"])
+	assert_false(str(report["reply"]).contains("Пятое"))
+	assert_true(",".join(report["fixes"]).contains("sentences"))
 
 
 func _body(stated: Array, reply: String = "Короткий спокойный ответ.", tone: int = 0, emotion: String = "neutral") -> Dictionary:

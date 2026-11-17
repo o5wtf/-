@@ -71,7 +71,7 @@ func test_summary_model_and_thought_parts() -> void:
 	assert_true(result["ok"])
 	assert_eq(result["json"]["reply"], "кратко")
 	assert_false(result["raw_text"].contains("скрытые рассуждения"))
-	assert_true(str(transport.seen[0]["url"]).contains("/summary-model:generateContent"))
+	assert_true(str(transport.seen[0]["url"]).contains("/dialogue-model:generateContent"))
 	client.free()
 
 
@@ -79,9 +79,11 @@ func test_finish_and_block_reasons() -> void:
 	var client := await _client()
 	var transport: FakeTransport = client._transport
 	transport.push(_candidate("{\"reply\":\"x\"}", "MAX_TOKENS"))
+	transport.push(_candidate("{\"reply\":\"после лимита\"}", "STOP"))
 	var truncated: Dictionary = await client.generate(_request("dialogue"))
 	assert_true(truncated["ok"])
-	assert_eq(truncated["json"]["reply"], "x")
+	assert_eq(truncated["json"]["reply"], "после лимита")
+	assert_eq(transport.seen.size(), 2)
 	transport.push(_candidate("{\"reply\":\"x\"}", "SAFETY"))
 	var safety: Dictionary = await client.generate(_request("dialogue"))
 	assert_eq(safety["error"], "blocked")
@@ -137,25 +139,25 @@ func test_missing_key_does_not_call_network() -> void:
 	client.free()
 
 
-func test_rate_limit_then_fallback_model() -> void:
+func test_rate_limit_retries_the_same_model() -> void:
 	var client := await _client()
 	var transport: FakeTransport = client._transport
-	transport.push(_status(429, "{\"error\":{\"message\":\"quota\"}}"))
-	transport.push(_ok("{\"reply\":\"запасная\"}"))
+	transport.push(_status(429, "{\"error\":{\"message\":\"quota\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RetryInfo\",\"retryDelay\":\"0.4s\"}]}}"))
+	transport.push(_ok("{\"reply\":\"та же модель\"}"))
 	var result: Dictionary = await client.generate(_request("dialogue"))
 	assert_true(result["ok"])
-	assert_eq(result["json"]["reply"], "запасная")
-	assert_eq(result["model"], "gemini-3.5-flash")
-	assert_eq(client.waits.size(), 0)
+	assert_eq(result["json"]["reply"], "та же модель")
+	assert_eq(result["model"], "dialogue-model")
+	assert_eq(client.waits, [0.4])
 	assert_eq(transport.seen.size(), 2)
 	assert_true(str(transport.seen[0]["url"]).contains("/dialogue-model:"))
-	assert_true(str(transport.seen[1]["url"]).contains("/gemini-3.5-flash:"))
+	assert_true(str(transport.seen[1]["url"]).contains("/dialogue-model:"))
+	assert_false(str(transport.seen[1]["url"]).contains("gemini-3.5-flash:"))
 	client.free()
 
 
 func test_rate_limit_exhausted_is_rate_limited() -> void:
 	var client := await _client()
-	client.fallback_model = client.dialogue_model
 	var transport: FakeTransport = client._transport
 	for _i in 3:
 		transport.push(_status(429, "{}"))
@@ -190,8 +192,9 @@ func test_timeout_and_offline() -> void:
 	transport.push(_ok("{\"reply\":\"успел\"}"))
 	var timed_out: Dictionary = await client.generate(_request("dialogue"))
 	assert_true(timed_out["ok"])
-	assert_eq(timed_out["model"], "gemini-3.5-flash")
+	assert_eq(timed_out["model"], "dialogue-model")
 	assert_eq(transport.seen.size(), 2)
+	assert_true(str(transport.seen[1]["url"]).contains("/dialogue-model:"))
 	transport.push({"ok": false, "status": 0, "body": "", "headers": {}, "error": "offline"})
 	var offline: Dictionary = await client.generate(_request("dialogue"))
 	assert_eq(offline["error"], "offline")
@@ -199,7 +202,7 @@ func test_timeout_and_offline() -> void:
 	client.free()
 
 
-func test_min_interval_between_requests() -> void:
+func test_no_pause_between_requests() -> void:
 	var client := await _client()
 	client.min_interval_s = 5.0
 	var transport: FakeTransport = client._transport
@@ -208,7 +211,7 @@ func test_min_interval_between_requests() -> void:
 	var first: Dictionary = await client.generate(_request("dialogue"))
 	var second: Dictionary = await client.generate(_request("dialogue"))
 	assert_true(first["ok"] and second["ok"])
-	assert_eq(client.waits, [5.0])
+	assert_eq(client.waits.size(), 0)
 	client.free()
 
 
@@ -238,7 +241,9 @@ func test_lite_shape_is_accepted() -> void:
 		{"text": fenced, "thoughtSignature": "sig"},
 	]
 	var payload := {"candidates": [{"content": {"parts": parts}, "finishReason": "MAX_TOKENS"}]}
-	transport.push({"ok": true, "status": 200, "body": JSON.stringify(payload), "headers": {}, "error": ""})
+	var scripted := {"ok": true, "status": 200, "body": JSON.stringify(payload), "headers": {}, "error": ""}
+	transport.push(scripted)
+	transport.push(scripted.duplicate(true))
 	var result: Dictionary = await client.generate(_request("dialogue"))
 	assert_true(result["ok"])
 	assert_eq(result["json"]["reply"], "Я ничего не видел.")
@@ -257,22 +262,25 @@ func test_truncated_json_retries_without_thinking() -> void:
 	assert_true(result["ok"])
 	assert_eq(result["json"]["reply"], "после повтора")
 	var retry: Dictionary = JSON.parse_string(transport.seen[1]["body"])
-	assert_false(retry["generationConfig"].has("thinkingConfig"))
-	assert_true(int(retry["generationConfig"]["maxOutputTokens"]) >= 8192)
+	assert_eq(retry["generationConfig"]["thinkingConfig"]["thinkingLevel"], "LOW")
+	assert_true(int(retry["generationConfig"]["maxOutputTokens"]) >= LLMConfig.REPLY_MAX_OUTPUT_TOKENS)
 	client.free()
 
 
-func test_overloaded_and_missing_model_switch() -> void:
+func test_overloaded_retries_same_model_and_missing_model_stops() -> void:
 	var client := await _client()
 	var transport: FakeTransport = client._transport
-	transport.push(_status(503, "{\"error\":{\"message\":\"high demand\",\"status\":\"UNAVAILABLE\"}}"))
-	transport.push(_status(404, "{\"error\":{\"message\":\"no longer available to new users\",\"status\":\"NOT_FOUND\"}}"))
+	transport.push(_status(503, "{\"error\":{\"message\":\"high demand\",\"status\":\"UNAVAILABLE\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RetryInfo\",\"retryDelay\":\"0.2s\"}]}}"))
 	transport.push(_ok("{\"reply\":\"есть\"}"))
 	var result: Dictionary = await client.generate(_request("dialogue"))
 	assert_true(result["ok"])
-	assert_eq(result["model"], "fallback-model")
+	assert_eq(result["model"], "dialogue-model")
 	assert_true(str(transport.seen[0]["url"]).contains("/dialogue-model:"))
-	assert_true(str(transport.seen[1]["url"]).contains("/gemini-3.5-flash:"))
+	assert_true(str(transport.seen[1]["url"]).contains("/dialogue-model:"))
+	transport.push(_status(404, "{\"error\":{\"message\":\"no longer available to new users\",\"status\":\"NOT_FOUND\"}}"))
+	var missing: Dictionary = await client.generate(_request("dialogue"))
+	assert_eq(missing["error"], "unavailable")
+	assert_eq(transport.seen.size(), 3)
 	client.free()
 
 
@@ -292,27 +300,46 @@ func test_plain_400_is_not_an_auth_error() -> void:
 func test_timeout_names_the_model() -> void:
 	var client := await _client()
 	var transport: FakeTransport = client._transport
-	for _i in 4:
+	for _i in 3:
 		transport.push({"ok": false, "status": 0, "body": "", "headers": {}, "error": "timeout"})
 	var result: Dictionary = await client.generate(_request("dialogue"))
 	assert_eq(result["error"], "timeout")
+	assert_eq(transport.seen.size(), 3)
 	assert_true(str(result["message"]).contains("dialogue-model"))
-	assert_true(str(result["message"]).contains("Пробовали"))
+	assert_false(str(result["message"]).contains("Пробовали"))
 	assert_false(str(result["message"]).contains("Нет сети"))
 	client.free()
 
 
-func test_session_remembers_the_model_that_answered() -> void:
+func test_minimal_thinking_falls_back_to_low_and_is_remembered() -> void:
 	var client := await _client()
+	client.thinking_level = "MINIMAL"
+	client.accepted_thinking = {}
 	var transport: FakeTransport = client._transport
-	transport.push({"ok": false, "status": 0, "body": "", "headers": {}, "error": "timeout"})
-	transport.push(_ok("{\"reply\":\"успел\"}"))
-	var first: Dictionary = await client.generate(_request("dialogue"))
-	assert_eq(first["model"], "gemini-3.5-flash")
+	transport.push(_status(400, "{\"error\":{\"status\":\"INVALID_ARGUMENT\",\"message\":\"thinking level MINIMAL is not supported\"}}"))
+	transport.push(_ok("{\"reply\":\"на low\"}"))
+	var result: Dictionary = await client.generate(_request("dialogue"))
+	assert_true(result["ok"])
+	var first: Dictionary = JSON.parse_string(transport.seen[0]["body"])
+	var second: Dictionary = JSON.parse_string(transport.seen[1]["body"])
+	assert_eq(first["generationConfig"]["thinkingConfig"]["thinkingLevel"], "MINIMAL")
+	assert_eq(second["generationConfig"]["thinkingConfig"]["thinkingLevel"], "LOW")
 	transport.push(_ok("{\"reply\":\"снова\"}"))
-	var second: Dictionary = await client.generate(_request("dialogue"))
-	assert_true(second["ok"])
-	assert_true(str(transport.seen[2]["url"]).contains("/gemini-3.5-flash:"))
+	var again: Dictionary = await client.generate(_request("dialogue"))
+	assert_true(again["ok"])
+	var third: Dictionary = JSON.parse_string(transport.seen[2]["body"])
+	assert_eq(third["generationConfig"]["thinkingConfig"]["thinkingLevel"], "LOW")
+	client.free()
+
+
+func test_turn_deadline_stops_the_request() -> void:
+	var client := await _client()
+	client.turn_deadline_ms = 0
+	var transport: FakeTransport = client._transport
+	transport.push(_ok("{\"reply\":\"не должен уйти\"}"))
+	var result: Dictionary = await client.generate(_request("dialogue"))
+	assert_eq(result["error"], "timeout")
+	assert_eq(transport.seen.size(), 0)
 	client.free()
 
 
@@ -345,12 +372,12 @@ func _client(key: String = SECRET) -> GeminiClient:
 	config.api_key = key
 	config.dialogue_model = "dialogue-model"
 	config.summary_model = "summary-model"
-	config.fallback_model = "fallback-model"
 	config.thinking_level = "LOW"
 	config.timeout_s = 30.0
 	config.min_interval_s = 0.0
 	var client := GeminiClient.new()
 	client.apply_config(config)
+	client.accepted_thinking = {}
 	client._instant_wait = true
 	var transport := FakeTransport.new()
 	client.set_transport(transport)

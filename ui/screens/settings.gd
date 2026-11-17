@@ -6,9 +6,12 @@ signal saved
 var explain_key: bool = false
 
 var _key: LineEdit
-var _model: LineEdit
+var _model: OptionButton
+var _spend: Label
+var _loading: bool = false
 var _scale: HSlider
 var _mock: CheckBox
+var _timing: CheckBox
 var _status: Label
 var _show: Button
 var _testing: bool = false
@@ -53,11 +56,15 @@ func _ready() -> void:
 	test.pressed.connect(_test_connection)
 	scroll_box.add_child(test)
 	scroll_box.add_child(UiWidgets.label(UiStrings.MODEL_LABEL))
-	_model = LineEdit.new()
+	_model = OptionButton.new()
 	_model.name = "ModelField"
-	_model.placeholder_text = UiStrings.MODEL_PLACEHOLDER
 	_model.custom_minimum_size = Vector2(0, 48)
+	for model_id in LLMConfig.DIALOGUE_MODELS:
+		_model.add_item(model_id)
+	_model.item_selected.connect(_on_model_picked)
 	scroll_box.add_child(_model)
+	_spend = UiWidgets.label("", "SpendLabel")
+	scroll_box.add_child(_spend)
 	scroll_box.add_child(UiWidgets.label(UiStrings.SCALE_LABEL))
 	_scale = HSlider.new()
 	_scale.name = "ScaleSlider"
@@ -71,6 +78,11 @@ func _ready() -> void:
 	_mock.text = UiStrings.MOCK_LABEL
 	_mock.custom_minimum_size = Vector2(0, 48)
 	scroll_box.add_child(_mock)
+	_timing = CheckBox.new()
+	_timing.name = "TimingDebug"
+	_timing.text = UiStrings.TIMING_DEBUG
+	_timing.custom_minimum_size = Vector2(0, 48)
+	scroll_box.add_child(_timing)
 	_status = UiWidgets.label("", "StatusLabel")
 	scroll_box.add_child(_status)
 	var save := UiWidgets.button(UiStrings.SAVE, "SaveButton")
@@ -86,9 +98,13 @@ func _load_fields() -> void:
 	var store := SettingsStore.load_current()
 	_key.placeholder_text = UiStrings.KEY_SAVED_PLACEHOLDER if store.api_key != "" else UiStrings.KEY_PLACEHOLDER
 	_key.text = ""
-	_model.text = store.dialogue_model
+	_loading = true
+	_model.select(_model_index(store.dialogue_model))
+	_loading = false
+	_spend.text = _spend_text()
 	_scale.value = store.text_scale
 	_mock.button_pressed = store.provider == "mock"
+	_timing.button_pressed = store.timing_debug
 
 
 func _toggle_key() -> void:
@@ -108,7 +124,7 @@ func _save() -> void:
 	if key == "":
 		key = previous.api_key
 	var provider := "mock" if _mock.button_pressed else "gemini"
-	SettingsStore.save_values(provider, key, _model.text, _scale.value)
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed)
 	_key.text = ""
 	_key.secret = true
 	_show.text = UiStrings.SHOW_KEY
@@ -131,9 +147,7 @@ func _test_connection() -> void:
 		_status.text = UiStrings.LINK_NEED_KEY
 		_testing = false
 		return
-	var model := _model.text.strip_edges()
-	if model == "":
-		model = LLMConfig.DEFAULT_DIALOGUE_MODEL
+	var model := _selected_model()
 	SettingsStore.save_values(provider, key, model, _scale.value)
 	LLM.reload_client()
 	var message := UiStrings.LINK_MOCK
@@ -165,6 +179,40 @@ func _ping_request() -> Dictionary:
 			"required": ["ok"],
 		},
 	}
+
+
+func _selected_model() -> String:
+	var index := _model.selected
+	if index < 0 or index >= LLMConfig.DIALOGUE_MODELS.size():
+		return LLMConfig.DEFAULT_DIALOGUE_MODEL
+	return LLMConfig.DIALOGUE_MODELS[index]
+
+
+func _model_index(model: String) -> int:
+	var canonical := LLMConfig.canonical_model(model)
+	var index := LLMConfig.DIALOGUE_MODELS.find(canonical)
+	return index if index >= 0 else 0
+
+
+func _on_model_picked(_index: int) -> void:
+	if _loading:
+		return
+	var previous := SettingsStore.load_current()
+	var key := _key.text.strip_edges()
+	if key == "":
+		key = previous.api_key
+	var provider := "mock" if _mock.button_pressed else "gemini"
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed)
+	LLM.reload_client()
+	_spend.text = _spend_text()
+
+
+func _spend_text() -> String:
+	return "%s: сессия %s · всего %s" % [
+		UiStrings.SPEND_LABEL,
+		SpendMeter.format_usd(SpendMeter.session_usd),
+		SpendMeter.format_usd(SpendMeter.total_usd()),
+	]
 
 
 func _without_secret(text: String, secret: String) -> String:

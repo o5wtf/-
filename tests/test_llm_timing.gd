@@ -71,12 +71,18 @@ func test_usage_and_turn_counters() -> void:
 	var flash_input := 0.75 if int(Time.get_date_dict_from_system()["year"]) < 2027 else 1.50
 	assert_true(absf(SpendMeter.cost_usd("gemini-3.6-flash", 1000000, 0, 0) - flash_input) < 0.000001)
 	assert_eq(SpendMeter.cost_usd("dialogue-model", 1000000, 0, 0), 0.0)
+	var previous_spend_path := SpendMeter.store_path
+	var spend_path := "user://spend-meter-test.cfg"
+	if FileAccess.file_exists(spend_path):
+		DirAccess.remove_absolute(spend_path)
+	SpendMeter.store_path = spend_path
 	var before_session := SpendMeter.session_usd
-	var before_total := SpendMeter.total_usd()
 	SpendMeter.note("gemini-3.5-flash-lite", 1000000, 0, 0)
 	assert_true(absf(SpendMeter.session_usd - before_session - 0.30) < 0.000001)
-	assert_true(absf(SpendMeter.total_usd() - before_total - 0.30) < 0.000001)
+	assert_true(absf(SpendMeter.total_usd() - 0.30) < 0.000001)
 	SpendMeter.session_usd = before_session
+	DirAccess.remove_absolute(spend_path)
+	SpendMeter.store_path = previous_spend_path
 	assert_true(load("res://tests/manual/turn_benchmark.gd") != null)
 	_assert_flash_model_migrates()
 

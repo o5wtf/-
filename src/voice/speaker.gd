@@ -3,10 +3,12 @@ extends Node
 ## Сигнал is_speaking нужен будущему микрофону; самого микрофона здесь нет.
 
 signal is_speaking(active: bool)
+signal voice_error(kind: String)
 
 var backend: SpeechBackend
 var enabled: bool = false
 var speaking: bool = false
+var last_error: String = ""
 var listen_to_game: bool = true
 var queue: SpeechQueue = SpeechQueue.new()
 var _lengths: Dictionary = {}
@@ -36,6 +38,36 @@ func set_enabled(value: bool) -> void:
 	enabled = value
 	if not enabled:
 		stop_and_clear()
+
+
+func speak_test() -> String:
+	stop_and_clear()
+	var text := "Проверка голоса."
+	_lengths["voice-test"] = text.length()
+	if backend != null:
+		await backend.speak("voice-test", text, "")
+	return voice_status_line()
+
+
+func voice_status_line() -> String:
+	var info := {}
+	if backend != null and backend.has_method("diagnostics"):
+		info = backend.call("diagnostics")
+	var feature := "yes" if bool(info.get("has_feature", false)) else "no"
+	var voice := str(info.get("voice_id", ""))
+	if voice == "":
+		voice = "-"
+	var err := str(info.get("error", ""))
+	if err == "":
+		err = "none"
+	last_error = "" if err == "none" else err
+	return "TEXT_TO_SPEECH %s · voices %d · russian %d · voice %s · error %s" % [
+		feature,
+		int(info.get("voices", 0)),
+		int(info.get("russian", 0)),
+		voice,
+		err,
+	]
 
 
 func speak_reply(agent_id: String, reply: String) -> void:
@@ -101,6 +133,9 @@ func _bind_backend() -> void:
 
 
 func _on_started(line_id: String) -> void:
+	if last_error != "":
+		last_error = ""
+		voice_error.emit("")
 	print("voice start id=%s len=%d" % [line_id, int(_lengths.get(line_id, 0))])
 
 
@@ -114,6 +149,8 @@ func _on_finished(line_id: String) -> void:
 
 
 func _on_error(line_id: String, kind: String) -> void:
+	last_error = kind
+	voice_error.emit(kind)
 	print("voice error id=%s len=%d kind=%s" % [line_id, int(_lengths.get(line_id, 0)), kind])
 	if kind == "no_voice":
 		queue.stop()

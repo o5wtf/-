@@ -55,6 +55,96 @@ func test_voice_choice_prefers_russian_then_any() -> void:
 	assert_eq(SystemTtsBackend.choose_voice("Анна", russian, other), "ru-1")
 
 
+func test_manifest_requests_tts_service() -> void:
+	var xml := TtsManifest.queries_xml()
+	assert_true(xml.contains("<queries>"))
+	assert_true(xml.contains("android.intent.action.TTS_SERVICE"))
+
+
+func test_empty_voices_are_retried_then_russian_is_used() -> void:
+	var driver := ScriptedTts.new()
+	driver.voices_plan = func(language: String, call_index: int) -> Array:
+		if call_index < 5:
+			return []
+		if language == "ru":
+			return [{"id": "ru-1", "name": "Анна", "language": "ru"}]
+		return [{"id": "ru-1", "language": "ru"}, {"id": "en-1", "language": "en"}]
+	var backend := _backend(driver)
+	var errors: Array[String] = []
+	backend.speech_error.connect(func(_id: String, kind: String) -> void: errors.append(kind))
+	await backend.speak("line", "Проверка.", "")
+	assert_true(errors.is_empty())
+	assert_eq(driver.spoken, ["ru-1"])
+	assert_true(driver.voice_calls > 2)
+	assert_eq(backend.last_russian_count, 1)
+	backend.free()
+
+
+func test_missing_russian_uses_any_voice_without_waiting() -> void:
+	var driver := ScriptedTts.new()
+	driver.voices_plan = func(language: String, _call_index: int) -> Array:
+		if language == "ru":
+			return []
+		return [{"id": "en-1", "name": "Anna", "language": "en"}]
+	var backend := _backend(driver)
+	await backend.speak("line", "Проверка.", "")
+	assert_eq(driver.spoken, ["en-1"])
+	assert_eq(backend.last_error, "")
+	assert_true(driver.voice_calls == 2)
+	backend.free()
+
+
+func test_blank_voice_id_is_still_spoken() -> void:
+	var driver := ScriptedTts.new()
+	driver.voices_plan = func(language: String, _call_index: int) -> Array:
+		if language == "ru":
+			return []
+		return [{"id": "", "name": "Default", "language": "en"}]
+	var backend := _backend(driver)
+	await backend.speak("line", "Проверка.", "")
+	assert_eq(driver.spoken, [""])
+	assert_eq(backend.last_error, "")
+	backend.free()
+
+
+func test_no_voice_only_after_the_retry_window() -> void:
+	var driver := ScriptedTts.new()
+	driver.voices_plan = func(_language: String, _call_index: int) -> Array:
+		return []
+	var backend := _backend(driver)
+	var errors: Array[String] = []
+	backend.speech_error.connect(func(_id: String, kind: String) -> void: errors.append(kind))
+	await backend.speak("line", "Проверка.", "")
+	assert_eq(errors, ["no_voice"])
+	assert_true(driver.spoken.is_empty())
+	assert_true(backend._clock_s >= SystemTtsBackend.RETRY_WINDOW_S)
+	assert_eq(backend.diagnostics()["voices"], 0)
+	assert_eq(backend.diagnostics()["error"], "no_voice")
+	backend.free()
+
+
+func test_startup_does_not_cache_an_empty_voice_list() -> void:
+	var driver := ScriptedTts.new()
+	driver.voices_plan = func(_language: String, _call_index: int) -> Array:
+		return [{"id": "ru-1", "language": "ru"}]
+	var backend := SystemTtsBackend.new()
+	backend.driver = driver
+	backend._instant = true
+	(Engine.get_main_loop() as SceneTree).root.add_child(backend)
+	assert_eq(driver.voice_calls, 0)
+	await backend.speak("line", "Проверка.", "")
+	assert_true(driver.voice_calls >= 2)
+	backend.free()
+
+
+func _backend(driver: ScriptedTts) -> SystemTtsBackend:
+	var backend := SystemTtsBackend.new()
+	backend.driver = driver
+	backend._instant = true
+	(Engine.get_main_loop() as SceneTree).root.add_child(backend)
+	return backend
+
+
 func test_speaker_queues_without_interrupting_and_stop_clears() -> void:
 	var speaker: Node = load("res://src/voice/speaker.gd").new()
 	speaker.set("listen_to_game", false)
@@ -87,6 +177,33 @@ func test_speaker_queues_without_interrupting_and_stop_clears() -> void:
 	speaker.free()
 	assert_true(states[0])
 	assert_false(states[states.size() - 1])
+
+
+class ScriptedTts:
+	extends RefCounted
+
+	var voices_plan: Callable
+	var voice_calls: int = 0
+	var spoken: Array[String] = []
+
+	func voices(language: String) -> Array:
+		voice_calls += 1
+		var listed: Variant = voices_plan.call(language, voice_calls)
+		if listed is Array:
+			return listed
+		return []
+
+	func speak(_text: String, voice_id: String, _utterance_id: int) -> void:
+		spoken.append(voice_id)
+
+	func stop() -> void:
+		pass
+
+	func bind(_started: Callable, _finished: Callable, _canceled: Callable) -> void:
+		pass
+
+	func has_tts() -> bool:
+		return true
 
 
 class FakeBackend:

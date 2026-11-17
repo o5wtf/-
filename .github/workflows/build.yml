@@ -116,6 +116,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p builds
+          # Gradle-шаблон нужен, чтобы экспортный плагин вставил <queries> TTS_SERVICE.
+          # Каталог android/ в gitignore: его собираем из шаблона Godot той же версии.
+          source_zip="$(find "$HOME/.local/share/godot/export_templates" -name android_source.zip | head -1)"
+          test -n "$source_zip"
+          template_version="$(tr -d '[:space:]' < "$(dirname "$source_zip")/version.txt")"
+          rm -rf android
+          mkdir -p android/build
+          unzip -q "$source_zip" -d android/build
+          printf '%s\n' "$template_version" > android/.build_version
           godot --headless --path . --export-release "Windows Desktop" "$PWD/builds/Detective.exe"
           godot --headless --path . --export-release "Android" "$PWD/builds/Detective.apk"
           test -s builds/Detective.exe
@@ -132,6 +141,11 @@ jobs:
           if ! grep -q xlargeScreens "$RUNNER_TEMP/manifest.txt"; then
             echo "В манифесте нет больших экранов"
             grep -n -i screen "$RUNNER_TEMP/manifest.txt" | head -40
+            exit 1
+          fi
+          if ! grep -q 'android.intent.action.TTS_SERVICE' "$RUNNER_TEMP/manifest.txt"; then
+            echo "В манифесте нет запроса TTS_SERVICE"
+            grep -n -i -E 'quer|intent|TTS' "$RUNNER_TEMP/manifest.txt" | head -40
             exit 1
           fi
           python3 tools/check_build.py builds/Detective.apk builds/Detective.pck

@@ -13,6 +13,8 @@ var _scale: HSlider
 var _mock: CheckBox
 var _timing: CheckBox
 var _voice: CheckBox
+var _voice_status: Label
+var _voice_busy: bool = false
 var _status: Label
 var _show: Button
 var _testing: bool = false
@@ -90,6 +92,13 @@ func _ready() -> void:
 	_voice.custom_minimum_size = Vector2(0, 48)
 	_voice.toggled.connect(_on_voice_toggled)
 	scroll_box.add_child(_voice)
+	var voice_check := UiWidgets.button(UiStrings.VOICE_CHECK, "VoiceCheckButton")
+	voice_check.pressed.connect(_check_voice)
+	scroll_box.add_child(voice_check)
+	_voice_status = UiWidgets.label("", "VoiceStatusLabel")
+	_voice_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_voice_status.add_theme_color_override("font_color", NoirTheme.MUTED)
+	scroll_box.add_child(_voice_status)
 	_status = UiWidgets.label("", "StatusLabel")
 	scroll_box.add_child(_status)
 	var save := UiWidgets.button(UiStrings.SAVE, "SaveButton")
@@ -188,6 +197,16 @@ func _ping_request() -> Dictionary:
 			"required": ["ok"],
 		},
 	}
+
+
+func _check_voice() -> void:
+	if _voice_busy:
+		return
+	_voice_busy = true
+	_voice_status.text = UiStrings.CHECKING
+	var line: String = await Speaker.speak_test()
+	_voice_status.text = line
+	_voice_busy = false
 
 
 func _on_voice_toggled(pressed: bool) -> void:

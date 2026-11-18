@@ -5,6 +5,9 @@ extends Node
 signal is_speaking(active: bool)
 signal voice_error(kind: String)
 signal voice_retry_available(show_button: bool)
+signal voice_log_changed
+
+const LOG_LIMIT := 20
 
 var backend: SpeechBackend
 var enabled: bool = false
@@ -18,6 +21,12 @@ var _inflight: Dictionary = {}
 var _prefetch_jobs: Array = []
 var _prefetch_busy: bool = false
 var _prefetch_token: int = 0
+var _instant: bool = false
+var _clock_s: float = 0.0
+var _armed: bool = false
+var _armed_at: float = 0.0
+var _watch_limit_s: float = 0.0
+var voice_log: PackedStringArray = PackedStringArray()
 
 
 func _ready() -> void:
@@ -101,9 +110,18 @@ func speak_reply(agent_id: String, reply: String) -> void:
 		return
 	var line_id := line_id_for(agent_id)
 	var text := SpeechText.clean(reply)
-	if not queue.enqueue(line_id, text, _voice_for(agent_id), _style_for(agent_id)):
+	var style := _style_for(agent_id)
+	if text == "":
+		_remember_retry(line_id, reply, _voice_for(agent_id), style)
+		_note("skipped id=%s reason=empty" % line_id)
+		voice_error.emit("empty")
+		voice_retry_available.emit(true)
+		return
+	if not queue.enqueue(line_id, text, _voice_for(agent_id), style):
+		_note("skipped id=%s reason=duplicate" % line_id)
 		return
 	_lengths[line_id] = text.length()
+	_note("enqueued id=%s len=%d preview=%s" % [line_id, text.length(), _preview(text)])
 	_pump()
 
 
@@ -125,12 +143,12 @@ func stop_and_clear(cancel_prefetch: bool = true) -> void:
 		_prefetch_token += 1
 		_prefetch_jobs.clear()
 		_prefetch_busy = false
-	var current := queue.current_id
+	_release_seen()
 	queue.stop()
-	if current != "":
-		_lengths.erase(current)
+	_lengths.clear()
 	retry_line = {}
 	_inflight = {}
+	_armed = false
 	voice_retry_available.emit(false)
 	if backend != null:
 		backend.stop()
@@ -159,6 +177,10 @@ func _on_replied(agent_id: String, text: String, _remark: String) -> void:
 	speak_reply(agent_id, spoken)
 
 
+func _process(_delta: float) -> void:
+	_check_watchdog()
+
+
 func _pump() -> void:
 	if queue.current_id != "":
 		return
@@ -168,7 +190,11 @@ func _pump() -> void:
 		return
 	_set_speaking(true)
 	_inflight = item.duplicate(true)
-	backend.speak(str(item["id"]), str(item["text"]), str(item.get("voice_hint", "")), str(item.get("style", "")))
+	var spoken := str(item.get("text", ""))
+	_armed = true
+	_armed_at = _now()
+	_watch_limit_s = _limit_for(spoken.length(), 0)
+	backend.speak(str(item["id"]), spoken, str(item.get("voice_hint", "")), str(item.get("style", "")))
 
 
 func _bind_backend() -> void:
@@ -189,41 +215,48 @@ func _on_started(line_id: String) -> void:
 	if last_error != "":
 		last_error = ""
 		voice_error.emit("")
-	print("voice start id=%s len=%d" % [line_id, int(_lengths.get(line_id, 0))])
+	_note("started id=%s len=%d" % [line_id, int(_lengths.get(line_id, 0))])
 
 
 func _on_finished(line_id: String) -> void:
-	if queue.current_id != line_id:
+	if queue.current_id != "" and queue.current_id != line_id:
+		_note("skipped id=%s reason=mismatch" % line_id)
 		return
-	print("voice finish id=%s len=%d" % [line_id, int(_lengths.get(line_id, 0))])
+	_note("finished id=%s len=%d" % [line_id, int(_lengths.get(line_id, 0))])
 	_lengths.erase(line_id)
-	queue.finish(line_id)
+	if queue.current_id == line_id:
+		queue.finish(line_id)
+	_armed = false
 	_pump()
 	_kick_prefetch()
 
 
 func _on_error(line_id: String, kind: String) -> void:
+	_note("error id=%s len=%d reason=%s" % [line_id, int(_lengths.get(line_id, 0)), kind])
+	if kind == "stopped":
+		queue.allow_again(line_id)
+		if queue.current_id == line_id:
+			queue.finish(line_id)
+			_lengths.erase(line_id)
+			_armed = false
+			_pump()
+			_kick_prefetch()
+		return
+	var current := queue.current_id
+	if current != "" and current != line_id:
+		queue.allow_again(line_id)
+		_note("skipped id=%s reason=mismatch" % line_id)
+		return
 	last_error = kind
 	voice_error.emit(kind)
-	print("voice error id=%s len=%d kind=%s" % [line_id, int(_lengths.get(line_id, 0)), kind])
-	if backend != null and backend.keeps_failed_line and queue.current_id == line_id:
-		retry_line = _inflight.duplicate(true)
+	if current == line_id:
+		_remember_retry(line_id, str(_inflight.get("text", "")), str(_inflight.get("voice_hint", "")), str(_inflight.get("style", "")))
 		queue.finish(line_id)
 		queue.allow_again(line_id)
+		_lengths.erase(line_id)
 		_inflight = {}
-		voice_retry_available.emit(true)
-		_set_speaking(false)
-		_kick_prefetch()
-		return
-	if kind == "no_voice":
-		queue.stop()
-		_lengths.clear()
-		_set_speaking(false)
-		return
-	if queue.current_id != line_id:
-		return
-	_lengths.erase(line_id)
-	queue.finish(line_id)
+		_armed = false
+	voice_retry_available.emit(true)
 	_pump()
 	_kick_prefetch()
 
@@ -236,7 +269,70 @@ func _voice_for(agent_id: String) -> String:
 
 
 func _style_for(_agent_id: String) -> String:
-	return VoiceTone.for_speech(Game.speech_style, SettingsStore.load_current().voice_intonation)
+	if not SettingsStore.load_current().voice_intonation:
+		return ""
+	return Game.speech_style.strip_edges()
+
+
+func _check_watchdog() -> void:
+	if queue.current_id == "" or not _armed:
+		return
+	if _now() - _armed_at <= _watch_limit_s:
+		return
+	var line_id := queue.current_id
+	_note("watchdog id=%s len=%d" % [line_id, int(_lengths.get(line_id, 0))])
+	_remember_retry(line_id, str(_inflight.get("text", "")), str(_inflight.get("voice_hint", "")), str(_inflight.get("style", "")))
+	queue.allow_again(line_id)
+	queue.finish(line_id)
+	_lengths.erase(line_id)
+	_inflight = {}
+	_armed = false
+	voice_error.emit("watchdog")
+	voice_retry_available.emit(true)
+	if backend != null:
+		backend.stop()
+	_pump()
+
+
+func _limit_for(chars: int, pcm_bytes: int) -> float:
+	var text_s := maxf(float(maxi(chars, 1)) / 12.0, 0.8)
+	var pcm_s := 0.0
+	if pcm_bytes > 0:
+		pcm_s = float(pcm_bytes) / 2.0 / GeminiTtsBackend.SAMPLE_RATE
+	var body := maxf(text_s, pcm_s)
+	return body + maxf(4.0, body * 0.5)
+
+
+func _release_seen() -> void:
+	if queue.current_id != "":
+		queue.allow_again(queue.current_id)
+	for item in queue.pending:
+		queue.allow_again(str(item.get("id", "")))
+
+
+func _remember_retry(line_id: String, text: String, voice_hint: String, style: String) -> void:
+	retry_line = {"id": line_id, "text": text, "voice_hint": voice_hint, "style": style}
+
+
+func _note(line: String) -> void:
+	voice_log.append(line)
+	while voice_log.size() > LOG_LIMIT:
+		voice_log.remove_at(0)
+	print("voice %s" % line)
+	voice_log_changed.emit()
+
+
+func _preview(text: String) -> String:
+	var flat := text.replace("\n", " ").strip_edges()
+	if flat.length() > 16:
+		return flat.substr(0, 16)
+	return flat
+
+
+func _now() -> float:
+	if _instant:
+		return _clock_s
+	return Time.get_ticks_msec() / 1000.0
 
 
 func _on_case_opened() -> void:

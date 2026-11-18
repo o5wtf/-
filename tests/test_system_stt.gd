@@ -29,15 +29,18 @@ func test_error_codes_are_honest() -> void:
 	assert_eq(SystemStt.code_from_android(4), "server")
 	assert_eq(SystemStt.code_from_android(5), "client")
 	assert_eq(SystemStt.code_from_android(6), "speech_timeout")
-	assert_eq(SystemStt.code_from_android(10), "server_disconnected")
-	assert_eq(SystemStt.code_from_android(11), "language_not_supported")
-	assert_eq(SystemStt.code_from_android(12), "language_unavailable")
-	assert_eq(SystemStt.code_from_android(13), "cannot_check")
-	assert_eq(SystemStt.code_from_android(14), "too_many_requests")
+	assert_eq(SystemStt.code_from_android(10), "too_many_requests")
+	assert_eq(SystemStt.code_from_android(11), "server_disconnected")
+	assert_eq(SystemStt.code_from_android(12), "language_not_supported")
+	assert_eq(SystemStt.code_from_android(13), "language_unavailable")
+	assert_eq(SystemStt.code_from_android(14), "cannot_check")
+	assert_eq(SystemStt.code_from_android(15), "cannot_listen_to_download_events")
+	assert_eq(SystemStt.hint_for_code("too_many_requests"), "Слишком много запросов к распознаванию")
 	assert_eq(SystemStt.hint_for_code("server_disconnected"), "Сервер распознавания отключился")
 	assert_eq(SystemStt.hint_for_code("language_not_supported"), "Язык распознавания не поддерживается")
 	assert_eq(SystemStt.hint_for_code("language_unavailable"), "Язык распознавания недоступен")
 	assert_eq(SystemStt.hint_for_code("cannot_check"), "Не удалось проверить распознавание")
+	assert_eq(SystemStt.hint_for_code("cannot_listen_to_download_events"), "Не удалось слушать загрузку языка")
 	assert_eq(SystemStt.hint_for_code("audio"), "Не слышно микрофон. Говорите ближе")
 	assert_eq(SystemStt.hint_for_code("client"), "Сбой распознавания на устройстве")
 	assert_eq(SystemStt.hint_for_code("server"), "Сервер распознавания не ответил")
@@ -76,6 +79,7 @@ func test_fake_plugin_hold_sends_and_does_not_spend() -> void:
 	await (Engine.get_main_loop() as SceneTree).process_frame
 	talk.push_pcm(VoiceAudio.tone(VoiceAudio.UPLOAD_RATE, 3000))
 	assert_false(partials.is_empty())
+	assert_true(fake.partial_reads > 0)
 	await talk.release(false)
 	assert_eq(fake.stopped, 1)
 	assert_eq(sent, ["Где вы были?"])
@@ -113,7 +117,8 @@ func test_fake_plugin_error_then_retry() -> void:
 	assert_false(talk.locked)
 	assert_true(hints[hints.size() - 1] == SystemStt.hint_for_code("busy"))
 	await talk.retry()
-	assert_eq(sent, ["Где вы были?"])
+	assert_eq(sent.size(), 0)
+	assert_eq(hints[hints.size() - 1], SystemStt.hint_for_code("unavailable"))
 	assert_false(talk.locked)
 	host.free()
 
@@ -316,10 +321,43 @@ func test_turn_log_keeps_ten_and_names_the_span() -> void:
 	var lines := SystemStt.status_lines()
 	var joined := "\n".join(lines)
 	assert_true(joined.contains("plugin=missing"))
-	assert_true(joined.contains("recognition_service=unknown"))
-	assert_true(joined.contains("on_device=unknown"))
+	assert_true(joined.contains("sdk_int=n/a"))
+	assert_true(joined.contains("is_recognition_available=no"))
+	assert_true(joined.contains("on_device_available=no"))
 	assert_true(joined.contains("record_audio=n/a"))
+	assert_true(joined.contains("причина=плагин не загружен"))
 	assert_eq(SystemStt.user_hint(), "Системное распознавание не встроено в сборку")
+	var found := {
+		"is_recognition_available": false,
+		"on_device_available": false,
+		"services": [{"package": "com.google.android.googlequicksearchbox", "class": "com.google.android.voicesearch.serviceapi.GoogleRecognitionService"}],
+		"sdk_int": 34,
+		"manufacturer": "Xiaomi",
+		"model": "Pad",
+		"activity": "present",
+		"is_recognition_available_error": "hidden",
+		"on_device_available_error": "",
+		"services_error": "",
+		"voice_recognition_service": "com.google.android.googlequicksearchbox/.RecognitionService",
+		"voice_recognition_service_error": "",
+	}
+	assert_true(SystemStt.available_from_report(found))
+	var detailed := "\n".join(SystemStt.lines_from_report(found, "granted"))
+	assert_true(detailed.contains("sdk_int=34"))
+	assert_true(detailed.contains("manufacturer=Xiaomi"))
+	assert_true(detailed.contains("googlequicksearchbox"))
+	assert_true(detailed.contains("is_recognition_available_error=hidden"))
+	assert_true(detailed.contains("причина=доступно"))
+	assert_true(source.contains("diagnosticsJson"))
+	assert_true(source.contains("queryIntentServices"))
+	var stt_source := FileAccess.get_file_as_string("res://src/voice/system_stt.gd")
+	assert_false(stt_source.contains("has_method"))
+	assert_false(stt_source.contains("has_signal"))
+	assert_false(stt_source.contains("get_method_list"))
+	assert_true(stt_source.contains("partialText"))
+	assert_true(stt_source.contains("cancelListening"))
+	assert_false(stt_source.contains("bridge.call(\"recover\")"))
+	assert_true(source.contains("createSpeechRecognizer"))
 	_assert_apk_checker()
 	var workflow := FileAccess.get_file_as_string("res://.github/workflows/build.yml")
 	assert_true(workflow.contains("stage_system_speech.sh"))
@@ -423,6 +461,7 @@ class _FakeSpeech:
 	var stopped: int = 0
 	var text: String = "Где вы были?"
 	var fail: String = ""
+	var partial_reads: int = 0
 	var partial_line: String = "Где"
 	var finish_immediately: bool = false
 	var hold_result: bool = false
@@ -455,6 +494,7 @@ class _FakeSpeech:
 		cancelled += 1
 
 	func partialText() -> String:
+		partial_reads += 1
 		return partial_line
 
 	func recover() -> Dictionary:

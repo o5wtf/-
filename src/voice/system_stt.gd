@@ -23,55 +23,123 @@ func listens_live() -> bool:
 
 
 static func plugin_available() -> bool:
-	if not Engine.has_singleton(PLUGIN):
-		return false
-	var live: Object = Engine.get_singleton(PLUGIN)
-	if live == null or not live.has_method("isAvailable"):
-		return false
-	return bool(live.call("isAvailable"))
+	return available_from_report(_ensure_report())
+
+
+static func refresh_report() -> void:
+	_report_ready = false
+	_report = _pull_report()
+	_report_ready = true
+
+
+static func available_from_report(report: Dictionary) -> bool:
+	if bool(report.get("is_recognition_available", false)):
+		return true
+	if bool(report.get("on_device_available", false)):
+		return true
+	var services: Variant = report.get("services", [])
+	return services is Array and not (services as Array).is_empty()
 
 
 static func user_hint() -> String:
 	if not Engine.has_singleton(PLUGIN):
 		return "Системное распознавание не встроено в сборку"
-	var live: Object = Engine.get_singleton(PLUGIN)
-	var service := _flag(live, "recognitionServiceAvailable")
-	var device := _flag(live, "onDeviceAvailable")
-	if not service and not device:
-		return "Служба распознавания речи не видна приложению"
-	return ""
+	var report := _ensure_report()
+	if str(report.get("activity", "")) == "missing":
+		return "Системное распознавание ещё не готово. Нажмите «Проверить снова»."
+	if available_from_report(report):
+		return ""
+	return "Служба распознавания речи не видна приложению"
 
 
 static func status_lines() -> PackedStringArray:
-	var loaded := Engine.has_singleton(PLUGIN)
-	var service := "unknown"
-	var device := "unknown"
-	var api := "n/a"
-	var reason := "плагин не загружен"
-	if loaded:
-		var live: Object = Engine.get_singleton(PLUGIN)
-		service = "yes" if _flag(live, "recognitionServiceAvailable") else "no"
-		device = "yes" if _flag(live, "onDeviceAvailable") else "no"
-		if live != null and live.has_method("apiLevel"):
-			api = str(int(live.call("apiLevel")))
-		if service == "yes" or device == "yes":
-			reason = "доступно"
-		else:
-			reason = "служба распознавания не найдена"
-	return PackedStringArray([
-		"plugin=%s" % ("loaded" if loaded else "missing"),
-		"recognition_service=%s" % service,
-		"on_device=%s" % device,
-		"api=%s" % api,
-		"record_audio=%s" % _record_state(),
-		"причина=%s" % reason,
+	return lines_from_report(_ensure_report(), _record_state())
+
+
+static func lines_from_report(report: Dictionary, record_audio: String) -> PackedStringArray:
+	if report.is_empty():
+		return PackedStringArray([
+			"plugin=missing",
+			"sdk_int=n/a",
+			"manufacturer=",
+			"model=",
+			"activity=missing",
+			"is_recognition_available=no",
+			"is_recognition_available_error=",
+			"on_device_available=no",
+			"on_device_available_error=",
+			"services=",
+			"services_error=",
+			"voice_recognition_service=",
+			"voice_recognition_service_error=",
+			"record_audio=%s" % record_audio,
+			"причина=плагин не загружен",
+		])
+	var lines := PackedStringArray([
+		"plugin=loaded",
+		"sdk_int=%s" % str(report.get("sdk_int", "n/a")),
+		"manufacturer=%s" % str(report.get("manufacturer", "")),
+		"model=%s" % str(report.get("model", "")),
+		"activity=%s" % str(report.get("activity", "")),
+		"is_recognition_available=%s" % _yes_no(report.get("is_recognition_available", false)),
+		"is_recognition_available_error=%s" % str(report.get("is_recognition_available_error", "")),
+		"on_device_available=%s" % _yes_no(report.get("on_device_available", false)),
+		"on_device_available_error=%s" % str(report.get("on_device_available_error", "")),
+		"services=%s" % _service_text(report.get("services", [])),
+		"services_error=%s" % str(report.get("services_error", "")),
+		"voice_recognition_service=%s" % str(report.get("voice_recognition_service", "")),
+		"voice_recognition_service_error=%s" % str(report.get("voice_recognition_service_error", "")),
+		"record_audio=%s" % record_audio,
+		"причина=%s" % _reason(report),
 	])
+	return lines
 
 
-static func _flag(live: Object, method_name: String) -> bool:
-	if live == null or not live.has_method(method_name):
-		return false
-	return bool(live.call(method_name))
+static func _yes_no(value: Variant) -> String:
+	return "yes" if bool(value) else "no"
+
+
+static func _service_text(value: Variant) -> String:
+	if value is not Array:
+		return ""
+	var parts: PackedStringArray = PackedStringArray()
+	for item in value:
+		if item is Dictionary:
+			parts.append("%s/%s" % [str(item.get("package", "")), str(item.get("class", ""))])
+	return ",".join(parts)
+
+
+static func _reason(report: Dictionary) -> String:
+	if str(report.get("activity", "")) == "missing":
+		return "нет activity"
+	if available_from_report(report):
+		return "доступно"
+	if str(report.get("services_error", "")) != "":
+		return str(report.get("services_error", ""))
+	return "служба распознавания не найдена"
+
+
+static var _report: Dictionary = {}
+static var _report_ready: bool = false
+
+
+static func _ensure_report() -> Dictionary:
+	if not _report_ready:
+		refresh_report()
+	return _report
+
+
+static func _pull_report() -> Dictionary:
+	if not Engine.has_singleton(PLUGIN):
+		return {}
+	var live: Object = Engine.get_singleton(PLUGIN)
+	if live == null:
+		return {}
+	var raw := str(live.call("diagnosticsJson"))
+	var parsed: Variant = JSON.parse_string(raw)
+	if parsed is Dictionary:
+		return parsed
+	return {"parse_error": raw}
 
 
 static func _record_state() -> String:
@@ -110,6 +178,8 @@ static func hint_for_code(code: String) -> String:
 			return "Язык распознавания недоступен"
 		"cannot_check":
 			return "Не удалось проверить распознавание"
+		"cannot_listen_to_download_events":
+			return "Не удалось слушать загрузку языка"
 		"too_many_requests":
 			return "Слишком много запросов к распознаванию"
 		"timeout":
@@ -143,15 +213,17 @@ static func code_from_android(error_code: int) -> String:
 		9:
 			return "permissions"
 		10:
-			return "server_disconnected"
-		11:
-			return "language_not_supported"
-		12:
-			return "language_unavailable"
-		13:
-			return "cannot_check"
-		14:
 			return "too_many_requests"
+		11:
+			return "server_disconnected"
+		12:
+			return "language_not_supported"
+		13:
+			return "language_unavailable"
+		14:
+			return "cannot_check"
+		15:
+			return "cannot_listen_to_download_events"
 		_:
 			return "unavailable"
 
@@ -197,7 +269,7 @@ func finish_listen() -> Dictionary:
 
 
 func partial_text() -> String:
-	if bridge != null and bridge.has_method("partialText"):
+	if bridge != null:
 		var live := str(bridge.call("partialText"))
 		if live != "":
 			partial = live
@@ -210,22 +282,17 @@ func cancel_listen() -> void:
 	_has_cached = false
 	_cached = {}
 	partial = ""
-	if bridge != null and bridge.has_method("cancelListening"):
+	if bridge != null:
 		bridge.call("cancelListening")
 
 
 func recover() -> Dictionary:
-	_ensure_bridge()
-	if bridge != null and bridge.has_method("recover"):
-		var pending: Variant = bridge.call("recover")
-		if pending is Dictionary:
-			return pending
-		return await pending
+	# У SpeechRecognizer нет повтора прошлой сессии. Отдельный JNI-метод только падал бы на устройстве.
 	return _failure("unavailable")
 
 
 func transcribe(_wav: PackedByteArray) -> Dictionary:
-	return await recover()
+	return recover()
 
 
 func _ensure_bridge() -> void:
@@ -241,12 +308,9 @@ func _attach(target: Object) -> void:
 	if _attached or target == null:
 		return
 	_attached = true
-	if target.has_signal("partial"):
-		target.connect("partial", _on_partial)
-	if target.has_signal("finished"):
-		target.connect("finished", _on_finished)
-	if target.has_signal("failed"):
-		target.connect("failed", _on_failed)
+	target.connect("partial", _on_partial)
+	target.connect("finished", _on_finished)
+	target.connect("failed", _on_failed)
 
 
 func _on_partial(text: String) -> void:

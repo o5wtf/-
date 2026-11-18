@@ -5,6 +5,7 @@ extends Node
 signal is_speaking(active: bool)
 signal voice_error(kind: String)
 signal voice_retry_available(show_button: bool)
+signal voice_line_changed
 signal voice_log_changed
 signal turn_log_changed
 
@@ -173,15 +174,52 @@ func _on_replied(agent_id: String, text: String, _remark: String) -> void:
 	speak_reply(agent_id, spoken)
 
 
+func cancel_inflight() -> void:
+	if queue.current_id == "" and _inflight.is_empty() and not speaking:
+		return
+	var line_id := queue.current_id
+	if line_id != "":
+		queue.allow_again(line_id)
+		queue.finish(line_id)
+	_inflight = {}
+	if backend != null:
+		backend.stop()
+	_set_speaking(false)
+	voice_line_changed.emit()
+
+
+func skip_current() -> void:
+	if _inflight.is_empty() and queue.current_id == "":
+		return
+	var item: Dictionary = _inflight.duplicate(true)
+	if not item.is_empty():
+		_remember_retry(str(item.get("id", queue.current_id)), str(item.get("text", "")), str(item.get("voice_hint", "")), str(item.get("style", "")))
+	var line_id := queue.current_id
+	if line_id != "":
+		queue.allow_again(line_id)
+		queue.finish(line_id)
+	_inflight = {}
+	if backend != null:
+		backend.stop()
+	_set_speaking(false)
+	voice_retry_available.emit(true)
+	voice_line_changed.emit()
+
+
+func can_skip() -> bool:
+	return queue.current_id != "" or not _inflight.is_empty()
+
+
 func _pump() -> void:
 	if queue.current_id != "":
 		return
 	var item := queue.take_next()
 	if item.is_empty():
 		_set_speaking(false)
+		voice_line_changed.emit()
 		return
-	_set_speaking(true)
 	_inflight = item.duplicate(true)
+	voice_line_changed.emit()
 	var spoken := str(item.get("text", ""))
 	backend.speak(str(item["id"]), spoken, str(item.get("voice_hint", "")), str(item.get("style", "")))
 
@@ -205,6 +243,8 @@ func _on_started(line_id: String) -> void:
 	if last_error != "":
 		last_error = ""
 		voice_error.emit("")
+	_set_speaking(true)
+	voice_line_changed.emit()
 	_note("started id=%s len=%d" % [line_id, int(_lengths.get(line_id, 0))])
 
 
@@ -213,6 +253,7 @@ func _on_finished(line_id: String) -> void:
 		_note("skipped id=%s reason=mismatch" % line_id)
 		return
 	_note("finished id=%s len=%d" % [line_id, int(_lengths.get(line_id, 0))])
+	voice_line_changed.emit()
 	_lengths.erase(line_id)
 	if queue.current_id == line_id:
 		queue.finish(line_id)
@@ -222,6 +263,7 @@ func _on_finished(line_id: String) -> void:
 
 func _on_error(line_id: String, kind: String) -> void:
 	_note("error id=%s len=%d reason=%s" % [line_id, int(_lengths.get(line_id, 0)), kind])
+	voice_line_changed.emit()
 	if kind == "stopped":
 		queue.allow_again(line_id)
 		if queue.current_id == line_id:

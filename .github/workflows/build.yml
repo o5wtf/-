@@ -125,7 +125,6 @@ jobs:
           mkdir -p android/build
           unzip -q "$source_zip" -d android/build
           printf '%s\n' "$template_version" > android/.build_version
-          bash tools/stage_system_speech.sh android/build
           godot --headless --path . --export-release "Android" "$PWD/builds/Detective.apk"
           test -s builds/Detective.apk
 
@@ -147,7 +146,6 @@ jobs:
             exit 1
           fi
           python3 tools/check_build.py builds/Detective.apk
-          python3 tools/check_system_speech_apk.py builds/Detective.apk
 
       - name: Артефакты
         uses: actions/upload-artifact@v4

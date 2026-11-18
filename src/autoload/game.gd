@@ -25,6 +25,7 @@ var speech_style: String = ""
 ## Текст для синтеза. На экране и в истории остаётся ответ без меток.
 var speech_line: String = ""
 var is_busy: bool = false
+var _turn_token: int = 0
 
 
 func open_case(path: String) -> CaseLoader.Result:
@@ -128,6 +129,9 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 		return
 	is_busy = true
 	busy_changed.emit(true)
+	_turn_token += 1
+	var token := _turn_token
+	Speaker.cancel_inflight()
 	var turn_config := LLMConfig.load_settings()
 	last_mentioned_evidence = []
 	last_requested_evidence = ""
@@ -211,13 +215,17 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 	var text_ms := Time.get_ticks_msec() - turn_started
 	agent_replied.emit(agent_id, reply, remark)
 	events.emit(turn_events)
+	_end_busy()
 	if turn_config.summary_after_reply and dialogue.needs_summary():
 		LlmTiming.note_request(tally, "summary", "summary")
 		dialogue = await _refresh_summary(agent_id, dialogue)
+		if token != _turn_token:
+			return
+	if token != _turn_token:
+		return
 	_sync_dialogues()
 	_autosave()
 	_publish_turn_timing(text_ms, turn_model, tally)
-	_end_busy()
 
 
 func _autosave() -> void:

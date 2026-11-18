@@ -21,7 +21,6 @@ var _mic: Button
 var _mic_level: ProgressBar
 var _mic_state: Label
 var _mic_hint: Label
-var _partial: Label
 var _stt_retry: Button
 var _mic_settings: Button
 var _talk: PushToTalk
@@ -93,10 +92,6 @@ func _ready() -> void:
 	dismiss.pressed.connect(_dismiss_hint)
 	_hint.add_child(dismiss)
 	var input_row := HBoxContainer.new()
-	_partial = UiWidgets.label("", "PartialLabel")
-	_partial.add_theme_color_override("font_color", NoirTheme.GOLD)
-	_partial.visible = false
-	column.add_child(_partial)
 	column.add_child(input_row)
 	_prompt = ChatInput.new()
 	_prompt.name = "PromptField"
@@ -152,7 +147,6 @@ func _ready() -> void:
 	_talk.stt = recognizer
 	add_child(_talk)
 	_talk.add_child(recognizer)
-	_talk.partial_changed.connect(_on_partial)
 	_mic_input = MicInput.new()
 	add_child(_mic_input)
 	_access = MicAccess.new()
@@ -169,6 +163,8 @@ func _ready() -> void:
 	_voice_retry.visible = not Speaker.retry_line.is_empty()
 	if not Speaker.voice_retry_available.is_connected(_show_voice_retry):
 		Speaker.voice_retry_available.connect(_show_voice_retry)
+	if not Speaker.voice_line_changed.is_connected(_render_feed):
+		Speaker.voice_line_changed.connect(_render_feed)
 	if not Game.agent_replied.is_connected(_on_replied):
 		Game.agent_replied.connect(_on_replied)
 		Game.events.connect(_on_events)
@@ -178,29 +174,12 @@ func _ready() -> void:
 		await _warm_link()
 
 
-func _system_listen() -> bool:
-	return _talk != null and _talk.stt is SystemStt
-
-
 func _make_stt() -> SttBackend:
-	var store := SettingsStore.load_current()
-	if store.stt_backend == "system":
-		var system := SystemStt.new()
-		system.prefer_offline = store.stt_offline
-		return system
 	return GeminiStt.new()
 
 
 func _warm_link() -> void:
 	await HttpSession.prewarm(self)
-
-
-func _on_partial(text: String) -> void:
-	if _partial == null:
-		return
-	var show := _talk != null and _talk._holding and text != ""
-	_partial.text = text if show else ""
-	_partial.visible = show
 
 
 func _show_voice_retry(show_button: bool) -> void:
@@ -220,18 +199,12 @@ func _process(_delta: float) -> void:
 	var active := is_visible_in_tree() and not get_tree().paused
 	_talk.screen_active = active
 	_talk.enabled = SettingsStore.load_current().mic_enabled
-	_talk.character_busy = Game.is_busy or Speaker.speaking
+	_talk.character_busy = Speaker.speaking
 	if not active:
 		if _talk._holding or _talk.locked:
 			_talk.cancel()
 		if _mic_input.api_name != "":
 			_mic_input.stop()
-		return
-	if _system_listen():
-		if _mic_input.api_name != "":
-			_mic_input.stop()
-		if _talk._holding:
-			_on_mic_level((_talk.stt as SystemStt).meter_unit())
 		return
 	if _talk.enabled and _access != null and _access.allowed():
 		MicAccess.start_if_allowed(_access, _mic_input)
@@ -337,6 +310,7 @@ func _send_text(text: String) -> void:
 func _mic_down() -> void:
 	if _talk == null or _mic.disabled:
 		return
+	Speaker.cancel_inflight()
 	var allowed := true
 	if _access != null:
 		allowed = await _access.ensure()
@@ -347,12 +321,6 @@ func _mic_down() -> void:
 		return
 	if _access != null and _access.just_granted and _mic_input != null:
 		_mic_input.needs_restart = true
-	if _system_listen():
-		if _mic_input != null:
-			_mic_input.stop()
-		if _talk.press():
-			pass
-		return
 	if _mic_input != null and _access != null:
 		MicAccess.start_if_allowed(_access, _mic_input)
 	elif _mic_input != null and _mic_input.api_name == "":
@@ -397,11 +365,11 @@ func _open_mic_settings() -> void:
 func _refresh_mic_button() -> void:
 	if _mic == null or _talk == null:
 		return
-	var blocked := Game.is_busy or Speaker.speaking or _talk.locked or not _talk.enabled
+	var blocked := Speaker.speaking or _talk.locked or not _talk.enabled
 	_mic.disabled = blocked and not _talk._holding
 	if _mic.disabled and _talk._holding:
 		_talk.cancel()
-	if Game.is_busy or Speaker.speaking:
+	if Speaker.speaking:
 		_mic_state.text = UiStrings.MIC_ANSWER
 	elif _talk.state_name == PushToTalk.STATE_LISTENING:
 		_mic_state.text = UiStrings.MIC_LISTEN
@@ -416,9 +384,6 @@ func _refresh_mic_button() -> void:
 func _on_mic_state(next: String) -> void:
 	if _mic_level != null:
 		_mic_level.visible = next == PushToTalk.STATE_LISTENING
-	if _partial != null and next != PushToTalk.STATE_LISTENING:
-		_partial.visible = false
-		_partial.text = ""
 	_refresh_mic_button()
 
 
@@ -625,7 +590,12 @@ func _render_feed() -> void:
 	for child in _feed_box.get_children():
 		child.queue_free()
 	var rows: Array = _feeds.get(agent_id, [])
-	for row in rows:
+	var last_agent := -1
+	for index in rows.size():
+		if str(rows[index].get("kind", "")) == "agent":
+			last_agent = index
+	for index in rows.size():
+		var row: Dictionary = rows[index]
 		var kind := str(row.get("kind", ""))
 		if kind == "player":
 			_feed_box.add_child(UiWidgets.label("Вы: %s" % str(row.get("text", ""))))
@@ -634,6 +604,10 @@ func _render_feed() -> void:
 			var name := agent.name if agent != null else ""
 			var shown := VocalTags.visible(str(row.get("text", "")))
 			_feed_box.add_child(UiWidgets.label("%s: %s" % [name, shown]))
+			if index == last_agent and Speaker.can_skip():
+				var skip := UiWidgets.button(UiStrings.VOICE_SKIP, "SkipSpeechButton")
+				skip.pressed.connect(func() -> void: Speaker.skip_current())
+				_feed_box.add_child(skip)
 			var remark := str(row.get("remark", ""))
 			if remark != "":
 				var note := UiWidgets.label("(%s)" % remark)

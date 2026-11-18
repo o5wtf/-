@@ -19,6 +19,9 @@ var _tts_model_label: Label
 var _tts_model: OptionButton
 var _tts_auto: CheckBox
 var _tts_note: Label
+var _chirp_key: TextEdit
+var _chirp_label: Label
+var _chirp_hint: Label
 var _voice_status: Label
 var _mic: CheckBox
 var _mic_mode: OptionButton
@@ -129,6 +132,18 @@ func _ready() -> void:
 	_tts_auto.custom_minimum_size = Vector2(0, 48)
 	_tts_auto.toggled.connect(_on_tts_auto_toggled)
 	scroll_box.add_child(_tts_auto)
+	_chirp_hint = UiWidgets.label(UiStrings.CHIRP_NO_KEY, "ChirpHint")
+	_chirp_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_chirp_hint.add_theme_color_override("font_color", NoirTheme.MUTED)
+	scroll_box.add_child(_chirp_hint)
+	_chirp_label = UiWidgets.label(UiStrings.CHIRP_KEY)
+	scroll_box.add_child(_chirp_label)
+	_chirp_key = TextEdit.new()
+	_chirp_key.name = "ChirpKeyField"
+	_chirp_key.custom_minimum_size = Vector2(0, 96)
+	_chirp_key.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	_chirp_key.placeholder_text = UiStrings.CHIRP_KEY_HINT
+	scroll_box.add_child(_chirp_key)
 	_tts_note = UiWidgets.label("", "VoiceModelNote")
 	_tts_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_tts_note.add_theme_color_override("font_color", NoirTheme.MUTED)
@@ -200,7 +215,10 @@ func _load_fields() -> void:
 	_engine.select(1 if store.voice_engine == "gemini" else 0)
 	_tts_model.select(_tts_model_index(store.tts_model))
 	_tts_auto.button_pressed = store.tts_auto
+	_chirp_key.placeholder_text = UiStrings.KEY_SAVED_PLACEHOLDER if store.chirp_key != "" else UiStrings.CHIRP_KEY_HINT
+	_chirp_key.text = ""
 	_refresh_tts_panel()
+	_show_chirp_key_state()
 	_loading = false
 	_spend.text = _spend_text()
 	_scale.value = store.text_scale
@@ -225,7 +243,7 @@ func _save() -> void:
 	if key == "":
 		key = previous.api_key
 	var provider := "mock" if _mock.button_pressed else "gemini"
-	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "push_to_talk", "gemini", false, _tts_model_value(), _tts_auto.button_pressed)
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "push_to_talk", "gemini", false, _tts_model_value(), _tts_auto.button_pressed, _chirp_key_value())
 	Speaker.apply_settings()
 	_key.text = ""
 	_key.secret = true
@@ -301,6 +319,11 @@ func _check_voice() -> void:
 	_voice_busy = true
 	_voice_status.text = UiStrings.CHECKING
 	var line: String = await Speaker.speak_test()
+	var chirp := SettingsStore.load_current().chirp_key
+	if chirp != "" and _engine_value() == "gemini":
+		var auth: Dictionary = await ChirpAuth.access_token(self)
+		var note := str(auth.get("message", "Ключ Chirp принят")) if not auth.get("ok", false) else "Ключ Chirp принят"
+		line = "%s\n%s" % [line, note]
 	_voice_status.text = line
 	_voice_busy = false
 
@@ -359,8 +382,9 @@ func _save_tts_choice() -> void:
 	if key == "":
 		key = previous.api_key
 	var provider := "mock" if _mock.button_pressed else "gemini"
-	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "push_to_talk", "gemini", false, _tts_model_value(), _tts_auto.button_pressed)
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "push_to_talk", "gemini", false, _tts_model_value(), _tts_auto.button_pressed, _chirp_key_value())
 	_refresh_tts_panel()
+	_show_chirp_key_state()
 	Speaker.apply_settings()
 
 
@@ -370,7 +394,35 @@ func _refresh_tts_panel() -> void:
 	_tts_model.visible = google
 	_tts_auto.visible = google
 	_tts_note.visible = google
+	_chirp_key.visible = google
+	_chirp_label.visible = google
+	_chirp_hint.visible = google and not TtsQuota.chirp_ready()
 	_tts_note.text = TtsQuota.status_line(TtsQuota.now_unix()) if google else ""
+	var chirp_index := TtsQuota.chain().find(ChirpVoices.MODEL_ID)
+	if chirp_index >= 0:
+		var blocked := not TtsQuota.chirp_ready()
+		_tts_model.set_item_disabled(chirp_index, blocked)
+		if blocked and _tts_model.selected == chirp_index:
+			_tts_model.select(0)
+
+
+func _chirp_key_value():
+	var typed := _chirp_key.text.strip_edges()
+	if typed == "":
+		return null
+	return typed
+
+
+func _show_chirp_key_state() -> void:
+	var parsed := ChirpAuth.parse(SettingsStore.load_current().chirp_key)
+	if SettingsStore.load_current().chirp_key == "":
+		_chirp_hint.text = UiStrings.CHIRP_NO_KEY
+		return
+	_chirp_hint.text = str(parsed.get("message", "Ключ Chirp принят")) if not parsed.get("ok", false) else "Ключ Chirp принят"
+	_chirp_hint.visible = _engine_value() == "gemini"
+	if parsed.get("ok", false):
+		_chirp_key.text = ""
+		_chirp_key.placeholder_text = UiStrings.KEY_SAVED_PLACEHOLDER
 
 
 func _tts_model_value() -> String:
@@ -436,13 +488,14 @@ func _play_last_recording() -> void:
 
 
 func _spend_text() -> String:
-	return "%s: сессия %s · всего %s\n%s: сессия %s · всего %s" % [
+	return "%s: сессия %s · всего %s\n%s: сессия %s · всего %s\nChirp: %d симв. в этом месяце · 1 млн бесплатно" % [
 		UiStrings.SPEND_LABEL,
 		SpendMeter.format_usd(SpendMeter.session_usd),
 		SpendMeter.format_usd(SpendMeter.total_usd()),
 		UiStrings.SPEND_STT,
 		SpendMeter.format_usd(SpendMeter.session_stt_usd),
 		SpendMeter.format_usd(SpendMeter.stt_total_usd()),
+		SpendMeter.chirp_chars_this_month(),
 	]
 
 

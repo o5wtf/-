@@ -96,7 +96,7 @@ static func _without_secrets(value: Variant) -> Variant:
 		var copy := {}
 		for key in value:
 			var name := str(key)
-			if name == "api_key" or name == "gemini_api_key":
+			if name == "api_key" or name == "gemini_api_key" or name == "chirp_key" or name == "private_key":
 				continue
 			copy[key] = _without_secrets(value[key])
 		return copy

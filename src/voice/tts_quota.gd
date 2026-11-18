@@ -6,6 +6,7 @@ extends RefCounted
 const MODELS: Array[Dictionary] = [
 	{"id": "gemini-3.8-flash-lite-tts", "label": "3.8 Flash Lite TTS"},
 	{"id": "gemini-3.8-flash-tts", "label": "3.8 Flash TTS"},
+	{"id": "chirp-3-hd", "label": "Chirp 3 HD"},
 ]
 const PROBE_INTERVAL_S := 3600
 
@@ -20,6 +21,14 @@ static func chain() -> PackedStringArray:
 	for item in MODELS:
 		ids.append(str(item.get("id", "")))
 	return ids
+
+
+static func is_chirp(model: String) -> bool:
+	return model == ChirpVoices.MODEL_ID
+
+
+static func chirp_ready() -> bool:
+	return ChirpAuth.ready()
 
 
 static func label_for(model: String) -> String:
@@ -103,6 +112,8 @@ static func probe_due(now_unix: int) -> bool:
 
 static func choose(now_unix: int) -> Dictionary:
 	var home := selected()
+	if is_chirp(home) and not chirp_ready():
+		return {"model": home, "reason": "no_key", "probe": false, "skip": true}
 	if not fallback_enabled() or not is_exhausted(home, now_unix):
 		return {"model": home, "reason": "primary", "probe": false}
 	if probe_due(now_unix):
@@ -120,9 +131,15 @@ static func next_open(model: String, now_unix: int) -> String:
 			if item == model:
 				passed = true
 			continue
-		if not is_exhausted(item, now_unix):
+		if not is_exhausted(item, now_unix) and _usable(item):
 			return item
 	return ""
+
+
+static func _usable(model: String) -> bool:
+	if is_chirp(model):
+		return chirp_ready()
+	return true
 
 
 static func status_line(now_unix: int) -> String:

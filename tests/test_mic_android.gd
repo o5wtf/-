@@ -141,7 +141,7 @@ func test_saved_android_backend_becomes_gemini() -> void:
 
 
 func test_settings_version_and_mic_defaults_stay() -> void:
-	assert_eq(LLMConfig.SETTINGS_VERSION, 9)
+	assert_eq(LLMConfig.SETTINGS_VERSION, 10)
 	var store := SettingsStore.new()
 	assert_false(store.mic_enabled)
 	assert_eq(store.mic_mode, "push_to_talk")

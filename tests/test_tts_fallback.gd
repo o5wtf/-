@@ -276,6 +276,8 @@ func _begin() -> void:
 	TtsQuota.now_override = 1_800_000_000
 	TtsQuota.fallback_override = true
 	TtsQuota.selected_override = TtsQuota.chain()[0]
+	ChirpAuth.key_override = ""
+	ChirpAuth.reset()
 	TtsQuota.reset()
 	TurnTiming.reset()
 
@@ -286,6 +288,8 @@ func _end() -> void:
 	TtsQuota.now_override = -1
 	TtsQuota.fallback_override = null
 	TtsQuota.selected_override = null
+	ChirpAuth.key_override = null
+	ChirpAuth.reset()
 	TurnTiming.reset()
 
 

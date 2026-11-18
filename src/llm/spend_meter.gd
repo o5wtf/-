@@ -10,6 +10,10 @@ static var store_path: String = "user://config.cfg"
 
 static var session_usd: float = 0.0
 static var session_stt_usd: float = 0.0
+static var now_override: int = -1
+
+const CHIRP_USD_PER_MILLION_CHARS := 30.0
+const CHIRP_FREE_CHARS := 1000000
 
 
 static func cost_usd(model: String, prompt_tokens: int, thought_tokens: int, output_tokens: int) -> float:
@@ -37,6 +41,47 @@ static func note_stt(model: String, prompt_tokens: int, output_tokens: int) -> v
 	session_stt_usd += cost
 	_add_total(cost)
 	_add_named("stt_usd", cost)
+
+
+static func chirp_cost_usd(chars: int) -> float:
+	return maxi(chars, 0) * CHIRP_USD_PER_MILLION_CHARS / 1000000.0
+
+
+static func note_chirp(chars: int) -> void:
+	var count := maxi(chars, 0)
+	if count == 0:
+		return
+	var cost := chirp_cost_usd(count)
+	session_usd += cost
+	_add_total(cost)
+	var file := _file()
+	var month := _month()
+	if str(file.get_value("spend", "chirp_month", "")) != month:
+		file.set_value("spend", "chirp_month", month)
+		file.set_value("spend", "chirp_chars", 0)
+	file.set_value("spend", "chirp_chars", int(file.get_value("spend", "chirp_chars", 0)) + count)
+	file.save(store_path)
+
+
+static func chirp_chars_this_month() -> int:
+	var file := ConfigFile.new()
+	if file.load(store_path) != OK:
+		return 0
+	if str(file.get_value("spend", "chirp_month", "")) != _month():
+		return 0
+	return int(file.get_value("spend", "chirp_chars", 0))
+
+
+static func _month() -> String:
+	var unix := now_override if now_override >= 0 else int(Time.get_unix_time_from_system())
+	var date := Time.get_date_dict_from_unix_time(unix)
+	return "%04d-%02d" % [int(date.get("year", 1970)), int(date.get("month", 1))]
+
+
+static func _file() -> ConfigFile:
+	var file := ConfigFile.new()
+	file.load(store_path)
+	return file
 
 
 static func stt_total_usd() -> float:

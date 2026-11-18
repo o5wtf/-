@@ -237,7 +237,7 @@ func _bind_backend() -> void:
 
 func _on_started(line_id: String) -> void:
 	TurnTiming.mark("playback_start")
-	if str(retry_line.get("id", "")) == line_id:
+	if not retry_line.is_empty():
 		retry_line = {}
 		voice_retry_available.emit(false)
 	if last_error != "":
@@ -310,8 +310,34 @@ func _release_seen() -> void:
 		queue.allow_again(str(item.get("id", "")))
 
 
+func dismiss_retry() -> void:
+	if retry_line.is_empty():
+		return
+	retry_line = {}
+	voice_retry_available.emit(false)
+
+
+func retry_visible_for(agent_id: String) -> bool:
+	if retry_line.is_empty() or agent_id == "":
+		return false
+	return str(retry_line.get("agent_id", "")) == agent_id
+
+
 func _remember_retry(line_id: String, text: String, voice_hint: String, style: String) -> void:
-	retry_line = {"id": line_id, "text": text, "voice_hint": voice_hint, "style": style}
+	retry_line = {
+		"id": line_id,
+		"text": text,
+		"voice_hint": voice_hint,
+		"style": style,
+		"agent_id": _agent_from_line(line_id),
+	}
+
+
+func _agent_from_line(line_id: String) -> String:
+	var parts := line_id.split(":")
+	if parts.size() >= 3:
+		return parts[1]
+	return ""
 
 
 func note_line(line: String) -> void:

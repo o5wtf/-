@@ -190,6 +190,90 @@ func test_stt_spend_is_a_separate_line() -> void:
 	SpendMeter.session_stt_usd = previous_stt
 
 
+func test_async_stt_success_releases_lock_and_sends() -> void:
+	var talk := _talk_delayed()
+	var sent: Array[String] = []
+	talk.submit = func(text: String) -> void:
+		sent.append(text)
+	assert_true(talk.press())
+	talk.push_pcm(VoiceAudio.tone(VoiceAudio.UPLOAD_RATE, 4000))
+	await talk.release(false)
+	assert_eq(sent, ["Где вы были?"])
+	assert_false(talk.locked)
+	assert_eq(talk.state_name, PushToTalk.STATE_IDLE)
+	talk.free()
+
+
+func test_async_stt_error_shows_retry_and_releases_lock() -> void:
+	var talk := _talk_delayed()
+	var fake := talk.stt as DelayedStt
+	fake.payload = {"ok": false, "text": "", "error": "bad_response", "usage": {}}
+	var shown: Array[bool] = []
+	talk.retry_visible.connect(func(show_button: bool) -> void: shown.append(show_button))
+	assert_true(talk.press())
+	talk.push_pcm(VoiceAudio.tone(VoiceAudio.UPLOAD_RATE, 4000))
+	await talk.release(false)
+	assert_false(talk.locked)
+	assert_eq(talk.state_name, PushToTalk.STATE_IDLE)
+	assert_eq(shown[shown.size() - 1], true)
+	talk.free()
+
+
+func test_async_stt_junk_releases_lock_without_sending() -> void:
+	var talk := _talk_delayed()
+	var fake := talk.stt as DelayedStt
+	fake.payload = {"ok": true, "text": "...", "error": "", "usage": {}}
+	var sent: Array[String] = []
+	talk.submit = func(text: String) -> void:
+		sent.append(text)
+	assert_true(talk.press())
+	talk.push_pcm(VoiceAudio.tone(VoiceAudio.UPLOAD_RATE, 4000))
+	await talk.release(false)
+	assert_eq(sent.size(), 0)
+	assert_false(talk.locked)
+	assert_eq(talk.state_name, PushToTalk.STATE_IDLE)
+	talk.free()
+
+
+func test_async_stt_screen_exit_discards_late_result() -> void:
+	var talk := _talk_delayed()
+	var sent: Array[String] = []
+	talk.submit = func(text: String) -> void:
+		sent.append(text)
+	(talk.stt as DelayedStt).began.connect(func() -> void:
+		talk.screen_active = false
+	, CONNECT_ONE_SHOT)
+	assert_true(talk.press())
+	talk.push_pcm(VoiceAudio.tone(VoiceAudio.UPLOAD_RATE, 4000))
+	await talk.release(false)
+	assert_eq(sent.size(), 0)
+	assert_false(talk.locked)
+	assert_eq(talk.state_name, PushToTalk.STATE_IDLE)
+	talk.free()
+
+
+func test_async_stt_retry_sends_after_delay() -> void:
+	var talk := _talk_delayed()
+	var fake := talk.stt as DelayedStt
+	fake.payload = {"ok": false, "text": "", "error": "offline", "usage": {}}
+	var sent: Array[String] = []
+	talk.submit = func(text: String) -> void:
+		sent.append(text)
+	assert_true(talk.press())
+	talk.push_pcm(VoiceAudio.tone(VoiceAudio.UPLOAD_RATE, 4000))
+	await talk.release(false)
+	assert_false(talk.locked)
+	var first := talk.last_wav.duplicate()
+	fake.payload = {"ok": true, "text": "Где вы были?", "error": "", "usage": {}}
+	await talk.retry()
+	assert_eq(fake.calls, 2)
+	assert_eq(fake.last_wav, first)
+	assert_eq(sent, ["Где вы были?"])
+	assert_false(talk.locked)
+	assert_eq(talk.state_name, PushToTalk.STATE_IDLE)
+	talk.free()
+
+
 func test_fixture_wav_becomes_a_character_turn() -> void:
 	assert_true(_boot(), "фикстура хода не открылась")
 	var screen := (load("res://ui/screens/interrogation.gd") as GDScript).new() as Control
@@ -222,6 +306,17 @@ func test_fixture_wav_becomes_a_character_turn() -> void:
 	if LLM.client == mock:
 		LLM.client = null
 	mock.free()
+
+
+func _talk_delayed() -> PushToTalk:
+	var talk := PushToTalk.new()
+	var fake := DelayedStt.new()
+	talk.stt = fake
+	talk.enabled = true
+	talk.screen_active = true
+	_attach(talk)
+	talk.add_child(fake)
+	return talk
 
 
 func _talk() -> PushToTalk:
@@ -277,6 +372,26 @@ func _heard(agent_id: String, fact_id: String, form: String) -> bool:
 		if str(row["agent_id"]) == agent_id and str(row["fact_id"]) == fact_id and str(row["form"]) == form:
 			return true
 	return false
+
+
+class DelayedStt:
+	extends SttBackend
+
+	signal began
+
+	var payload: Dictionary = {"ok": true, "text": "Где вы были?", "error": "", "usage": {}}
+	var calls: int = 0
+	var last_wav: PackedByteArray = PackedByteArray()
+	var frames: int = 2
+
+	func transcribe(wav: PackedByteArray) -> Dictionary:
+		calls += 1
+		last_wav = wav
+		began.emit()
+		var tree := Engine.get_main_loop() as SceneTree
+		for _index in frames:
+			await tree.process_frame
+		return payload
 
 
 class ScriptedStt:

@@ -112,10 +112,7 @@ func _post(body: Dictionary) -> Dictionary:
 		"x-goog-api-key": api_key,
 	}
 	var payload := JSON.stringify(body)
-	var pending: Variant = transport.call("request", url, headers, payload, TIMEOUT_S)
-	if pending is Dictionary:
-		return pending
-	return await pending
+	return await transport.call("request", url, headers, payload, TIMEOUT_S)
 
 
 func _log(status: int, body: String) -> void:

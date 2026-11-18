@@ -90,39 +90,42 @@ func _recognize(wav: PackedByteArray) -> void:
 	var token := _generation
 	locked = true
 	_set_state(STATE_RECOGNIZING)
-	var result: Dictionary = {"ok": false, "text": "", "error": "offline"}
+	var result := {"ok": false, "text": "", "error": "offline"}
 	if stt != null:
-		var pending: Variant = stt.transcribe(wav)
-		if pending is Dictionary:
-			result = pending
-		else:
-			result = await pending
-	if token != _generation:
-		locked = false
+		# Godot 4.7 обрывает вызывающего, если корутина наследника вызвана без await.
+		result = await stt.transcribe(wav)
+	if not _live(token):
 		return
 	if not result.get("ok", false):
-		locked = false
+		_finish_idle()
 		hint_changed.emit("Не удалось распознать.")
 		retry_visible.emit(true)
-		_set_state(STATE_IDLE)
 		return
 	var text := str(result.get("text", "")).strip_edges()
 	if SpeechJunk.is_junk(text):
-		locked = false
-		retry_visible.emit(false)
+		_finish_idle()
 		hint_changed.emit("Не расслышал, повторите")
-		_set_state(STATE_IDLE)
 		return
 	retry_visible.emit(false)
 	_set_state(STATE_ANSWERING)
 	if submit.is_valid():
-		var sent: Variant = submit.call(text)
-		if sent is not Dictionary and sent != null:
-			await sent
-	if token != _generation:
-		locked = false
+		await submit.call(text)
+	if not _live(token):
 		return
+	_finish_idle()
+
+
+func _live(token: int) -> bool:
+	if token == _generation and screen_active:
+		return true
+	if token == _generation:
+		_finish_idle()
+	return false
+
+
+func _finish_idle() -> void:
 	locked = false
+	retry_visible.emit(false)
 	_set_state(STATE_IDLE)
 
 

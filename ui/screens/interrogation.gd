@@ -186,7 +186,7 @@ func _process(_delta: float) -> void:
 	_talk.enabled = SettingsStore.load_current().mic_enabled
 	_talk.character_busy = Game.is_busy or Speaker.speaking
 	if not active:
-		if _talk._holding:
+		if _talk._holding or _talk.locked:
 			_talk.cancel()
 		if _mic_input.api_name != "":
 			_mic_input.stop()

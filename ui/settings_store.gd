@@ -16,6 +16,10 @@ var voice_enabled: bool = false
 var voice_engine: String = "system"
 ## Интонация синтеза. Включена, пока игрок её не выключит.
 var voice_intonation: bool = true
+## Голосовой ввод. Выключен, пока игрок сам его не включит.
+var mic_enabled: bool = false
+## push_to_talk | hands_free. Сейчас работает только удержание.
+var mic_mode: String = "push_to_talk"
 
 
 static func load_current() -> SettingsStore:
@@ -35,6 +39,10 @@ static func load_current() -> SettingsStore:
 		store.voice_engine = canonical_engine(str(file.get_value("voice", "engine")))
 	if file.load(PATH) == OK and file.has_section_key("voice", "intonation"):
 		store.voice_intonation = bool(file.get_value("voice", "intonation"))
+	if file.load(PATH) == OK and file.has_section_key("mic", "enabled"):
+		store.mic_enabled = bool(file.get_value("mic", "enabled"))
+	if file.load(PATH) == OK and file.has_section_key("mic", "mode"):
+		store.mic_mode = "hands_free" if str(file.get_value("mic", "mode")) == "hands_free" else "push_to_talk"
 	return store
 
 
@@ -42,7 +50,7 @@ static func canonical_engine(engine: String) -> String:
 	return "gemini" if engine.strip_edges() == "gemini" else "system"
 
 
-static func save_values(provider: String, api_key: String, dialogue_model: String, text_scale: float, timing_debug: Variant = null, voice_enabled: Variant = null, voice_engine: Variant = null, voice_intonation: Variant = null) -> void:
+static func save_values(provider: String, api_key: String, dialogue_model: String, text_scale: float, timing_debug: Variant = null, voice_enabled: Variant = null, voice_engine: Variant = null, voice_intonation: Variant = null, mic_enabled: Variant = null, mic_mode: Variant = null) -> void:
 	var file := ConfigFile.new()
 	file.load(PATH)
 	file.set_value("llm", "provider", provider)
@@ -60,6 +68,10 @@ static func save_values(provider: String, api_key: String, dialogue_model: Strin
 		file.set_value("voice", "engine", canonical_engine(str(voice_engine)))
 	if voice_intonation != null:
 		file.set_value("voice", "intonation", bool(voice_intonation))
+	if mic_enabled != null:
+		file.set_value("mic", "enabled", bool(mic_enabled))
+	if mic_mode != null:
+		file.set_value("mic", "mode", "hands_free" if str(mic_mode) == "hands_free" else "push_to_talk")
 	file.save(PATH)
 
 

@@ -17,6 +17,15 @@ var _thinking: Label
 var _timing: Label
 var _voice_error: Label
 var _voice_retry: Button
+var _mic: Button
+var _mic_level: ProgressBar
+var _mic_state: Label
+var _mic_hint: Label
+var _stt_retry: Button
+var _mic_settings: Button
+var _talk: PushToTalk
+var _mic_input: MicInput
+var _limit_busy: bool = false
 var _error: Label
 var _retry: Button
 var _busy: bool = false
@@ -91,6 +100,17 @@ func _ready() -> void:
 	var send := UiWidgets.button(UiStrings.SEND, "SendButton")
 	send.pressed.connect(_send)
 	input_row.add_child(send)
+	_mic = UiWidgets.button("🎤", "MicButton")
+	_mic.button_down.connect(_mic_down)
+	_mic.button_up.connect(_mic_up)
+	input_row.add_child(_mic)
+	_mic_level = ProgressBar.new()
+	_mic_level.name = "MicLevel"
+	_mic_level.min_value = 0.0
+	_mic_level.max_value = 1.0
+	_mic_level.custom_minimum_size = Vector2(72, 16)
+	_mic_level.visible = false
+	input_row.add_child(_mic_level)
 	var tools := HBoxContainer.new()
 	column.add_child(tools)
 	var evidence := UiWidgets.button(UiStrings.EVIDENCE, "EvidenceButton")
@@ -105,6 +125,34 @@ func _ready() -> void:
 	var stop_speech := UiWidgets.button(UiStrings.STOP_SPEECH, "StopSpeechButton")
 	stop_speech.pressed.connect(func() -> void: Speaker.stop_and_clear())
 	tools.add_child(stop_speech)
+	_mic_state = UiWidgets.label("", "MicStateLabel")
+	_mic_state.add_theme_color_override("font_color", NoirTheme.GOLD)
+	column.add_child(_mic_state)
+	_mic_hint = UiWidgets.label("", "MicHintLabel")
+	_mic_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_mic_hint.visible = false
+	column.add_child(_mic_hint)
+	_mic_settings = UiWidgets.button(UiStrings.MIC_SETTINGS, "MicSettingsButton")
+	_mic_settings.visible = false
+	_mic_settings.pressed.connect(_open_mic_settings)
+	column.add_child(_mic_settings)
+	_stt_retry = UiWidgets.button(UiStrings.MIC_RETRY, "SttRetryButton")
+	_stt_retry.visible = false
+	_stt_retry.pressed.connect(_retry_stt)
+	column.add_child(_stt_retry)
+	_talk = PushToTalk.new()
+	_talk.name = "PushToTalk"
+	var recognizer := GeminiStt.new()
+	_talk.stt = recognizer
+	add_child(_talk)
+	_talk.add_child(recognizer)
+	_mic_input = MicInput.new()
+	add_child(_mic_input)
+	_talk.submit = _send_text
+	_talk.state_changed.connect(_on_mic_state)
+	_talk.hint_changed.connect(_on_mic_hint)
+	_talk.level_changed.connect(_on_mic_level)
+	_talk.retry_visible.connect(func(show_button: bool) -> void: _stt_retry.visible = show_button)
 	if Speaker.last_error != "":
 		_show_voice_error(Speaker.last_error)
 	if not Speaker.voice_error.is_connected(_show_voice_error):
@@ -129,9 +177,45 @@ func _show_voice_error(kind: String) -> void:
 	_voice_error.visible = text != ""
 
 
+func _process(_delta: float) -> void:
+	_refresh_mic_button()
+	if _talk == null or _mic_input == null:
+		return
+	var active := is_visible_in_tree() and not get_tree().paused
+	_talk.screen_active = active
+	_talk.enabled = SettingsStore.load_current().mic_enabled
+	_talk.character_busy = Game.is_busy or Speaker.speaking
+	if not active:
+		if _talk._holding or _talk.locked:
+			_talk.cancel()
+		if _mic_input.api_name != "":
+			_mic_input.stop()
+		return
+	if _talk.enabled and _mic_input.api_name == "":
+		_mic_input.warm()
+		if _mic_input.api_name == "" and OS.get_name() == "Windows":
+			_on_mic_hint(UiStrings.MIC_WINDOWS)
+	if _mic_input.api_name == "":
+		return
+	var kind := _talk.push_pcm(_mic_input.read_pcm())
+	if kind == "limit" and not _limit_busy:
+		_limit_busy = true
+		await _talk.release(true)
+		_limit_busy = false
+
+
 func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		if _talk != null:
+			_talk.cancel()
+		if _mic_input != null:
+			_mic_input.stop()
 	if what == NOTIFICATION_VISIBILITY_CHANGED and is_inside_tree() and not is_visible_in_tree():
 		Speaker.stop_and_clear(false)
+		if _talk != null:
+			_talk.cancel()
+		if _mic_input != null:
+			_mic_input.stop()
 
 
 func open_agent(next_id: String) -> void:
@@ -184,17 +268,115 @@ func _render_header() -> void:
 
 
 func _send() -> void:
-	if _busy or agent_id == "":
+	if _prompt == null:
 		return
 	var text := _prompt.text.strip_edges()
-	if text == "":
+	if text == "" or _busy or (_talk != null and _talk.locked):
 		return
 	_prompt.text = ""
+	await _send_text(text)
+
+
+func _send_text(text: String) -> void:
+	if _busy or agent_id == "":
+		return
+	var spoken := text.strip_edges()
+	if spoken == "":
+		return
 	_hide_hint()
 	_clear_error()
-	_last = {"kind": "ask", "text": text}
-	_push({"kind": "player", "text": text})
-	await Game.ask(agent_id, text)
+	_last = {"kind": "ask", "text": spoken}
+	_push({"kind": "player", "text": spoken})
+	await Game.ask(agent_id, spoken)
+
+
+func _mic_down() -> void:
+	if _talk == null or _mic.disabled:
+		return
+	if OS.get_name() == "Android" and not _mic_permission():
+		_on_mic_hint(UiStrings.MIC_DENIED)
+		if _mic_settings != null:
+			_mic_settings.visible = true
+		return
+	if _mic_input != null and _mic_input.api_name == "":
+		_mic_input.warm()
+	if _mic_input != null and _mic_input.api_name == "" and OS.get_name() == "Windows":
+		_on_mic_hint(UiStrings.MIC_WINDOWS)
+		return
+	_talk.press()
+
+
+func _mic_up() -> void:
+	if _talk == null or not _talk._holding:
+		return
+	await _talk.release(false)
+
+
+func _retry_stt() -> void:
+	if _talk != null:
+		await _talk.retry()
+
+
+func _open_mic_settings() -> void:
+	var package_name := "com.o5wtf.detective"
+	if OS.get_name() == "Android":
+		OS.shell_open("intent:#Intent;action=android.settings.APPLICATION_DETAILS_SETTINGS;data=package:%s;end" % package_name)
+	elif OS.get_name() == "Windows":
+		OS.shell_open("ms-settings:privacy-microphone")
+	_mic_permission()
+
+
+func _mic_permission() -> bool:
+	var granted := OS.get_granted_permissions()
+	if granted.has("android.permission.RECORD_AUDIO"):
+		return true
+	return OS.request_permission("android.permission.RECORD_AUDIO")
+
+
+func _refresh_mic_button() -> void:
+	if _mic == null or _talk == null:
+		return
+	var blocked := Game.is_busy or Speaker.speaking or _talk.locked or not _talk.enabled
+	_mic.disabled = blocked and not _talk._holding
+	if _mic.disabled and _talk._holding:
+		_talk.cancel()
+	if Game.is_busy or Speaker.speaking:
+		_mic_state.text = UiStrings.MIC_ANSWER
+	elif _talk.state_name == PushToTalk.STATE_LISTENING:
+		_mic_state.text = UiStrings.MIC_LISTEN
+	elif _talk.state_name == PushToTalk.STATE_RECOGNIZING:
+		_mic_state.text = UiStrings.MIC_RECOGNIZE
+	elif _talk.state_name == PushToTalk.STATE_ANSWERING:
+		_mic_state.text = UiStrings.MIC_ANSWER
+	else:
+		_mic_state.text = ""
+
+
+func _on_mic_state(next: String) -> void:
+	if _mic_level != null:
+		_mic_level.visible = next == PushToTalk.STATE_LISTENING
+	_refresh_mic_button()
+
+
+func _on_mic_hint(text: String) -> void:
+	if _mic_hint == null:
+		return
+	var shown := text
+	if shown == "Тишина в записи." and _mic_failed():
+		shown = UiStrings.MIC_WINDOWS if OS.get_name() == "Windows" else UiStrings.MIC_FAILED
+	_mic_hint.text = shown
+	_mic_hint.visible = shown != ""
+
+
+func _mic_failed() -> bool:
+	if OS.get_name() == "Windows":
+		return true
+	return _mic_input != null and _mic_input.last_error != ""
+
+
+func _on_mic_level(unit: float) -> void:
+	if _mic_level != null:
+		_mic_level.value = unit
 
 
 func _confirm_from_board(evidence_id: String) -> void:

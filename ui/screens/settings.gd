@@ -16,6 +16,8 @@ var _voice: CheckBox
 var _intonation: CheckBox
 var _engine: OptionButton
 var _voice_status: Label
+var _mic: CheckBox
+var _mic_mode: OptionButton
 var _voice_busy: bool = false
 var _status: Label
 var _show: Button
@@ -111,6 +113,23 @@ func _ready() -> void:
 	var voice_check := UiWidgets.button(UiStrings.VOICE_CHECK, "VoiceCheckButton")
 	voice_check.pressed.connect(_check_voice)
 	scroll_box.add_child(voice_check)
+	scroll_box.add_child(UiWidgets.label(UiStrings.MIC_SECTION))
+	_mic = CheckBox.new()
+	_mic.name = "MicEnabled"
+	_mic.text = UiStrings.MIC_ENABLED
+	_mic.custom_minimum_size = Vector2(0, 48)
+	scroll_box.add_child(_mic)
+	scroll_box.add_child(UiWidgets.label(UiStrings.MIC_MODE))
+	_mic_mode = OptionButton.new()
+	_mic_mode.name = "MicMode"
+	_mic_mode.custom_minimum_size = Vector2(0, 48)
+	_mic_mode.add_item(UiStrings.MIC_PUSH)
+	_mic_mode.add_item(UiStrings.MIC_HANDS_FREE)
+	_mic_mode.set_item_disabled(1, true)
+	scroll_box.add_child(_mic_mode)
+	var play_last := UiWidgets.button(UiStrings.MIC_PLAY_LAST, "PlayLastMicButton")
+	play_last.pressed.connect(_play_last_recording)
+	scroll_box.add_child(play_last)
 	_voice_status = UiWidgets.label("", "VoiceStatusLabel")
 	_voice_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_voice_status.add_theme_color_override("font_color", NoirTheme.MUTED)
@@ -141,6 +160,8 @@ func _load_fields() -> void:
 	_model.select(_model_index(store.dialogue_model))
 	_voice.button_pressed = store.voice_enabled
 	_intonation.button_pressed = store.voice_intonation
+	_mic.button_pressed = store.mic_enabled
+	_mic_mode.select(0)
 	_engine.select(1 if store.voice_engine == "gemini" else 0)
 	_loading = false
 	_spend.text = _spend_text()
@@ -166,7 +187,7 @@ func _save() -> void:
 	if key == "":
 		key = previous.api_key
 	var provider := "mock" if _mock.button_pressed else "gemini"
-	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed)
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "push_to_talk")
 	Speaker.apply_settings()
 	_key.text = ""
 	_key.secret = true
@@ -304,11 +325,34 @@ func _on_model_picked(_index: int) -> void:
 	_spend.text = _spend_text()
 
 
+func _play_last_recording() -> void:
+	if not FileAccess.file_exists("user://mic-last.wav"):
+		_status.text = UiStrings.MIC_NO_CLIP
+		return
+	var bytes := FileAccess.get_file_as_bytes("user://mic-last.wav")
+	if bytes.size() <= 44:
+		_status.text = UiStrings.MIC_NO_CLIP
+		return
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = VoiceAudio.UPLOAD_RATE
+	stream.stereo = false
+	stream.data = bytes.slice(44)
+	var player := AudioStreamPlayer.new()
+	player.stream = stream
+	add_child(player)
+	player.finished.connect(player.queue_free)
+	player.play()
+
+
 func _spend_text() -> String:
-	return "%s: сессия %s · всего %s" % [
+	return "%s: сессия %s · всего %s\n%s: сессия %s · всего %s" % [
 		UiStrings.SPEND_LABEL,
 		SpendMeter.format_usd(SpendMeter.session_usd),
 		SpendMeter.format_usd(SpendMeter.total_usd()),
+		UiStrings.SPEND_STT,
+		SpendMeter.format_usd(SpendMeter.session_stt_usd),
+		SpendMeter.format_usd(SpendMeter.stt_total_usd()),
 	]
 
 

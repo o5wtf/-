@@ -39,6 +39,14 @@ static func note_reused(value: bool) -> void:
 		turns.back()["reused"] = false
 
 
+static func note_tts(model: String, reason: String) -> void:
+	if turns.is_empty():
+		return
+	turns.back()["tts_model"] = model
+	turns.back()["tts_reason"] = reason
+	publish()
+
+
 static func lines() -> PackedStringArray:
 	return lines_log.duplicate()
 
@@ -75,6 +83,9 @@ static func format_row(row: Dictionary) -> String:
 			parts.append("%s=%d" % [key, int(marks[key]) - origin])
 	if marks.has("first_audio") and origin > 0:
 		parts.append("total=%d" % (int(marks["first_audio"]) - origin))
+	if str(row.get("tts_model", "")) != "":
+		parts.append("tts_model=%s" % str(row.get("tts_model", "")))
+		parts.append("tts_reason=%s" % str(row.get("tts_reason", "")))
 	return " ".join(parts)
 
 

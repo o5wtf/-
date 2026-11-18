@@ -14,6 +14,10 @@ var timing_debug: bool = true
 var voice_enabled: bool = false
 ## system | gemini. По умолчанию системный голос, без подмены при сбое Gemini.
 var voice_engine: String = "system"
+## Модель Google TTS. Цепочка идёт вниз от выбранной.
+var tts_model: String = "gemini-3.8-flash-lite-tts"
+## При суточной квоте переходить к следующей модели вниз по списку.
+var tts_auto: bool = true
 ## Интонация синтеза. Включена, пока игрок её не выключит.
 var voice_intonation: bool = true
 ## Голосовой ввод. Выключен, пока игрок сам его не включит.
@@ -39,6 +43,10 @@ static func load_current() -> SettingsStore:
 		store.voice_enabled = bool(file.get_value("voice", "enabled"))
 	if file.load(PATH) == OK and file.has_section_key("voice", "engine"):
 		store.voice_engine = canonical_engine(str(file.get_value("voice", "engine")))
+	if file.load(PATH) == OK and file.has_section_key("voice", "tts_model"):
+		store.tts_model = str(file.get_value("voice", "tts_model"))
+	if file.load(PATH) == OK and file.has_section_key("voice", "tts_auto"):
+		store.tts_auto = bool(file.get_value("voice", "tts_auto"))
 	if file.load(PATH) == OK and file.has_section_key("voice", "intonation"):
 		store.voice_intonation = bool(file.get_value("voice", "intonation"))
 	if file.load(PATH) == OK and file.has_section_key("mic", "enabled"):
@@ -56,7 +64,7 @@ static func canonical_engine(engine: String) -> String:
 	return "gemini" if engine.strip_edges() == "gemini" else "system"
 
 
-static func save_values(provider: String, api_key: String, dialogue_model: String, text_scale: float, timing_debug: Variant = null, voice_enabled: Variant = null, voice_engine: Variant = null, voice_intonation: Variant = null, mic_enabled: Variant = null, mic_mode: Variant = null, stt_backend: Variant = null, stt_offline: Variant = null) -> void:
+static func save_values(provider: String, api_key: String, dialogue_model: String, text_scale: float, timing_debug: Variant = null, voice_enabled: Variant = null, voice_engine: Variant = null, voice_intonation: Variant = null, mic_enabled: Variant = null, mic_mode: Variant = null, stt_backend: Variant = null, stt_offline: Variant = null, tts_model: Variant = null, tts_auto: Variant = null) -> void:
 	var file := ConfigFile.new()
 	file.load(PATH)
 	file.set_value("llm", "provider", provider)
@@ -72,6 +80,10 @@ static func save_values(provider: String, api_key: String, dialogue_model: Strin
 		file.set_value("voice", "enabled", bool(voice_enabled))
 	if voice_engine != null:
 		file.set_value("voice", "engine", canonical_engine(str(voice_engine)))
+	if tts_model != null:
+		file.set_value("voice", "tts_model", str(tts_model))
+	if tts_auto != null:
+		file.set_value("voice", "tts_auto", bool(tts_auto))
 	if voice_intonation != null:
 		file.set_value("voice", "intonation", bool(voice_intonation))
 	if mic_enabled != null:

@@ -21,11 +21,6 @@ var _inflight: Dictionary = {}
 var _prefetch_jobs: Array = []
 var _prefetch_busy: bool = false
 var _prefetch_token: int = 0
-var _instant: bool = false
-var _clock_s: float = 0.0
-var _armed: bool = false
-var _armed_at: float = 0.0
-var _watch_limit_s: float = 0.0
 var voice_log: PackedStringArray = PackedStringArray()
 
 
@@ -148,7 +143,6 @@ func stop_and_clear(cancel_prefetch: bool = true) -> void:
 	_lengths.clear()
 	retry_line = {}
 	_inflight = {}
-	_armed = false
 	voice_retry_available.emit(false)
 	if backend != null:
 		backend.stop()
@@ -177,10 +171,6 @@ func _on_replied(agent_id: String, text: String, _remark: String) -> void:
 	speak_reply(agent_id, spoken)
 
 
-func _process(_delta: float) -> void:
-	_check_watchdog()
-
-
 func _pump() -> void:
 	if queue.current_id != "":
 		return
@@ -191,9 +181,6 @@ func _pump() -> void:
 	_set_speaking(true)
 	_inflight = item.duplicate(true)
 	var spoken := str(item.get("text", ""))
-	_armed = true
-	_armed_at = _now()
-	_watch_limit_s = _limit_for(spoken.length(), 0)
 	backend.speak(str(item["id"]), spoken, str(item.get("voice_hint", "")), str(item.get("style", "")))
 
 
@@ -226,7 +213,6 @@ func _on_finished(line_id: String) -> void:
 	_lengths.erase(line_id)
 	if queue.current_id == line_id:
 		queue.finish(line_id)
-	_armed = false
 	_pump()
 	_kick_prefetch()
 
@@ -238,7 +224,6 @@ func _on_error(line_id: String, kind: String) -> void:
 		if queue.current_id == line_id:
 			queue.finish(line_id)
 			_lengths.erase(line_id)
-			_armed = false
 			_pump()
 			_kick_prefetch()
 		return
@@ -255,7 +240,6 @@ func _on_error(line_id: String, kind: String) -> void:
 		queue.allow_again(line_id)
 		_lengths.erase(line_id)
 		_inflight = {}
-		_armed = false
 	voice_retry_available.emit(true)
 	_pump()
 	_kick_prefetch()
@@ -272,35 +256,6 @@ func _style_for(_agent_id: String) -> String:
 	if not SettingsStore.load_current().voice_intonation:
 		return ""
 	return Game.speech_style.strip_edges()
-
-
-func _check_watchdog() -> void:
-	if queue.current_id == "" or not _armed:
-		return
-	if _now() - _armed_at <= _watch_limit_s:
-		return
-	var line_id := queue.current_id
-	_note("watchdog id=%s len=%d" % [line_id, int(_lengths.get(line_id, 0))])
-	_remember_retry(line_id, str(_inflight.get("text", "")), str(_inflight.get("voice_hint", "")), str(_inflight.get("style", "")))
-	queue.allow_again(line_id)
-	queue.finish(line_id)
-	_lengths.erase(line_id)
-	_inflight = {}
-	_armed = false
-	voice_error.emit("watchdog")
-	voice_retry_available.emit(true)
-	if backend != null:
-		backend.stop()
-	_pump()
-
-
-func _limit_for(chars: int, pcm_bytes: int) -> float:
-	var text_s := maxf(float(maxi(chars, 1)) / 12.0, 0.8)
-	var pcm_s := 0.0
-	if pcm_bytes > 0:
-		pcm_s = float(pcm_bytes) / 2.0 / GeminiTtsBackend.SAMPLE_RATE
-	var body := maxf(text_s, pcm_s)
-	return body + maxf(4.0, body * 0.5)
 
 
 func _release_seen() -> void:
@@ -327,12 +282,6 @@ func _preview(text: String) -> String:
 	if flat.length() > 16:
 		return flat.substr(0, 16)
 	return flat
-
-
-func _now() -> float:
-	if _instant:
-		return _clock_s
-	return Time.get_ticks_msec() / 1000.0
 
 
 func _on_case_opened() -> void:

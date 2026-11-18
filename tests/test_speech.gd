@@ -666,28 +666,34 @@ func test_gemini_stop_clears_the_unplayed_queue() -> void:
 	backend.free()
 
 
-func test_unfinished_speak_does_not_block_the_next_line() -> void:
+func test_short_lines_finish_under_the_rate_limit() -> void:
+	var limiter := VoiceRateLimiter.new()
+	for _index in VoiceRateLimiter.LIMIT:
+		limiter.mark(0.0)
 	var speaker: Node = load("res://src/voice/speaker.gd").new()
 	speaker.set("listen_to_game", false)
-	speaker.set("_instant", true)
-	var stuck := SilentBackend.new()
-	speaker.set("backend", stuck)
+	var paced := PacedBackend.new()
+	paced.limiter = limiter
+	speaker.set("backend", paced)
 	var root := (Engine.get_main_loop() as SceneTree).root
 	root.add_child(speaker)
 	speaker.set("enabled", true)
-	speaker.call("speak_reply", "a", "Первая реплика.")
-	assert_eq(stuck.calls.size(), 1)
+	var retries: Array[bool] = []
+	speaker.connect("voice_retry_available", func(show_button: bool) -> void: retries.append(show_button))
 	var queue: SpeechQueue = speaker.get("queue")
-	assert_eq(queue.current_id, str(speaker.call("line_id_for", "a")))
-	assert_true(float(speaker.call("_limit_for", 240, 0)) > float(speaker.call("_limit_for", 16, 0)) + 10.0)
-	speaker.set("_clock_s", float(speaker.get("_watch_limit_s")) + 0.2)
-	speaker.call("_check_watchdog")
+	assert_true(queue.enqueue("s1", "Раз."))
+	assert_true(queue.enqueue("s2", "Два."))
+	assert_true(queue.enqueue("s3", "Три."))
+	speaker.call("_pump")
+	assert_eq(paced.started_ids, ["s1", "s2", "s3"])
+	assert_eq(paced.finished_ids, ["s1", "s2", "s3"])
+	assert_true(paced.waited)
 	assert_eq(queue.current_id, "")
-	var log: PackedStringArray = speaker.get("voice_log")
-	assert_true("\n".join(log).contains("watchdog"))
-	speaker.call("speak_reply", "b", "Вторая реплика.")
-	assert_eq(stuck.calls.size(), 3)
-	assert_eq(stuck.calls[2], str(speaker.call("line_id_for", "b")))
+	assert_true(retries.is_empty())
+	var log := "\n".join(speaker.get("voice_log"))
+	assert_true(log.contains("started"))
+	assert_true(log.contains("finished"))
+	assert_false(log.contains("watchdog"))
 	speaker.free()
 
 
@@ -992,6 +998,30 @@ class FailingGemini:
 	func speak(line_id: String, _text: String, _voice_hint: String = "", _style: String = "") -> void:
 		calls += 1
 		speech_error.emit(line_id, "timeout")
+
+	func stop() -> void:
+		pass
+
+
+class PacedBackend:
+	extends SpeechBackend
+
+	var limiter: VoiceRateLimiter
+	var clock: float = 0.0
+	var waited: bool = false
+	var started_ids: Array[String] = []
+	var finished_ids: Array[String] = []
+
+	func speak(line_id: String, _text: String, _voice_hint: String = "", _style: String = "") -> void:
+		var wait := limiter.delay_for(clock)
+		if wait > 0.0:
+			waited = true
+			clock += wait
+		limiter.mark(clock)
+		started_ids.append(line_id)
+		started.emit(line_id)
+		finished_ids.append(line_id)
+		finished.emit(line_id)
 
 	func stop() -> void:
 		pass

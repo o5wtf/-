@@ -285,6 +285,7 @@ func test_gemini_plays_first_chunk_retries_and_counts_spend() -> void:
 
 
 func test_daily_quota_finishes_without_waiting() -> void:
+	TtsQuota.fallback_override = false
 	assert_eq(GeminiTtsBackend.limit_kind(429, "{\"quotaMetric\":\"generate_requests_per_model_per_day\"}"), "quota_daily")
 	assert_eq(GeminiTtsBackend.limit_kind(429, "{\"error\":{\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RetryInfo\",\"retryDelay\":\"86399s\"}]}}"), "quota_daily")
 	assert_eq(GeminiTtsBackend.limit_kind(429, "{\"retryDelay\":\"2s\"}"), "rate_limited")
@@ -305,6 +306,7 @@ func test_daily_quota_finishes_without_waiting() -> void:
 	assert_eq(errors.size(), 1)
 	assert_true(errors[0].contains("quota_daily"))
 	assert_true(backend._clock_s - started < 1.0)
+	TtsQuota.fallback_override = null
 	backend.free()
 
 
@@ -336,6 +338,7 @@ func test_short_rate_limit_pause_is_capped() -> void:
 
 
 func test_daily_quota_log_names_the_exit() -> void:
+	TtsQuota.fallback_override = false
 	var http := _StepHttp.new()
 	http.code = 429
 	var body := "{\"error\":{\"code\":429,\"details\":[{\"quotaMetric\":\"generate_requests_per_model_per_day\"},{\"@type\":\"type.googleapis.com/google.rpc.RetryInfo\",\"retryDelay\":\"86399s\"}]}}"
@@ -358,6 +361,7 @@ func test_daily_quota_log_names_the_exit() -> void:
 	var last := str(lines[lines.size() - 1])
 	assert_true(last.contains("exit=quota_daily"))
 	assert_false(last.contains("exit=eof"))
+	TtsQuota.fallback_override = null
 	speaker.free()
 
 

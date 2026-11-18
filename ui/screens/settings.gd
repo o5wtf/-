@@ -15,6 +15,10 @@ var _timing: CheckBox
 var _voice: CheckBox
 var _intonation: CheckBox
 var _engine: OptionButton
+var _tts_model_label: Label
+var _tts_model: OptionButton
+var _tts_auto: CheckBox
+var _tts_note: Label
 var _voice_status: Label
 var _mic: CheckBox
 var _mic_mode: OptionButton
@@ -110,6 +114,25 @@ func _ready() -> void:
 	_engine.add_item(UiStrings.VOICE_GEMINI)
 	_engine.item_selected.connect(_on_engine_picked)
 	scroll_box.add_child(_engine)
+	_tts_model_label = UiWidgets.label(UiStrings.VOICE_MODEL)
+	scroll_box.add_child(_tts_model_label)
+	_tts_model = OptionButton.new()
+	_tts_model.name = "VoiceModel"
+	_tts_model.custom_minimum_size = Vector2(0, 48)
+	for model_id in TtsQuota.chain():
+		_tts_model.add_item(TtsQuota.label_for(str(model_id)))
+	_tts_model.item_selected.connect(_on_tts_model_picked)
+	scroll_box.add_child(_tts_model)
+	_tts_auto = CheckBox.new()
+	_tts_auto.name = "VoiceAuto"
+	_tts_auto.text = UiStrings.VOICE_AUTO
+	_tts_auto.custom_minimum_size = Vector2(0, 48)
+	_tts_auto.toggled.connect(_on_tts_auto_toggled)
+	scroll_box.add_child(_tts_auto)
+	_tts_note = UiWidgets.label("", "VoiceModelNote")
+	_tts_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tts_note.add_theme_color_override("font_color", NoirTheme.MUTED)
+	scroll_box.add_child(_tts_note)
 	var voice_check := UiWidgets.button(UiStrings.VOICE_CHECK, "VoiceCheckButton")
 	voice_check.pressed.connect(_check_voice)
 	scroll_box.add_child(voice_check)
@@ -175,6 +198,9 @@ func _load_fields() -> void:
 	_mic.button_pressed = store.mic_enabled
 	_mic_mode.select(0)
 	_engine.select(1 if store.voice_engine == "gemini" else 0)
+	_tts_model.select(_tts_model_index(store.tts_model))
+	_tts_auto.button_pressed = store.tts_auto
+	_refresh_tts_panel()
 	_loading = false
 	_spend.text = _spend_text()
 	_scale.value = store.text_scale
@@ -199,7 +225,7 @@ func _save() -> void:
 	if key == "":
 		key = previous.api_key
 	var provider := "mock" if _mock.button_pressed else "gemini"
-	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "push_to_talk", "gemini", false)
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "push_to_talk", "gemini", false, _tts_model_value(), _tts_auto.button_pressed)
 	Speaker.apply_settings()
 	_key.text = ""
 	_key.secret = true
@@ -310,8 +336,53 @@ func _on_engine_picked(_index: int) -> void:
 	if key == "":
 		key = previous.api_key
 	var provider := "mock" if _mock.button_pressed else "gemini"
-	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value())
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), null, null, null, null, null, _tts_model_value(), _tts_auto.button_pressed)
+	_refresh_tts_panel()
 	Speaker.apply_settings()
+
+
+func _on_tts_model_picked(_index: int) -> void:
+	if _loading:
+		return
+	_save_tts_choice()
+
+
+func _on_tts_auto_toggled(_pressed: bool) -> void:
+	if _loading:
+		return
+	_save_tts_choice()
+
+
+func _save_tts_choice() -> void:
+	var previous := SettingsStore.load_current()
+	var key := _key.text.strip_edges()
+	if key == "":
+		key = previous.api_key
+	var provider := "mock" if _mock.button_pressed else "gemini"
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "push_to_talk", "gemini", false, _tts_model_value(), _tts_auto.button_pressed)
+	_refresh_tts_panel()
+	Speaker.apply_settings()
+
+
+func _refresh_tts_panel() -> void:
+	var google := _engine_value() == "gemini"
+	_tts_model_label.visible = google
+	_tts_model.visible = google
+	_tts_auto.visible = google
+	_tts_note.visible = google
+	_tts_note.text = TtsQuota.status_line(TtsQuota.now_unix()) if google else ""
+
+
+func _tts_model_value() -> String:
+	var index := _tts_model.selected
+	if index < 0 or index >= TtsQuota.chain().size():
+		return TtsQuota.chain()[0]
+	return TtsQuota.chain()[index]
+
+
+func _tts_model_index(model: String) -> int:
+	var index := TtsQuota.chain().find(model)
+	return index if index >= 0 else 0
 
 
 func _engine_value() -> String:

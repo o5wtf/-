@@ -69,6 +69,8 @@ static func _prices(model: String) -> Dictionary:
 			return {"input": 0.75, "output": 3.75}
 		"gemini-3.8-flash-lite-tts":
 			return {"input": GeminiTtsBackend.INPUT_USD_PER_MILLION, "output": GeminiTtsBackend.OUTPUT_USD_PER_MILLION}
+		"gemini-3.8-flash-tts":
+			return {"input": GeminiTtsBackend.FLASH_INPUT_USD_PER_MILLION, "output": GeminiTtsBackend.FLASH_OUTPUT_USD_PER_MILLION}
 		_:
 			return {}
 

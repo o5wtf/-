@@ -18,6 +18,9 @@ const SHORT_RETRY_CAP_S := 2.0
 const DAILY_DELAY_S := 60.0
 const INPUT_USD_PER_MILLION := 0.50
 const OUTPUT_USD_PER_MILLION := 6.0
+## Тот же учёт токенов, что у lite. Минута flash ~$0.014 против ~$0.009 у lite.
+const FLASH_INPUT_USD_PER_MILLION := 0.50 * (0.014 / 0.009)
+const FLASH_OUTPUT_USD_PER_MILLION := 6.0 * (0.014 / 0.009)
 
 var transport: Object = null
 var api_key: String = ""
@@ -44,6 +47,7 @@ var _fail_kind: String = ""
 var _active_text: String = ""
 var _active_voice: String = ""
 var _active_style: String = ""
+var _voiced_model: String = ""
 ## Вызывается один раз перед ожиданием лимита. Нужен, чтобы живая реплика обогнала подготовку.
 var before_wait: Callable = Callable()
 
@@ -78,67 +82,28 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 	var voice := voice_hint.strip_edges()
 	if voice == "":
 		voice = VoiceCast.FEMALE
-	if _play_cached(token, spoken, voice, style):
+	var fetched: Dictionary = await _fetch(token, spoken, voice, style, false)
+	if _closed_line == line_id or token != _generation:
+		if _closed_line != line_id:
+			_fail_kind = "stopped"
+			_finish_speak(token, line_id, spoken, voice, style)
+		return
+	if not fetched.get("ok", false):
+		_fail_kind = format_voice_error(str(fetched.get("error", "bad_response")), int(fetched.get("status", 0)), api_key)
+		_finish_speak(token, line_id, spoken, voice, style)
+		return
+	_announce(str(fetched.get("model", "")), str(fetched.get("reason", "")))
+	if fetched.get("cached", false):
 		await _wait_until_heard(token)
 		_finish_speak(token, line_id, spoken, voice, style)
 		return
-	var attempt := 0
-	while attempt < MAX_ATTEMPTS:
-		if token != _generation:
-			_finish_speak(token, line_id, spoken, voice, style)
-			return
-		var wait := limiter.delay_for(_now())
-		if wait > 0.0:
-			if _instant:
-				_clock_s += wait
-			else:
-				await get_tree().create_timer(wait).timeout
-		if token != _generation:
-			_finish_speak(token, line_id, spoken, voice, style)
-			return
-		limiter.mark(_now())
-		_reset_audio()
-		_line_id = line_id
-		var result: Dictionary = await _send(spoken, voice, style)
-		if _closed_line == line_id:
-			return
-		if token != _generation or str(result.get("error", "")) == "stopped":
-			_fail_kind = "stopped"
-			_finish_speak(token, line_id, spoken, voice, style)
-			return
-		var status := int(result.get("status", 0))
-		if result.get("ok", false):
-			_note_usage(result.get("usage", {}))
-			_download_done = true
-			_maybe_open(true)
-			if _started_line:
-				await _wait_until_heard(token)
-			else:
-				_fail_kind = format_voice_error("no_audio", status if status > 0 else 200, api_key)
-			_finish_speak(token, line_id, spoken, voice, style)
-			return
-		var kind := str(result.get("error", "bad_response"))
-		if kind == "":
-			kind = "bad_response"
-		if kind == "no_audio":
-			_note_usage(result.get("usage", {}))
-		attempt += 1
-		_reset_audio()
-		_close_playback()
-		if attempt >= MAX_ATTEMPTS or not _retries(kind):
-			_fail_kind = format_voice_error(kind, status, api_key)
-			_finish_speak(token, line_id, spoken, voice, style)
-			return
-		var pause := float(result.get("retry_after", 1.0))
-		if pause < 0.0:
-			pause = 1.0
-		if kind == "rate_limited":
-			pause = minf(pause, SHORT_RETRY_CAP_S)
-		if _instant:
-			_clock_s += pause
-		else:
-			await get_tree().create_timer(pause).timeout
-	_fail_kind = format_voice_error("bad_response", 0, api_key)
+	_note_usage(str(fetched.get("model", "")), fetched.get("usage", {}))
+	_download_done = true
+	_maybe_open(true)
+	if _started_line:
+		await _wait_until_heard(token)
+	else:
+		_fail_kind = format_voice_error("no_audio", int(fetched.get("status", 200)), api_key)
 	_finish_speak(token, line_id, spoken, voice, style)
 
 
@@ -150,45 +115,18 @@ func prefetch(text: String, voice_hint: String = "", style: String = "") -> Stri
 	var voice := voice_hint.strip_edges()
 	if voice == "":
 		voice = VoiceCast.FEMALE
-	var key := _cache_key(spoken, voice, style)
-	if use_cache and not TtsCache.read(key).is_empty():
-		return "cached"
-	if api_key.strip_edges() == "":
-		return "auth"
-	while true:
-		if before_wait.is_valid():
-			var hook := before_wait
-			before_wait = Callable()
-			await hook.call()
-		if token != _prefetch_gen or _live:
-			return "yielded"
-		var wait := limiter.delay_for(_now())
-		if wait <= 0.0:
-			break
-		if _instant:
-			await get_tree().process_frame
-			if token != _prefetch_gen or _live:
-				return "yielded"
-			_clock_s += minf(wait, 1.0)
-		else:
-			await get_tree().create_timer(minf(wait, 1.0)).timeout
-	if token != _prefetch_gen or _live:
+	var fetched: Dictionary = await _fetch(token, spoken, voice, style, true)
+	if token != _prefetch_gen or _live or str(fetched.get("error", "")) == "stopped":
+		_silent = false
 		return "yielded"
-	limiter.mark(_now())
-	_silent = true
-	_line_id = "prefetch"
-	_reset_audio()
-	_line_id = "prefetch"
-	var result: Dictionary = await _send(spoken, voice, style)
-	var captured := _capture.duplicate()
 	_silent = false
-	if token != _prefetch_gen or _live or str(result.get("error", "")) == "stopped":
-		return "yielded"
-	if not result.get("ok", false) or captured.is_empty():
+	if not fetched.get("ok", false):
 		return "error"
-	_note_usage(result.get("usage", {}))
+	if fetched.get("cached", false):
+		return "cached"
+	_note_usage(str(fetched.get("model", "")), fetched.get("usage", {}))
 	if use_cache:
-		TtsCache.write(key, captured)
+		TtsCache.write(_cache_key(spoken, voice, style, str(fetched.get("model", ""))), _capture)
 	_reset_audio()
 	return "stored"
 
@@ -271,9 +209,132 @@ static func pcm16_to_frames(bytes: PackedByteArray) -> PackedVector2Array:
 	return frames
 
 
-func _send(text: String, voice_name: String, style: String) -> Dictionary:
+func _fetch(token: int, spoken: String, voice: String, style: String, silent_job: bool) -> Dictionary:
+	if api_key.strip_edges() == "":
+		return {"ok": false, "error": "auth", "status": 0}
+	if before_wait.is_valid():
+		var hook := before_wait
+		before_wait = Callable()
+		await hook.call()
+	if token != _generation and not silent_job:
+		return {"ok": false, "error": "stopped", "status": 0}
+	if silent_job and (token != _prefetch_gen or _live):
+		return {"ok": false, "error": "stopped", "status": 0}
+	var now := TtsQuota.now_unix()
+	var choice := TtsQuota.choose(now)
+	var model := str(choice.get("model", TtsQuota.selected()))
+	var reason := str(choice.get("reason", "primary"))
+	var probe := bool(choice.get("probe", false))
+	if bool(choice.get("skip", false)):
+		return {"ok": false, "error": "quota_daily", "status": 429, "model": model, "reason": "quota_daily"}
+	var hops := 0
+	while hops < TtsQuota.chain().size():
+		hops += 1
+		var key := _cache_key(spoken, voice, style, model)
+		if use_cache and not TtsCache.read(key).is_empty():
+			if not silent_job:
+				_push_pcm(TtsCache.read(key))
+				_download_done = true
+				_maybe_open(true)
+			return {"ok": true, "cached": true, "model": model, "reason": "cache", "status": 200, "usage": {}}
+		if probe:
+			TtsQuota.mark_probe(now)
+			probe = false
+		if silent_job:
+			_silent = true
+			_line_id = "prefetch"
+		var result: Dictionary = await _one_model(token, spoken, voice, style, model, silent_job)
+		if str(result.get("error", "")) == "stopped":
+			return result
+		if result.get("ok", false):
+			if model == TtsQuota.selected():
+				TtsQuota.clear(model)
+			_voiced_model = model
+			return {
+				"ok": true,
+				"cached": false,
+				"model": model,
+				"reason": reason,
+				"status": int(result.get("status", 200)),
+				"usage": result.get("usage", {}),
+			}
+		var kind := str(result.get("error", "bad_response"))
+		if kind == "quota_daily" and TtsQuota.fallback_enabled():
+			TtsQuota.mark_exhausted(model, TtsQuota.now_unix())
+			var nxt := TtsQuota.next_open(model, TtsQuota.now_unix())
+			if nxt != "":
+				model = nxt
+				reason = "quota_daily"
+				_reset_audio()
+				if silent_job:
+					_line_id = "prefetch"
+				continue
+		return {"ok": false, "error": kind, "status": int(result.get("status", 0)), "model": model, "reason": reason}
+	return {"ok": false, "error": "quota_daily", "status": 429, "model": model, "reason": reason}
+
+
+func _one_model(token: int, spoken: String, voice: String, style: String, model: String, silent_job: bool) -> Dictionary:
+	var attempt := 0
+	var result: Dictionary = {"ok": false, "error": "bad_response", "status": 0, "usage": {}}
+	while attempt < MAX_ATTEMPTS:
+		if (not silent_job and token != _generation) or (silent_job and (token != _prefetch_gen or _live)):
+			return {"ok": false, "error": "stopped", "status": 0, "usage": {}}
+		var wait := limiter.delay_for(_now())
+		if wait > 0.0:
+			if _instant:
+				if silent_job:
+					await get_tree().process_frame
+				if (not silent_job and token != _generation) or (silent_job and (token != _prefetch_gen or _live)):
+					return {"ok": false, "error": "stopped", "status": 0, "usage": {}}
+				_clock_s += minf(wait, SHORT_RETRY_CAP_S if silent_job else wait)
+			else:
+				await get_tree().create_timer(minf(wait, 1.0) if silent_job else wait).timeout
+		if (not silent_job and token != _generation) or (silent_job and (token != _prefetch_gen or _live)):
+			return {"ok": false, "error": "stopped", "status": 0, "usage": {}}
+		limiter.mark(_now())
+		_reset_audio()
+		_line_id = "prefetch" if silent_job else _line_id
+		if not silent_job:
+			_line_id = _line_id if _line_id != "" else "line"
+		result = await _send(spoken, voice, style, model)
+		if _closed_line == _line_id and not silent_job:
+			return {"ok": false, "error": "stopped", "status": 0, "usage": {}}
+		if str(result.get("error", "")) == "stopped":
+			return result
+		if result.get("ok", false):
+			return result
+		var kind := str(result.get("error", "bad_response"))
+		if kind == "":
+			kind = "bad_response"
+		attempt += 1
+		_reset_audio()
+		if not silent_job:
+			_line_id = _line_id
+		if attempt >= MAX_ATTEMPTS or not _retries(kind):
+			result["error"] = kind
+			return result
+		var pause := float(result.get("retry_after", 1.0))
+		if pause < 0.0:
+			pause = 1.0
+		if kind == "rate_limited":
+			pause = minf(pause, SHORT_RETRY_CAP_S)
+		if _instant:
+			_clock_s += pause
+		else:
+			await get_tree().create_timer(pause).timeout
+	return result
+
+
+func _announce(model: String, reason: String) -> void:
+	var line := "tts model=%s reason=%s" % [model, reason]
+	if is_instance_valid(Speaker):
+		Speaker.note_line(line)
+	TurnTiming.note_tts(model, reason)
+
+
+func _send(text: String, voice_name: String, style: String, model: String) -> Dictionary:
 	var request := {
-		"path": "/v1beta/models/%s:streamGenerateContent?alt=sse" % MODEL,
+		"path": "/v1beta/models/%s:streamGenerateContent?alt=sse" % model,
 		"body": build_request(text, voice_name, style),
 		"timeout_s": 30.0,
 		"api_key": api_key,
@@ -305,7 +366,7 @@ func _on_transport_done(outcome: Dictionary) -> void:
 		return
 	if not bool(outcome.get("ok", false)):
 		var kind := str(outcome.get("error", "bad_response"))
-		if kind == "" or kind == "stopped" or _retries(kind):
+		if kind == "" or kind == "stopped" or kind == "quota_daily" or _retries(kind):
 			return
 		_fail_kind = format_voice_error(kind, int(outcome.get("status", 0)), api_key)
 		_finish_speak(_generation, _line_id, _active_text, _active_voice, _active_style)
@@ -367,14 +428,14 @@ func _end_live() -> void:
 	_live = false
 
 
-func _cache_key(text: String, voice: String, style: String) -> String:
-	return TtsCache.key_for(MODEL, voice, style, text)
+func _cache_key(text: String, voice: String, style: String, model: String) -> String:
+	return TtsCache.key_for(model, voice, style, text)
 
 
-func _play_cached(token: int, text: String, voice: String, style: String) -> bool:
+func _play_cached(token: int, text: String, voice: String, style: String, model: String) -> bool:
 	if not use_cache or token != _generation:
 		return false
-	var cached := TtsCache.read(_cache_key(text, voice, style))
+	var cached := TtsCache.read(_cache_key(text, voice, style, model))
 	if cached.is_empty():
 		return false
 	_push_pcm(cached)
@@ -386,7 +447,8 @@ func _play_cached(token: int, text: String, voice: String, style: String) -> boo
 func _store_capture(text: String, voice: String, style: String) -> void:
 	if not use_cache or _capture.is_empty():
 		return
-	TtsCache.write(_cache_key(text, voice, style), _capture)
+	var model := _voiced_model if _voiced_model != "" else MODEL
+	TtsCache.write(_cache_key(text, voice, style, model), _capture)
 
 
 func _maybe_open(download_finished: bool) -> void:
@@ -531,13 +593,13 @@ func _close_playback() -> void:
 		_player.stop()
 
 
-func _note_usage(usage: Variant) -> void:
+func _note_usage(model: String, usage: Variant) -> void:
 	if usage is not Dictionary:
 		return
 	var counts := usage as Dictionary
 	var prompt := int(counts.get("promptTokenCount", counts.get("prompt", 0)))
 	var output := int(counts.get("candidatesTokenCount", counts.get("output", 0)))
-	SpendMeter.note(MODEL, prompt, 0, output)
+	SpendMeter.note(model, prompt, 0, output)
 
 
 static func limit_kind(status: int, body: String) -> String:

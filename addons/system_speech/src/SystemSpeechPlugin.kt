@@ -16,6 +16,8 @@ import org.godotengine.godot.plugin.UsedByGodot
  */
 class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
     private var recognizer: SpeechRecognizer? = null
+    private var latestPartial: String = ""
+    private var acceptResults: Boolean = false
 
     override fun getPluginName(): String = "SystemSpeech"
 
@@ -33,6 +35,16 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
         return SpeechRecognizer.isRecognitionAvailable(host)
     }
 
+    override fun onMainDestroy() {
+        runOnUiThread {
+            acceptResults = false
+            latestPartial = ""
+            recognizer?.destroy()
+            recognizer = null
+        }
+        super.onMainDestroy()
+    }
+
     @UsedByGodot
     fun startListening(preferOffline: Boolean) {
         runOnUiThread {
@@ -44,6 +56,8 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
                 emitSignal("failed", "unavailable")
                 return@runOnUiThread
             }
+            acceptResults = true
+            latestPartial = ""
             if (recognizer == null) {
                 recognizer = SpeechRecognizer.createSpeechRecognizer(host)
                 recognizer?.setRecognitionListener(listener)
@@ -68,11 +82,15 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
 
     @UsedByGodot
     fun cancelListening() {
-        runOnUiThread { recognizer?.cancel() }
+        runOnUiThread {
+            acceptResults = false
+            latestPartial = ""
+            recognizer?.cancel()
+        }
     }
 
     @UsedByGodot
-    fun partialText(): String = ""
+    fun partialText(): String = latestPartial
 
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {}
@@ -81,16 +99,26 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
         override fun onBufferReceived(buffer: ByteArray?) {}
         override fun onEndOfSpeech() {}
         override fun onError(error: Int) {
+            if (!acceptResults) {
+                return
+            }
             emitSignal("failed", codeName(error))
         }
         override fun onResults(results: Bundle?) {
+            if (!acceptResults) {
+                return
+            }
             val lines = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             emitSignal("finished", lines?.firstOrNull() ?: "")
         }
         override fun onPartialResults(partialResults: Bundle?) {
+            if (!acceptResults) {
+                return
+            }
             val lines = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             val text = lines?.firstOrNull() ?: ""
             if (text.isNotEmpty()) {
+                latestPartial = text
                 emitSignal("partial", text)
             }
         }
@@ -99,10 +127,17 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
 
     private fun codeName(error: Int): String {
         return when (error) {
-            SpeechRecognizer.ERROR_NETWORK_TIMEOUT, SpeechRecognizer.ERROR_NETWORK -> "network"
+            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "network_timeout"
+            SpeechRecognizer.ERROR_NETWORK -> "network"
+            SpeechRecognizer.ERROR_AUDIO -> "audio"
+            SpeechRecognizer.ERROR_SERVER, SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "server"
+            SpeechRecognizer.ERROR_CLIENT -> "client"
+            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "speech_timeout"
             SpeechRecognizer.ERROR_NO_MATCH -> "no_match"
             SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "busy"
             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "permissions"
+            SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "language"
+            SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "too_many_requests"
             else -> "unavailable"
         }
     }

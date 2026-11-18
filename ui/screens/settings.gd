@@ -157,6 +157,11 @@ func _ready() -> void:
 	mic_diag.add_theme_color_override("font_color", NoirTheme.MUTED)
 	mic_diag.text = "\n".join(MicInput.status_lines())
 	scroll_box.add_child(mic_diag)
+	var turn_log := UiWidgets.label("", "TurnLogLabel")
+	turn_log.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	turn_log.add_theme_color_override("font_color", NoirTheme.MUTED)
+	turn_log.text = "\n".join(TurnTiming.lines())
+	scroll_box.add_child(turn_log)
 	var voice_log := UiWidgets.label("", "VoiceLogLabel")
 	voice_log.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	voice_log.add_theme_color_override("font_color", NoirTheme.MUTED)
@@ -164,6 +169,8 @@ func _ready() -> void:
 	voice_log.text = "\n".join(Speaker.voice_log)
 	if not Speaker.voice_log_changed.is_connected(_show_voice_log):
 		Speaker.voice_log_changed.connect(_show_voice_log.bind(voice_log, mic_diag))
+	if not Speaker.turn_log_changed.is_connected(_show_turn_log):
+		Speaker.turn_log_changed.connect(_show_turn_log.bind(turn_log))
 	_status = UiWidgets.label("", "StatusLabel")
 	scroll_box.add_child(_status)
 	var save := UiWidgets.button(UiStrings.SAVE, "SaveButton")
@@ -280,6 +287,11 @@ func _show_voice_log(label: Label, mic_diag: Label) -> void:
 		label.text = "\n".join(Speaker.voice_log)
 	if mic_diag != null and is_instance_valid(mic_diag):
 		mic_diag.text = "\n".join(MicInput.status_lines())
+
+
+func _show_turn_log(label: Label) -> void:
+	if label != null and is_instance_valid(label):
+		label.text = "\n".join(Speaker.turn_log)
 
 
 func _check_voice() -> void:

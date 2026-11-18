@@ -51,7 +51,18 @@ static func load_current() -> SettingsStore:
 		store.stt_backend = "system" if str(file.get_value("mic", "stt")) == "system" else "gemini"
 	if file.load(PATH) == OK and file.has_section_key("mic", "stt_offline"):
 		store.stt_offline = bool(file.get_value("mic", "stt_offline"))
+	store.stt_backend = choose_stt(store.stt_backend, SystemStt.plugin_available())
+	if file.load(PATH) == OK and str(file.get_value("mic", "stt", "gemini")) == "system" and store.stt_backend == "gemini":
+		file.set_value("mic", "stt", "gemini")
+		file.save(PATH)
 	return store
+
+
+## Ошибка распознавания сюда не входит: недоступный плагин один раз становится Gemini, сбой живого распознавателя — нет.
+static func choose_stt(saved: String, available: bool) -> String:
+	if saved == "system" and available:
+		return "system"
+	return "gemini"
 
 
 static func canonical_engine(engine: String) -> String:

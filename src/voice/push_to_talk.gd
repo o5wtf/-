@@ -96,6 +96,8 @@ func cancel() -> void:
 	_generation += 1
 	_holding = false
 	clip.cancel()
+	if stt != null:
+		stt.cancel_listen()
 	locked = false
 	level_changed.emit(0.0)
 	retry_visible.emit(false)

@@ -25,3 +25,7 @@ func partial_text() -> String:
 
 func recover() -> Dictionary:
 	return {"ok": false, "text": "", "error": "offline", "message": "", "usage": {}}
+
+
+func cancel_listen() -> void:
+	pass

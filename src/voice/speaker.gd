@@ -6,6 +6,7 @@ signal is_speaking(active: bool)
 signal voice_error(kind: String)
 signal voice_retry_available(show_button: bool)
 signal voice_log_changed
+signal turn_log_changed
 
 const LOG_LIMIT := 20
 
@@ -22,6 +23,7 @@ var _prefetch_jobs: Array = []
 var _prefetch_busy: bool = false
 var _prefetch_token: int = 0
 var voice_log: PackedStringArray = PackedStringArray()
+var turn_log: PackedStringArray = PackedStringArray()
 
 
 func _ready() -> void:
@@ -272,6 +274,11 @@ func _remember_retry(line_id: String, text: String, voice_hint: String, style: S
 
 func note_line(line: String) -> void:
 	_note(line)
+
+
+func set_turn_log(lines: PackedStringArray) -> void:
+	turn_log = lines.duplicate()
+	turn_log_changed.emit()
 
 
 func replace_or_note(prefix: String, line: String) -> void:

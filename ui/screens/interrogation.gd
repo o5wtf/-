@@ -21,6 +21,7 @@ var _mic: Button
 var _mic_level: ProgressBar
 var _mic_state: Label
 var _mic_hint: Label
+var _partial: Label
 var _stt_retry: Button
 var _mic_settings: Button
 var _talk: PushToTalk
@@ -92,6 +93,10 @@ func _ready() -> void:
 	dismiss.pressed.connect(_dismiss_hint)
 	_hint.add_child(dismiss)
 	var input_row := HBoxContainer.new()
+	_partial = UiWidgets.label("", "PartialLabel")
+	_partial.add_theme_color_override("font_color", NoirTheme.GOLD)
+	_partial.visible = false
+	column.add_child(_partial)
 	column.add_child(input_row)
 	_prompt = ChatInput.new()
 	_prompt.name = "PromptField"
@@ -187,10 +192,11 @@ func _warm_link() -> void:
 
 
 func _on_partial(text: String) -> void:
-	if _mic_hint == null or _talk == null or not _talk._holding:
+	if _partial == null:
 		return
-	_mic_hint.text = text
-	_mic_hint.visible = text != ""
+	var show := _talk != null and _talk._holding and text != ""
+	_partial.text = text if show else ""
+	_partial.visible = show
 
 
 func _show_voice_retry(show_button: bool) -> void:
@@ -394,6 +400,9 @@ func _refresh_mic_button() -> void:
 func _on_mic_state(next: String) -> void:
 	if _mic_level != null:
 		_mic_level.visible = next == PushToTalk.STATE_LISTENING
+	if _partial != null and next != PushToTalk.STATE_LISTENING:
+		_partial.visible = false
+		_partial.text = ""
 	_refresh_mic_button()
 
 

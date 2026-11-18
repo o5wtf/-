@@ -6,6 +6,7 @@ extends RefCounted
 const LIMIT := 10
 
 static var turns: Array = []
+static var lines_log: PackedStringArray = PackedStringArray()
 
 
 static func begin(backend_name: String) -> void:
@@ -38,11 +39,28 @@ static func note_reused(value: bool) -> void:
 		turns.back()["reused"] = false
 
 
+static func lines() -> PackedStringArray:
+	return lines_log.duplicate()
+
+
 static func publish() -> void:
-	if turns.is_empty() or not is_instance_valid(Speaker):
+	if turns.is_empty():
 		return
 	var row: Dictionary = turns.back()
-	Speaker.replace_or_note(str(row.get("prefix", "ход")), format_row(row))
+	var text := format_row(row)
+	var prefix := str(row.get("prefix", "ход"))
+	var replaced := false
+	for index in lines_log.size():
+		if str(lines_log[index]).begins_with(prefix):
+			lines_log[index] = text
+			replaced = true
+			break
+	if not replaced:
+		lines_log.append(text)
+	while lines_log.size() > LIMIT:
+		lines_log.remove_at(0)
+	if is_instance_valid(Speaker):
+		Speaker.set_turn_log(lines_log)
 
 
 static func format_row(row: Dictionary) -> String:
@@ -62,3 +80,6 @@ static func format_row(row: Dictionary) -> String:
 
 static func reset() -> void:
 	turns.clear()
+	lines_log = PackedStringArray()
+	if is_instance_valid(Speaker):
+		Speaker.set_turn_log(lines_log)

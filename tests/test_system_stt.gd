@@ -79,6 +79,7 @@ func test_fake_plugin_hold_sends_and_does_not_spend() -> void:
 	await (Engine.get_main_loop() as SceneTree).process_frame
 	talk.push_pcm(VoiceAudio.tone(VoiceAudio.UPLOAD_RATE, 3000))
 	assert_false(partials.is_empty())
+	assert_true(fake.partial_reads > 0)
 	await talk.release(false)
 	assert_eq(fake.stopped, 1)
 	assert_eq(sent, ["Где вы были?"])
@@ -116,7 +117,8 @@ func test_fake_plugin_error_then_retry() -> void:
 	assert_false(talk.locked)
 	assert_true(hints[hints.size() - 1] == SystemStt.hint_for_code("busy"))
 	await talk.retry()
-	assert_eq(sent, ["Где вы были?"])
+	assert_eq(sent.size(), 0)
+	assert_eq(hints[hints.size() - 1], SystemStt.hint_for_code("unavailable"))
 	assert_false(talk.locked)
 	host.free()
 
@@ -348,6 +350,13 @@ func test_turn_log_keeps_ten_and_names_the_span() -> void:
 	assert_true(detailed.contains("причина=доступно"))
 	assert_true(source.contains("diagnosticsJson"))
 	assert_true(source.contains("queryIntentServices"))
+	var stt_source := FileAccess.get_file_as_string("res://src/voice/system_stt.gd")
+	assert_false(stt_source.contains("has_method"))
+	assert_false(stt_source.contains("has_signal"))
+	assert_false(stt_source.contains("get_method_list"))
+	assert_true(stt_source.contains("partialText"))
+	assert_true(stt_source.contains("cancelListening"))
+	assert_false(stt_source.contains("bridge.call(\"recover\")"))
 	assert_true(source.contains("createSpeechRecognizer"))
 	_assert_apk_checker()
 	var workflow := FileAccess.get_file_as_string("res://.github/workflows/build.yml")
@@ -452,6 +461,7 @@ class _FakeSpeech:
 	var stopped: int = 0
 	var text: String = "Где вы были?"
 	var fail: String = ""
+	var partial_reads: int = 0
 	var partial_line: String = "Где"
 	var finish_immediately: bool = false
 	var hold_result: bool = false
@@ -484,6 +494,7 @@ class _FakeSpeech:
 		cancelled += 1
 
 	func partialText() -> String:
+		partial_reads += 1
 		return partial_line
 
 	func recover() -> Dictionary:

@@ -269,7 +269,7 @@ func finish_listen() -> Dictionary:
 
 
 func partial_text() -> String:
-	if bridge != null and bridge.has_method("partialText"):
+	if bridge != null:
 		var live := str(bridge.call("partialText"))
 		if live != "":
 			partial = live
@@ -282,22 +282,17 @@ func cancel_listen() -> void:
 	_has_cached = false
 	_cached = {}
 	partial = ""
-	if bridge != null and bridge.has_method("cancelListening"):
+	if bridge != null:
 		bridge.call("cancelListening")
 
 
 func recover() -> Dictionary:
-	_ensure_bridge()
-	if bridge != null and bridge.has_method("recover"):
-		var pending: Variant = bridge.call("recover")
-		if pending is Dictionary:
-			return pending
-		return await pending
+	# У SpeechRecognizer нет повтора прошлой сессии. Отдельный JNI-метод только падал бы на устройстве.
 	return _failure("unavailable")
 
 
 func transcribe(_wav: PackedByteArray) -> Dictionary:
-	return await recover()
+	return recover()
 
 
 func _ensure_bridge() -> void:
@@ -313,12 +308,9 @@ func _attach(target: Object) -> void:
 	if _attached or target == null:
 		return
 	_attached = true
-	if target.has_signal("partial"):
-		target.connect("partial", _on_partial)
-	if target.has_signal("finished"):
-		target.connect("finished", _on_finished)
-	if target.has_signal("failed"):
-		target.connect("failed", _on_failed)
+	target.connect("partial", _on_partial)
+	target.connect("finished", _on_finished)
+	target.connect("failed", _on_failed)
 
 
 func _on_partial(text: String) -> void:

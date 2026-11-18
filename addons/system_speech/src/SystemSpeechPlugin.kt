@@ -301,7 +301,6 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
             SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "busy"
             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "permissions"
             SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "too_many_requests"
-            SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "server_disconnected"
             SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "language_not_supported"
             SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "language_unavailable"
             SpeechRecognizer.ERROR_CANNOT_CHECK_SUPPORT -> "cannot_check"

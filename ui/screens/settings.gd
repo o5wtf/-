@@ -18,6 +18,9 @@ var _engine: OptionButton
 var _voice_status: Label
 var _mic: CheckBox
 var _mic_mode: OptionButton
+var _stt: OptionButton
+var _stt_offline: CheckBox
+var _stt_hint: Label
 var _voice_busy: bool = false
 var _status: Label
 var _show: Button
@@ -127,6 +130,21 @@ func _ready() -> void:
 	_mic_mode.add_item(UiStrings.MIC_HANDS_FREE)
 	_mic_mode.set_item_disabled(1, true)
 	scroll_box.add_child(_mic_mode)
+	scroll_box.add_child(UiWidgets.label(UiStrings.STT_BACKEND))
+	_stt = OptionButton.new()
+	_stt.name = "SttBackend"
+	_stt.custom_minimum_size = Vector2(0, 48)
+	_stt.add_item(UiStrings.STT_GEMINI)
+	_stt.add_item(UiStrings.STT_SYSTEM)
+	scroll_box.add_child(_stt)
+	_stt_offline = CheckBox.new()
+	_stt_offline.name = "SttOffline"
+	_stt_offline.text = UiStrings.STT_OFFLINE
+	_stt_offline.custom_minimum_size = Vector2(0, 48)
+	scroll_box.add_child(_stt_offline)
+	_stt_hint = UiWidgets.label("", "SttHintLabel")
+	_stt_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	scroll_box.add_child(_stt_hint)
 	var play_last := UiWidgets.button(UiStrings.MIC_PLAY_LAST, "PlayLastMicButton")
 	play_last.pressed.connect(_play_last_recording)
 	scroll_box.add_child(play_last)
@@ -167,6 +185,12 @@ func _load_fields() -> void:
 	_intonation.button_pressed = store.voice_intonation
 	_mic.button_pressed = store.mic_enabled
 	_mic_mode.select(0)
+	var system_ok := SystemStt.plugin_available()
+	_stt.select(1 if store.stt_backend == "system" else 0)
+	_stt.set_item_disabled(1, SystemStt.system_option_disabled(system_ok, store.stt_backend == "system"))
+	_stt_offline.button_pressed = store.stt_offline
+	_stt_hint.text = "" if system_ok else UiStrings.STT_UNAVAILABLE
+	_stt_hint.visible = not system_ok
 	_engine.select(1 if store.voice_engine == "gemini" else 0)
 	_loading = false
 	_spend.text = _spend_text()
@@ -192,7 +216,8 @@ func _save() -> void:
 	if key == "":
 		key = previous.api_key
 	var provider := "mock" if _mock.button_pressed else "gemini"
-	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "push_to_talk")
+	var stt_name := "system" if _stt.selected == 1 else "gemini"
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "push_to_talk", stt_name, _stt_offline.button_pressed)
 	Speaker.apply_settings()
 	_key.text = ""
 	_key.secret = true

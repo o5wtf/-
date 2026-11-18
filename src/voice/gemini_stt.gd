@@ -112,6 +112,7 @@ func _post(body: Dictionary) -> Dictionary:
 		"x-goog-api-key": api_key,
 	}
 	var payload := JSON.stringify(body)
+	TurnTiming.mark("stt_sent")
 	return await transport.call("request", url, headers, payload, TIMEOUT_S)
 
 

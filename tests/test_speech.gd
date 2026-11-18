@@ -587,7 +587,8 @@ func test_body_chunk_reads_only_while_the_status_is_body() -> void:
 
 func test_gemini_playback_keeps_frames_when_audio_arrives_five_times_faster() -> void:
 	assert_eq(GeminiTtsBackend.BUFFER_SECONDS, 1.0)
-	assert_true(GeminiTtsBackend.PREFILL_SECONDS > 0.0)
+	assert_true(GeminiTtsBackend.PREFILL_SECONDS >= GeminiTtsBackend.PREFILL_MIN_SECONDS)
+	assert_true(GeminiTtsBackend.PREFILL_SECONDS <= 0.08)
 	var total := 50
 	var capacity := 10
 	var transport := ScriptedGemini.new()

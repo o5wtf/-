@@ -143,10 +143,11 @@ func _ready() -> void:
 	column.add_child(_stt_retry)
 	_talk = PushToTalk.new()
 	_talk.name = "PushToTalk"
-	var recognizer := GeminiStt.new()
+	var recognizer := _make_stt()
 	_talk.stt = recognizer
 	add_child(_talk)
 	_talk.add_child(recognizer)
+	_talk.partial_changed.connect(_on_partial)
 	_mic_input = MicInput.new()
 	add_child(_mic_input)
 	_access = MicAccess.new()
@@ -168,6 +169,28 @@ func _ready() -> void:
 		Game.events.connect(_on_events)
 		Game.llm_error.connect(_on_error)
 		Game.busy_changed.connect(_on_busy)
+	if DisplayServer.get_name() != "headless":
+		await _warm_link()
+
+
+func _make_stt() -> SttBackend:
+	var store := SettingsStore.load_current()
+	if store.stt_backend == "system":
+		var system := SystemStt.new()
+		system.prefer_offline = store.stt_offline
+		return system
+	return GeminiStt.new()
+
+
+func _warm_link() -> void:
+	await HttpSession.prewarm(self)
+
+
+func _on_partial(text: String) -> void:
+	if _mic_hint == null or _talk == null or not _talk._holding:
+		return
+	_mic_hint.text = text
+	_mic_hint.visible = text != ""
 
 
 func _show_voice_retry(show_button: bool) -> void:
@@ -291,6 +314,7 @@ func _send_text(text: String) -> void:
 	_clear_error()
 	_last = {"kind": "ask", "text": spoken}
 	_push({"kind": "player", "text": spoken})
+	TurnTiming.mark("line_shown")
 	await Game.ask(agent_id, spoken)
 
 

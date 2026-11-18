@@ -71,6 +71,7 @@ func speak(line_id: String, text: String, voice_hint: String = "", _style: Strin
 	_next_utterance += 1
 	_utterances[utterance] = line_id
 	_active = utterance
+	TurnTiming.mark("tts_sent")
 	driver.call("speak", spoken, voice, utterance)
 
 

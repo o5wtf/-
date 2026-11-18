@@ -118,10 +118,12 @@ func test_status_lines_and_voice_log_cover_the_mic() -> void:
 
 
 func test_settings_version_and_mic_defaults_stay() -> void:
-	assert_eq(LLMConfig.SETTINGS_VERSION, 6)
+	assert_eq(LLMConfig.SETTINGS_VERSION, 7)
 	var store := SettingsStore.new()
 	assert_false(store.mic_enabled)
 	assert_eq(store.mic_mode, "push_to_talk")
+	assert_eq(store.stt_backend, "gemini")
+	assert_false(store.stt_offline)
 
 
 func test_ci_builds_android_only() -> void:

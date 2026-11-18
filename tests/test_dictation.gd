@@ -165,6 +165,8 @@ func test_settings_migration_adds_push_to_talk() -> void:
 	assert_eq(check.load(path), OK)
 	assert_eq(int(check.get_value("llm", "settings_version", 0)), LLMConfig.SETTINGS_VERSION)
 	assert_eq(str(check.get_value("mic", "mode", "")), "push_to_talk")
+	assert_eq(str(check.get_value("mic", "stt", "")), "gemini")
+	assert_false(bool(check.get_value("mic", "stt_offline", true)))
 	if previous == "":
 		DirAccess.remove_absolute(path)
 	else:

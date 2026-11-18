@@ -20,6 +20,10 @@ var voice_intonation: bool = true
 var mic_enabled: bool = false
 ## push_to_talk | hands_free. Сейчас работает только удержание.
 var mic_mode: String = "push_to_talk"
+## gemini | system. По умолчанию облачное распознавание.
+var stt_backend: String = "gemini"
+## Для системного распознавания: EXTRA_PREFER_OFFLINE, если движок умеет.
+var stt_offline: bool = false
 
 
 static func load_current() -> SettingsStore:
@@ -43,6 +47,10 @@ static func load_current() -> SettingsStore:
 		store.mic_enabled = bool(file.get_value("mic", "enabled"))
 	if file.load(PATH) == OK and file.has_section_key("mic", "mode"):
 		store.mic_mode = "hands_free" if str(file.get_value("mic", "mode")) == "hands_free" else "push_to_talk"
+	if file.load(PATH) == OK and file.has_section_key("mic", "stt"):
+		store.stt_backend = "system" if str(file.get_value("mic", "stt")) == "system" else "gemini"
+	if file.load(PATH) == OK and file.has_section_key("mic", "stt_offline"):
+		store.stt_offline = bool(file.get_value("mic", "stt_offline"))
 	return store
 
 
@@ -50,7 +58,7 @@ static func canonical_engine(engine: String) -> String:
 	return "gemini" if engine.strip_edges() == "gemini" else "system"
 
 
-static func save_values(provider: String, api_key: String, dialogue_model: String, text_scale: float, timing_debug: Variant = null, voice_enabled: Variant = null, voice_engine: Variant = null, voice_intonation: Variant = null, mic_enabled: Variant = null, mic_mode: Variant = null) -> void:
+static func save_values(provider: String, api_key: String, dialogue_model: String, text_scale: float, timing_debug: Variant = null, voice_enabled: Variant = null, voice_engine: Variant = null, voice_intonation: Variant = null, mic_enabled: Variant = null, mic_mode: Variant = null, stt_backend: Variant = null, stt_offline: Variant = null) -> void:
 	var file := ConfigFile.new()
 	file.load(PATH)
 	file.set_value("llm", "provider", provider)
@@ -72,6 +80,10 @@ static func save_values(provider: String, api_key: String, dialogue_model: Strin
 		file.set_value("mic", "enabled", bool(mic_enabled))
 	if mic_mode != null:
 		file.set_value("mic", "mode", "hands_free" if str(mic_mode) == "hands_free" else "push_to_talk")
+	if stt_backend != null:
+		file.set_value("mic", "stt", "system" if str(stt_backend) == "system" else "gemini")
+	if stt_offline != null:
+		file.set_value("mic", "stt_offline", bool(stt_offline))
 	file.save(PATH)
 
 

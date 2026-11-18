@@ -125,6 +125,7 @@ jobs:
           mkdir -p android/build
           unzip -q "$source_zip" -d android/build
           printf '%s\n' "$template_version" > android/.build_version
+          bash tools/stage_system_speech.sh android/build
           godot --headless --path . --export-release "Android" "$PWD/builds/Detective.apk"
           test -s builds/Detective.apk
 

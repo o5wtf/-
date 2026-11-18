@@ -196,6 +196,7 @@ func _bind_backend() -> void:
 
 
 func _on_started(line_id: String) -> void:
+	TurnTiming.mark("playback_start")
 	if str(retry_line.get("id", "")) == line_id:
 		retry_line = {}
 		voice_retry_available.emit(false)
@@ -270,6 +271,15 @@ func _remember_retry(line_id: String, text: String, voice_hint: String, style: S
 
 
 func note_line(line: String) -> void:
+	_note(line)
+
+
+func replace_or_note(prefix: String, line: String) -> void:
+	for index in range(voice_log.size() - 1, -1, -1):
+		if str(voice_log[index]).begins_with(prefix):
+			voice_log[index] = line
+			voice_log_changed.emit()
+			return
 	_note(line)
 
 

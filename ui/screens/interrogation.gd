@@ -25,6 +25,7 @@ var _stt_retry: Button
 var _mic_settings: Button
 var _talk: PushToTalk
 var _mic_input: MicInput
+var _access: MicAccess
 var _limit_busy: bool = false
 var _error: Label
 var _retry: Button
@@ -148,6 +149,8 @@ func _ready() -> void:
 	_talk.add_child(recognizer)
 	_mic_input = MicInput.new()
 	add_child(_mic_input)
+	_access = MicAccess.new()
+	add_child(_access)
 	_talk.submit = _send_text
 	_talk.state_changed.connect(_on_mic_state)
 	_talk.hint_changed.connect(_on_mic_hint)
@@ -191,13 +194,14 @@ func _process(_delta: float) -> void:
 		if _mic_input.api_name != "":
 			_mic_input.stop()
 		return
-	if _talk.enabled and _mic_input.api_name == "":
-		_mic_input.warm()
-		if _mic_input.api_name == "" and OS.get_name() == "Windows":
-			_on_mic_hint(UiStrings.MIC_WINDOWS)
+	if _talk.enabled and _access != null and _access.allowed():
+		MicAccess.start_if_allowed(_access, _mic_input)
 	if _mic_input.api_name == "":
 		return
-	var kind := _talk.push_pcm(_mic_input.read_pcm())
+	var pcm := _mic_input.read_pcm()
+	if _talk._holding:
+		_mic_input.observe_hold(pcm, _delta * 1000.0)
+	var kind := _talk.push_pcm(pcm)
 	if kind == "limit" and not _limit_busy:
 		_limit_busy = true
 		await _talk.release(true)
@@ -293,23 +297,36 @@ func _send_text(text: String) -> void:
 func _mic_down() -> void:
 	if _talk == null or _mic.disabled:
 		return
-	if OS.get_name() == "Android" and not _mic_permission():
-		_on_mic_hint(UiStrings.MIC_DENIED)
+	var allowed := true
+	if _access != null:
+		allowed = await _access.ensure()
+	if not allowed:
+		_on_mic_hint(UiStrings.MIC_NO_PERMISSION)
 		if _mic_settings != null:
 			_mic_settings.visible = true
 		return
-	if _mic_input != null and _mic_input.api_name == "":
+	if _access != null and _access.just_granted and _mic_input != null:
+		_mic_input.needs_restart = true
+	if _mic_input != null and _access != null:
+		MicAccess.start_if_allowed(_access, _mic_input)
+	elif _mic_input != null and _mic_input.api_name == "":
 		_mic_input.warm()
-	if _mic_input != null and _mic_input.api_name == "" and OS.get_name() == "Windows":
-		_on_mic_hint(UiStrings.MIC_WINDOWS)
+	if _mic_input != null and _mic_input.api_name == "":
+		if OS.get_name() == "Windows":
+			_on_mic_hint(UiStrings.MIC_WINDOWS)
+		else:
+			_on_mic_hint(MicInput.hint_for("input_inactive"))
 		return
-	_talk.press()
+	if _talk.press() and _mic_input != null:
+		_mic_input.begin_hold()
 
 
 func _mic_up() -> void:
 	if _talk == null or not _talk._holding:
 		return
 	await _talk.release(false)
+	if _mic_input != null:
+		_mic_input.log_hold()
 
 
 func _retry_stt() -> void:
@@ -323,14 +340,12 @@ func _open_mic_settings() -> void:
 		OS.shell_open("intent:#Intent;action=android.settings.APPLICATION_DETAILS_SETTINGS;data=package:%s;end" % package_name)
 	elif OS.get_name() == "Windows":
 		OS.shell_open("ms-settings:privacy-microphone")
-	_mic_permission()
-
-
-func _mic_permission() -> bool:
-	var granted := OS.get_granted_permissions()
-	if granted.has("android.permission.RECORD_AUDIO"):
-		return true
-	return OS.request_permission("android.permission.RECORD_AUDIO")
+	if _access != null and await _access.ensure():
+		if _mic_settings != null:
+			_mic_settings.visible = false
+		if _mic_input != null:
+			_mic_input.needs_restart = true
+			MicAccess.start_if_allowed(_access, _mic_input)
 
 
 func _refresh_mic_button() -> void:
@@ -362,16 +377,16 @@ func _on_mic_hint(text: String) -> void:
 	if _mic_hint == null:
 		return
 	var shown := text
-	if shown == "Тишина в записи." and _mic_failed():
-		shown = UiStrings.MIC_WINDOWS if OS.get_name() == "Windows" else UiStrings.MIC_FAILED
+	if shown == "Тишина в записи.":
+		if OS.get_name() == "Windows":
+			shown = UiStrings.MIC_WINDOWS
+		else:
+			var frames := 0 if _mic_input == null else _mic_input.hold_frames
+			shown = MicInput.hint_for("quiet", frames)
+	if shown == UiStrings.MIC_NO_PERMISSION and _mic_settings != null:
+		_mic_settings.visible = true
 	_mic_hint.text = shown
 	_mic_hint.visible = shown != ""
-
-
-func _mic_failed() -> bool:
-	if OS.get_name() == "Windows":
-		return true
-	return _mic_input != null and _mic_input.last_error != ""
 
 
 func _on_mic_level(unit: float) -> void:

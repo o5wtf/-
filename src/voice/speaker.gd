@@ -269,6 +269,10 @@ func _remember_retry(line_id: String, text: String, voice_hint: String, style: S
 	retry_line = {"id": line_id, "text": text, "voice_hint": voice_hint, "style": style}
 
 
+func note_line(line: String) -> void:
+	_note(line)
+
+
 func _note(line: String) -> void:
 	voice_log.append(line)
 	while voice_log.size() > LOG_LIMIT:

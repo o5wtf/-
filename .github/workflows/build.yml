@@ -1,4 +1,4 @@
-name: Сборка Android и Windows
+name: Сборка Android
 
 on:
   push:
@@ -125,10 +125,7 @@ jobs:
           mkdir -p android/build
           unzip -q "$source_zip" -d android/build
           printf '%s\n' "$template_version" > android/.build_version
-          godot --headless --path . --export-release "Windows Desktop" "$PWD/builds/Detective.exe"
           godot --headless --path . --export-release "Android" "$PWD/builds/Detective.apk"
-          test -s builds/Detective.exe
-          test -s builds/Detective.pck
           test -s builds/Detective.apk
 
       - name: В сборке нет ключа и лишних файлов
@@ -148,27 +145,17 @@ jobs:
             grep -n -i -E 'quer|intent|TTS' "$RUNNER_TEMP/manifest.txt" | head -40
             exit 1
           fi
-          python3 tools/check_build.py builds/Detective.apk builds/Detective.pck
-
-      - name: Архив Windows
-        run: |
-          set -euo pipefail
-          cd builds
-          zip -q Detective-windows.zip Detective.exe Detective.pck Detective.console.exe 2>/dev/null || zip -q Detective-windows.zip Detective.exe Detective.pck
+          python3 tools/check_build.py builds/Detective.apk
 
       - name: Артефакты
         uses: actions/upload-artifact@v4
         with:
           name: detective-builds
-          path: |
-            builds/Detective.apk
-            builds/Detective-windows.zip
+          path: builds/Detective.apk
           if-no-files-found: error
 
       - name: Релиз по тегу
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            builds/Detective.apk
-            builds/Detective-windows.zip
+          files: builds/Detective.apk

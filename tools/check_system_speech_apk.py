@@ -52,10 +52,11 @@ def _raw_manifest(apk: Path) -> str:
     return ""
 
 
-def manifest_ok(text: str) -> tuple[bool, bool]:
+def manifest_ok(text: str) -> tuple[bool, bool, bool]:
     queries = "android.speech.RecognitionService" in text
     plugin = "SystemSpeechPlugin" in text or "org.godotengine.plugin.v2.SystemSpeech" in text
-    return queries, plugin
+    audio_settings = "android.permission.MODIFY_AUDIO_SETTINGS" in text
+    return queries, plugin, audio_settings
 
 
 def check(apk: Path) -> None:
@@ -64,11 +65,13 @@ def check(apk: Path) -> None:
     if not dex_has_plugin(apk):
         fail("в classes.dex нет com.o5wtf.detective.speech.SystemSpeechPlugin")
     text = manifest_text(apk)
-    queries, plugin = manifest_ok(text)
+    queries, plugin, audio_settings = manifest_ok(text)
     if not queries:
         fail("в манифесте нет queries на android.speech.RecognitionService")
     if not plugin:
         fail("в манифесте нет meta-data плагина SystemSpeech")
+    if not audio_settings:
+        fail("в манифесте нет android.permission.MODIFY_AUDIO_SETTINGS")
     print("речь: плагин и RecognitionService есть в APK")
 
 

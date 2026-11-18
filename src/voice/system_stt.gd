@@ -23,13 +23,49 @@ func listens_live() -> bool:
 
 
 static func plugin_available() -> bool:
+	if not _report_ready and Engine.has_singleton(PLUGIN):
+		refresh_report()
+		if not _report_ready:
+			return true
 	return available_from_report(_ensure_report())
 
 
 static func refresh_report() -> void:
-	_report_ready = false
-	_report = _pull_report()
+	if not Engine.has_singleton(PLUGIN):
+		_report = {}
+		_report_ready = true
+		return
+	var live: Object = Engine.get_singleton(PLUGIN)
+	if live == null:
+		_report = {}
+		_report_ready = true
+		return
+	_bind_diagnostics(live)
+	var raw := str(live.call("diagnosticsJson")).strip_edges()
+	if raw != "":
+		note_diagnostics(raw)
+
+
+static func watch_report(callback: Callable) -> void:
+	if callback.is_valid() and not _report_listeners.has(callback):
+		_report_listeners.append(callback)
+
+
+static func note_diagnostics(raw: String) -> void:
+	var parsed: Variant = JSON.parse_string(raw)
+	if parsed is Dictionary:
+		_report = parsed
+	else:
+		_report = {"parse_error": raw}
 	_report_ready = true
+	for callback in _report_listeners:
+		if callback.is_valid():
+			callback.call()
+
+
+static func clear_report() -> void:
+	_report = {}
+	_report_ready = false
 
 
 static func available_from_report(report: Dictionary) -> bool:
@@ -44,7 +80,11 @@ static func available_from_report(report: Dictionary) -> bool:
 static func user_hint() -> String:
 	if not Engine.has_singleton(PLUGIN):
 		return "Системное распознавание не встроено в сборку"
-	var report := _ensure_report()
+	if not _report_ready:
+		refresh_report()
+	if not _report_ready:
+		return "Системное распознавание ещё не готово. Нажмите «Проверить снова»."
+	var report := _report
 	if str(report.get("activity", "")) == "missing":
 		return "Системное распознавание ещё не готово. Нажмите «Проверить снова»."
 	if available_from_report(report):
@@ -53,6 +93,10 @@ static func user_hint() -> String:
 
 
 static func status_lines() -> PackedStringArray:
+	if Engine.has_singleton(PLUGIN) and not _report_ready:
+		refresh_report()
+		if not _report_ready:
+			return PackedStringArray(["plugin=loaded", "причина=проверка"])
 	return lines_from_report(_ensure_report(), _record_state())
 
 
@@ -121,6 +165,8 @@ static func _reason(report: Dictionary) -> String:
 
 static var _report: Dictionary = {}
 static var _report_ready: bool = false
+static var _diag_bound: bool = false
+static var _report_listeners: Array[Callable] = []
 
 
 static func _ensure_report() -> Dictionary:
@@ -129,17 +175,15 @@ static func _ensure_report() -> Dictionary:
 	return _report
 
 
-static func _pull_report() -> Dictionary:
-	if not Engine.has_singleton(PLUGIN):
-		return {}
-	var live: Object = Engine.get_singleton(PLUGIN)
-	if live == null:
-		return {}
-	var raw := str(live.call("diagnosticsJson"))
-	var parsed: Variant = JSON.parse_string(raw)
-	if parsed is Dictionary:
-		return parsed
-	return {"parse_error": raw}
+static func _bind_diagnostics(live: Object) -> void:
+	if _diag_bound:
+		return
+	live.connect("diagnostics", Callable(SystemStt, "_on_diagnostics"))
+	_diag_bound = true
+
+
+static func _on_diagnostics(raw: String) -> void:
+	note_diagnostics(raw)
 
 
 static func _record_state() -> String:
@@ -242,10 +286,6 @@ func start_listen() -> void:
 	if bridge == null:
 		_remember(_failure("unavailable"))
 		return
-	if not _live_plugin_ready():
-		_remember(_failure("unavailable"))
-		_note_attempt()
-		return
 	bridge.call("startListening", prefer_offline)
 
 
@@ -257,23 +297,28 @@ func finish_listen() -> Dictionary:
 	_ensure_bridge()
 	if bridge == null:
 		return _failure("unavailable")
-	if not _live_plugin_ready():
-		return _failure("unavailable")
 	bridge.call("stopListening")
 	var started := Time.get_ticks_msec()
 	var limit := int(maxf(listen_timeout_s, 0.05) * 1000.0)
 	while token == _session and not _closed and not _has_cached:
 		if Time.get_ticks_msec() - started >= limit:
-			return _failure("timeout")
+			return _give_up()
 		if get_tree() == null:
-			return _failure("timeout")
+			return _give_up()
 		await get_tree().process_frame
 	if _closed or token != _session:
 		return {"ok": false, "text": "", "error": "cancelled", "message": "", "usage": {}}
 	if _has_cached:
 		_note_attempt()
 		return _take_cached()
+	return _give_up()
+
+
+func _give_up() -> Dictionary:
 	_note_attempt()
+	if bridge != null:
+		bridge.call("cancelListening")
+	_closed = true
 	return _failure("timeout")
 
 
@@ -285,13 +330,6 @@ func meter_unit() -> float:
 
 func _is_real_plugin() -> bool:
 	return bridge != null and Engine.has_singleton(PLUGIN) and bridge == Engine.get_singleton(PLUGIN)
-
-
-func _live_plugin_ready() -> bool:
-	if not _is_real_plugin():
-		return true
-	var parsed: Variant = JSON.parse_string(str(bridge.call("diagnosticsJson")))
-	return parsed is Dictionary and available_from_report(parsed)
 
 
 func _note_attempt() -> void:

@@ -12,7 +12,7 @@ func _supports_platform(platform: EditorExportPlatform) -> bool:
 
 
 func _get_android_manifest_element_contents(_platform: EditorExportPlatform, _debug: bool) -> String:
-	return "<queries><intent><action android:name=\"android.speech.RecognitionService\"/></intent></queries>"
+	return "<uses-permission android:name=\"android.permission.MODIFY_AUDIO_SETTINGS\"/><queries><intent><action android:name=\"android.speech.RecognitionService\"/></intent></queries>"
 
 
 func _get_android_manifest_application_element_contents(_platform: EditorExportPlatform, _debug: bool) -> String:

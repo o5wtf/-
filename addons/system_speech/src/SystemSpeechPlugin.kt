@@ -18,11 +18,9 @@ import org.godotengine.godot.Godot
 import org.godotengine.godot.plugin.GodotPlugin
 import org.godotengine.godot.plugin.SignalInfo
 import org.godotengine.godot.plugin.UsedByGodot
+import android.os.Handler
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Системный распознаватель Android, тот же движок, что у микрофона Gboard.
@@ -46,6 +44,7 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
     private var beganAt: Long = 0L
     private var endedAt: Long = 0L
     private var attemptSummary: String = ""
+    private var cachedDiagnostics: String = ""
 
     override fun getPluginName(): String = "SystemSpeech"
 
@@ -54,39 +53,42 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
         signals.add(SignalInfo("partial", String::class.java))
         signals.add(SignalInfo("finished", String::class.java))
         signals.add(SignalInfo("failed", String::class.java))
+        signals.add(SignalInfo("diagnostics", String::class.java))
         return signals
     }
 
     @UsedByGodot
     fun isAvailable(): Boolean {
-        return reportSaysAvailable(readDiagnostics())
+        val raw = cachedDiagnostics
+        if (raw.isEmpty()) {
+            return false
+        }
+        return try {
+            reportSaysAvailable(JSONObject(raw))
+        } catch (_error: Throwable) {
+            false
+        }
     }
 
     @UsedByGodot
-    fun diagnosticsJson(): String = readDiagnostics().toString()
+    fun diagnosticsJson(): String {
+        requestDiagnostics()
+        return cachedDiagnostics
+    }
+
+    @UsedByGodot
+    fun requestDiagnostics() {
+        val looper = Looper.getMainLooper() ?: return
+        Handler(looper).post { publishDiagnostics() }
+    }
 
     @UsedByGodot
     fun apiLevel(): Int = Build.VERSION.SDK_INT
 
-    private fun readDiagnostics(): JSONObject {
-        val box = arrayOf(JSONObject())
-        val ran = runOnUiBlocking { box[0] = buildDiagnostics() }
-        if (!ran) {
-            return JSONObject()
-                .put("sdk_int", Build.VERSION.SDK_INT)
-                .put("manufacturer", Build.MANUFACTURER ?: "")
-                .put("model", Build.MODEL ?: "")
-                .put("activity", "missing")
-                .put("is_recognition_available", false)
-                .put("is_recognition_available_error", "ui thread timeout")
-                .put("on_device_available", false)
-                .put("on_device_available_error", "ui thread timeout")
-                .put("services", JSONArray())
-                .put("services_error", "ui thread timeout")
-                .put("voice_recognition_service", "")
-                .put("voice_recognition_service_error", "ui thread timeout")
-        }
-        return box[0]
+    private fun publishDiagnostics() {
+        val text = buildDiagnostics().toString()
+        cachedDiagnostics = text
+        emitSignal("diagnostics", text)
     }
 
     private fun buildDiagnostics(): JSONObject {
@@ -235,25 +237,6 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
         return services.firstOrNull {
             it.packageName.contains("googlequicksearchbox") || it.packageName.startsWith("com.google.")
         } ?: services.firstOrNull()
-    }
-
-    private fun runOnUiBlocking(block: () -> Unit): Boolean {
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            block()
-            return true
-        }
-        val finished = AtomicBoolean(false)
-        val latch = CountDownLatch(1)
-        runOnUiThread {
-            try {
-                block()
-                finished.set(true)
-            } finally {
-                latch.countDown()
-            }
-        }
-        val waited = latch.await(3, TimeUnit.SECONDS)
-        return waited && finished.get()
     }
 
     override fun onMainDestroy() {

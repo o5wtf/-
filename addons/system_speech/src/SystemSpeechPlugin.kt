@@ -1,12 +1,25 @@
 package com.o5wtf.detective.speech
 
+import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.ResolveInfo
 import android.os.Build
 import android.os.Bundle
+import android.os.Looper
+import android.provider.Settings
 import android.speech.RecognitionListener
+import android.speech.RecognitionService
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import org.godotengine.godot.Godot
+import org.godotengine.godot.plugin.GodotPlugin
+import org.godotengine.godot.plugin.SignalInfo
+import org.godotengine.godot.plugin.UsedByGodot
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import org.godotengine.godot.plugin.GodotPlugin
 import org.godotengine.godot.plugin.SignalInfo
 import org.godotengine.godot.plugin.UsedByGodot
@@ -33,26 +46,143 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
 
     @UsedByGodot
     fun isAvailable(): Boolean {
-        return recognitionServiceAvailable() || onDeviceAvailable()
+        return reportSaysAvailable(readDiagnostics())
     }
 
     @UsedByGodot
-    fun recognitionServiceAvailable(): Boolean {
-        val host = activity ?: return false
-        return SpeechRecognizer.isRecognitionAvailable(host)
-    }
-
-    @UsedByGodot
-    fun onDeviceAvailable(): Boolean {
-        val host = activity ?: return false
-        if (Build.VERSION.SDK_INT < 31) {
-            return false
-        }
-        return SpeechRecognizer.isOnDeviceRecognitionAvailable(host)
-    }
+    fun diagnosticsJson(): String = readDiagnostics().toString()
 
     @UsedByGodot
     fun apiLevel(): Int = Build.VERSION.SDK_INT
+
+    private fun readDiagnostics(): JSONObject {
+        val box = arrayOf(JSONObject())
+        val ran = runOnUiBlocking { box[0] = buildDiagnostics() }
+        if (!ran) {
+            return JSONObject()
+                .put("sdk_int", Build.VERSION.SDK_INT)
+                .put("manufacturer", Build.MANUFACTURER ?: "")
+                .put("model", Build.MODEL ?: "")
+                .put("activity", "missing")
+                .put("is_recognition_available", false)
+                .put("is_recognition_available_error", "ui thread timeout")
+                .put("on_device_available", false)
+                .put("on_device_available_error", "ui thread timeout")
+                .put("services", JSONArray())
+                .put("services_error", "ui thread timeout")
+                .put("voice_recognition_service", "")
+                .put("voice_recognition_service_error", "ui thread timeout")
+        }
+        return box[0]
+    }
+
+    private fun buildDiagnostics(): JSONObject {
+        val json = JSONObject()
+        json.put("sdk_int", Build.VERSION.SDK_INT)
+        json.put("manufacturer", Build.MANUFACTURER ?: "")
+        json.put("model", Build.MODEL ?: "")
+        json.put("thread", if (Looper.myLooper() == Looper.getMainLooper()) "main" else "other")
+        val host = activity
+        if (host == null) {
+            json.put("activity", "missing")
+            json.put("is_recognition_available", false)
+            json.put("is_recognition_available_error", "activity is null")
+            json.put("on_device_available", false)
+            json.put("on_device_available_error", "activity is null")
+            json.put("services", JSONArray())
+            json.put("services_error", "activity is null")
+            json.put("voice_recognition_service", "")
+            json.put("voice_recognition_service_error", "activity is null")
+            return json
+        }
+        json.put("activity", "present")
+        try {
+            json.put("is_recognition_available", SpeechRecognizer.isRecognitionAvailable(host))
+            json.put("is_recognition_available_error", "")
+        } catch (error: Throwable) {
+            json.put("is_recognition_available", false)
+            json.put("is_recognition_available_error", error.toString())
+        }
+        if (Build.VERSION.SDK_INT < 31) {
+            json.put("on_device_available", false)
+            json.put("on_device_available_error", "api<31")
+        } else {
+            try {
+                json.put("on_device_available", SpeechRecognizer.isOnDeviceRecognitionAvailable(host))
+                json.put("on_device_available_error", "")
+            } catch (error: Throwable) {
+                json.put("on_device_available", false)
+                json.put("on_device_available_error", error.toString())
+            }
+        }
+        val services = JSONArray()
+        try {
+            val intent = Intent(RecognitionService.SERVICE_INTERFACE)
+            val found: List<ResolveInfo> = host.packageManager.queryIntentServices(intent, 0)
+            for (info in found) {
+                val service = info.serviceInfo ?: continue
+                services.put(JSONObject().put("package", service.packageName).put("class", service.name))
+            }
+            json.put("services_error", "")
+        } catch (error: Throwable) {
+            json.put("services_error", error.toString())
+        }
+        json.put("services", services)
+        try {
+            val value = Settings.Secure.getString(host.contentResolver, "voice_recognition_service") ?: ""
+            json.put("voice_recognition_service", value)
+            json.put("voice_recognition_service_error", "")
+        } catch (error: Throwable) {
+            json.put("voice_recognition_service", "")
+            json.put("voice_recognition_service_error", error.toString())
+        }
+        return json
+    }
+
+    private fun reportSaysAvailable(report: JSONObject): Boolean {
+        if (report.optBoolean("is_recognition_available", false)) return true
+        if (report.optBoolean("on_device_available", false)) return true
+        return (report.optJSONArray("services")?.length() ?: 0) > 0
+    }
+
+    private fun listedServices(report: JSONObject): List<ComponentName> {
+        val names = mutableListOf<ComponentName>()
+        val services = report.optJSONArray("services") ?: return names
+        for (index in 0 until services.length()) {
+            val item = services.optJSONObject(index) ?: continue
+            val pkg = item.optString("package", "")
+            val cls = item.optString("class", "")
+            if (pkg.isNotEmpty() && cls.isNotEmpty()) {
+                names.add(ComponentName(pkg, cls))
+            }
+        }
+        return names
+    }
+
+    private fun preferGoogle(services: List<ComponentName>): ComponentName? {
+        return services.firstOrNull {
+            it.packageName.contains("googlequicksearchbox") || it.packageName.startsWith("com.google.")
+        } ?: services.firstOrNull()
+    }
+
+    private fun runOnUiBlocking(block: () -> Unit): Boolean {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            block()
+            return true
+        }
+        val finished = AtomicBoolean(false)
+        val latch = CountDownLatch(1)
+        runOnUiThread {
+            try {
+                block()
+                finished.set(true)
+            } finally {
+                latch.countDown()
+            }
+        }
+        val waited = latch.await(3, TimeUnit.SECONDS)
+        return waited && finished.get()
+    }
 
     override fun onMainDestroy() {
         runOnUiThread {
@@ -71,20 +201,27 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
                 emitSignal("failed", "unavailable")
                 return@runOnUiThread
             }
-            if (!isAvailable()) {
+            val report = buildDiagnostics()
+            if (!reportSaysAvailable(report)) {
                 emitSignal("failed", "unavailable")
                 return@runOnUiThread
             }
             acceptResults = true
             latestPartial = ""
-            val useOnDevice = onDeviceAvailable() && (preferOffline || !recognitionServiceAvailable())
+            val onDevice = report.optBoolean("on_device_available", false)
+            val flagged = report.optBoolean("is_recognition_available", false)
+            val services = listedServices(report)
+            val useOnDevice = onDevice && (preferOffline || (!flagged && services.isEmpty()))
             if (recognizer != null && createdOnDevice != useOnDevice) {
                 recognizer?.destroy()
                 recognizer = null
             }
             if (recognizer == null) {
+                val chosen = preferGoogle(services)
                 recognizer = if (useOnDevice) {
                     SpeechRecognizer.createOnDeviceSpeechRecognizer(host)
+                } else if (!flagged && chosen != null) {
+                    SpeechRecognizer.createSpeechRecognizer(host, chosen)
                 } else {
                     SpeechRecognizer.createSpeechRecognizer(host)
                 }
@@ -166,10 +303,12 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
             SpeechRecognizer.ERROR_NO_MATCH -> "no_match"
             SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "busy"
             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "permissions"
+            SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "too_many_requests"
+            SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "server_disconnected"
             SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "language_not_supported"
             SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "language_unavailable"
             SpeechRecognizer.ERROR_CANNOT_CHECK_SUPPORT -> "cannot_check"
-            SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "too_many_requests"
+            15 -> "cannot_listen_to_download_events"
             else -> "unavailable"
         }
     }

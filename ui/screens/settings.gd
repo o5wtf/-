@@ -150,6 +150,10 @@ func _ready() -> void:
 	_speech_diag.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_speech_diag.add_theme_color_override("font_color", NoirTheme.MUTED)
 	scroll_box.add_child(_speech_diag)
+	var recheck := UiWidgets.button(UiStrings.STT_RECHECK, "SttRecheckButton")
+	recheck.pressed.connect(_recheck_stt)
+	scroll_box.add_child(recheck)
+	_stt.item_selected.connect(_on_stt_picked)
 	var play_last := UiWidgets.button(UiStrings.MIC_PLAY_LAST, "PlayLastMicButton")
 	play_last.pressed.connect(_play_last_recording)
 	scroll_box.add_child(play_last)
@@ -197,15 +201,12 @@ func _load_fields() -> void:
 	_intonation.button_pressed = store.voice_intonation
 	_mic.button_pressed = store.mic_enabled
 	_mic_mode.select(0)
+	SystemStt.refresh_report()
 	var system_ok := SystemStt.plugin_available()
 	_stt.select(1 if store.stt_backend == "system" else 0)
 	_stt.set_item_disabled(1, not system_ok)
 	_stt_offline.button_pressed = store.stt_offline
-	var hint := SystemStt.user_hint()
-	_stt_hint.text = hint
-	_stt_hint.visible = hint != ""
-	if _speech_diag != null:
-		_speech_diag.text = "\n".join(SystemStt.status_lines())
+	_show_stt_diag()
 	_engine.select(1 if store.voice_engine == "gemini" else 0)
 	_loading = false
 	_spend.text = _spend_text()
@@ -288,6 +289,32 @@ func _ping_request() -> Dictionary:
 			"required": ["ok"],
 		},
 	}
+
+
+func _recheck_stt() -> void:
+	SystemStt.refresh_report()
+	_show_stt_diag()
+
+
+func _on_stt_picked(index: int) -> void:
+	if _loading:
+		return
+	SystemStt.refresh_report()
+	_show_stt_diag()
+	if index == 1 and not SystemStt.plugin_available():
+		_loading = true
+		_stt.select(0)
+		_loading = false
+
+
+func _show_stt_diag() -> void:
+	var system_ok := SystemStt.plugin_available()
+	_stt.set_item_disabled(1, not system_ok)
+	var hint := SystemStt.user_hint()
+	_stt_hint.text = hint
+	_stt_hint.visible = hint != ""
+	if _speech_diag != null:
+		_speech_diag.text = "\n".join(SystemStt.status_lines())
 
 
 func _show_voice_log(label: Label, mic_diag: Label) -> void:

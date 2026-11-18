@@ -888,6 +888,96 @@ func _assert_bytes(actual: PackedByteArray, expected: PackedByteArray, message: 
 		assert_eq(int(actual[index]), int(expected[index]), message)
 
 
+func test_missing_first_audio_shows_retry_and_releases_the_mic() -> void:
+	var speaker: Node = load("res://src/voice/speaker.gd").new()
+	speaker.set("listen_to_game", false)
+	var backend := GeminiTtsBackend.new()
+	backend.api_key = "unit-test-key-1234"
+	backend.use_cache = false
+	backend._instant = true
+	backend.transport = _HangStream.new()
+	speaker.set("backend", backend)
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(speaker)
+	speaker.set("enabled", true)
+	var retries: Array[bool] = []
+	speaker.connect("voice_retry_available", func(show: bool) -> void: retries.append(show))
+	speaker.call("speak_reply", "agent", "Где вы были ночью, когда погас свет?")
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	backend._clock_s = GeminiTtsBackend.FIRST_AUDIO_SECONDS
+	backend._process(0.1)
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	assert_false(bool(speaker.get("speaking")))
+	assert_false((speaker.get("retry_line") as Dictionary).is_empty())
+	assert_true(retries.has(true))
+	assert_true(str(speaker.get("last_error")).begins_with("timeout"))
+	speaker.free()
+
+
+func test_long_streaming_line_is_not_cut() -> void:
+	var backend := GeminiTtsBackend.new()
+	backend.api_key = "unit-test-key-1234"
+	backend.use_cache = false
+	backend._instant = true
+	var paced := _PacedStream.new()
+	paced.host = backend
+	backend.transport = paced
+	var sink := LimitedPlayback.new()
+	sink.capacity = 100000
+	backend.sink = sink
+	var errors: Array[String] = []
+	var finished_ids: Array[String] = []
+	backend.speech_error.connect(func(_id: String, kind: String) -> void: errors.append(kind))
+	backend.finished.connect(func(id: String) -> void: finished_ids.append(id))
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(backend)
+	await backend.speak("line", "Длинная реплика, которую нельзя оборвать по длине.")
+	assert_eq(errors, [])
+	assert_eq(finished_ids, ["line"])
+	assert_eq(paced.pieces, 8)
+	assert_true(backend._clock_s > GeminiTtsBackend.STREAM_GAP_SECONDS)
+	var source := FileAccess.get_file_as_string("res://src/voice/gemini_tts_backend.gd")
+	assert_true(source.contains("http.close()"))
+	assert_false(source.contains("HttpSession.checkin"))
+	assert_true(source.contains("_guard_stream"))
+	backend.free()
+
+
+class _HangStream:
+	extends RefCounted
+
+	var cancelled: bool = false
+
+	func cancel() -> void:
+		cancelled = true
+
+	func stream(_request: Dictionary) -> Dictionary:
+		cancelled = false
+		while not cancelled:
+			await (Engine.get_main_loop() as SceneTree).process_frame
+		return {"ok": false, "status": 0, "error": "stopped", "retry_after": 0.0, "usage": {}}
+
+
+class _PacedStream:
+	extends RefCounted
+
+	var host: GeminiTtsBackend
+	var pieces: int = 0
+
+	func cancel() -> void:
+		pass
+
+	func stream(request: Dictionary) -> Dictionary:
+		var on_chunk: Callable = request.get("on_chunk")
+		var pcm := VoiceAudio.tone(400, 1000)
+		for _index in 8:
+			pieces += 1
+			on_chunk.call(pcm)
+			host._clock_s += 5.0
+			host._process(0.0)
+		return {"ok": true, "status": 200, "error": "", "retry_after": 0.0, "usage": {}}
+
+
 class ScriptedTts:
 	extends RefCounted
 

@@ -159,6 +159,11 @@ func reset_for_case() -> void:
 	_lengths.clear()
 
 
+func wait_until_quiet() -> void:
+	while speaking or queue.current_id != "":
+		await is_speaking
+
+
 func line_id_for(agent_id: String) -> String:
 	var case_id := ""
 	var turn := 0

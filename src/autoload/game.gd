@@ -212,6 +212,8 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 	agent_replied.emit(agent_id, reply, remark)
 	events.emit(turn_events)
 	if turn_config.summary_after_reply and dialogue.needs_summary():
+		if Speaker.speaking or Speaker.queue.current_id != "":
+			await Speaker.wait_until_quiet()
 		LlmTiming.note_request(tally, "summary", "summary")
 		dialogue = await _refresh_summary(agent_id, dialogue)
 	_sync_dialogues()

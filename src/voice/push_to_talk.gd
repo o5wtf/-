@@ -166,8 +166,6 @@ func _is_live() -> bool:
 
 
 func _backend_name() -> String:
-	if stt is SystemStt:
-		return "system"
 	return "gemini"
 
 

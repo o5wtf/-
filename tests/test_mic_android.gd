@@ -117,8 +117,31 @@ func test_status_lines_and_voice_log_cover_the_mic() -> void:
 	input.free()
 
 
+func test_saved_android_backend_becomes_gemini() -> void:
+	var path := "user://config.cfg"
+	var previous := FileAccess.get_file_as_string(path) if FileAccess.file_exists(path) else ""
+	var file := ConfigFile.new()
+	file.parse(previous)
+	file.set_value("llm", "settings_version", 7)
+	file.set_value("llm", "dialogue_model", "gemini-3.5-flash-lite")
+	file.set_value("mic", "stt", "system")
+	file.save(path)
+	var loaded := SettingsStore.load_current()
+	assert_eq(loaded.stt_backend, "gemini")
+	var check := ConfigFile.new()
+	assert_eq(check.load(path), OK)
+	assert_eq(str(check.get_value("mic", "stt", "")), "gemini")
+	assert_eq(int(check.get_value("llm", "settings_version", 0)), LLMConfig.SETTINGS_VERSION)
+	if previous == "":
+		DirAccess.remove_absolute(path)
+	else:
+		var restore := FileAccess.open(path, FileAccess.WRITE)
+		restore.store_string(previous)
+		restore.close()
+
+
 func test_settings_version_and_mic_defaults_stay() -> void:
-	assert_eq(LLMConfig.SETTINGS_VERSION, 7)
+	assert_eq(LLMConfig.SETTINGS_VERSION, 8)
 	var store := SettingsStore.new()
 	assert_false(store.mic_enabled)
 	assert_eq(store.mic_mode, "push_to_talk")
@@ -132,6 +155,8 @@ func test_ci_builds_android_only() -> void:
 	assert_false(yml.contains("Windows Desktop"))
 	assert_false(yml.contains("Detective-windows.zip"))
 	assert_true(yml.contains("builds/Detective.apk"))
+	assert_false(yml.contains("stage_system_speech"))
+	assert_false(yml.contains("check_system_speech"))
 	var preset := FileAccess.get_file_as_string("res://export_presets.cfg")
 	assert_true(preset.contains("Windows Desktop"))
 

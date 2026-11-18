@@ -11,6 +11,10 @@ const BUFFER_SECONDS := 1.0
 ## Меньше 0.15 с, но не ниже одного короткого буфера: иначе на устройстве слышны разрывы.
 const PREFILL_SECONDS := 0.06
 const PREFILL_MIN_SECONDS := 0.04
+## Если за это время не пришёл ни один звуковой кусок, поток отменяется.
+const FIRST_AUDIO_SECONDS := 10.0
+## Пауза без новых байт после того, как звук уже пошёл. Длинная реплика, которая всё ещё течёт, не обрывается.
+const STREAM_GAP_SECONDS := 30.0
 const MAX_ATTEMPTS := 3
 const INPUT_USD_PER_MILLION := 0.50
 const OUTPUT_USD_PER_MILLION := 6.0
@@ -37,6 +41,10 @@ var _live: bool = false
 var _prefetch_gen: int = 0
 var _closed_line: String = ""
 var _fail_kind: String = ""
+var _watch: bool = false
+var _audio_seen: bool = false
+var _sent_at: float = 0.0
+var _last_data_at: float = 0.0
 ## Вызывается один раз перед ожиданием лимита. Нужен, чтобы живая реплика обогнала подготовку.
 var before_wait: Callable = Callable()
 
@@ -183,6 +191,7 @@ func prefetch(text: String, voice_hint: String = "", style: String = "") -> Stri
 
 
 func stop() -> void:
+	_watch = false
 	_generation += 1
 	_prefetch_gen += 1
 	_live = false
@@ -269,16 +278,42 @@ func _send(text: String, voice_name: String, style: String) -> Dictionary:
 		"on_chunk": _push_pcm,
 	}
 	TurnTiming.mark("tts_sent")
+	_audio_seen = false
+	_sent_at = _now()
+	_last_data_at = _sent_at
+	_watch = true
 	var pending: Variant = transport.call("stream", request)
-	if pending is Dictionary:
-		return pending
-	return await pending
+	var result: Dictionary = pending if pending is Dictionary else await pending
+	_watch = false
+	return result
 
 
 func _process(_delta: float) -> void:
 	if _line_id == "":
 		return
 	_feed()
+	_guard_stream()
+
+
+func _guard_stream() -> void:
+	if not _watch:
+		return
+	var now := _now()
+	var stalled := false
+	if not _audio_seen:
+		stalled = now - _sent_at >= FIRST_AUDIO_SECONDS
+	else:
+		stalled = now - _last_data_at >= STREAM_GAP_SECONDS
+	if not stalled:
+		return
+	_watch = false
+	if transport != null and transport.has_method("cancel"):
+		transport.call("cancel")
+	if _silent:
+		return
+	_fail_kind = format_voice_error("timeout", 0, api_key)
+	_close_playback()
+	_finish_speak(_generation, _line_id, "реплика", "", "")
 
 
 func _push_pcm(bytes: PackedByteArray) -> void:
@@ -294,6 +329,8 @@ func _push_pcm(bytes: PackedByteArray) -> void:
 		return
 	_capture.append_array(ready)
 	_pending.append_array(frames)
+	_audio_seen = true
+	_last_data_at = _now()
 	TurnTiming.mark("first_audio")
 	_maybe_open(false)
 	_feed()
@@ -504,19 +541,13 @@ class GeminiTtsTransport:
 
 	func stream(request: Dictionary) -> Dictionary:
 		cancelled = false
-		var slot := HttpSession.checkout(HttpSession.HOST)
-		var http: HTTPClient = slot.client
-		var err := OK
-		if http.get_status() != HTTPClient.STATUS_CONNECTED:
-			err = http.connect_to_host(HttpSession.HOST, 443, TLSOptions.client())
+		var http := HTTPClient.new()
+		var err := http.connect_to_host(HttpSession.HOST, 443, TLSOptions.client())
 		if err != OK:
 			return _finish(http, _outcome(false, 0, "offline", 0.0, {}))
-		var deadline := Time.get_ticks_msec() + int(float(request.get("timeout_s", 30.0)) * 1000.0)
 		while http.get_status() == HTTPClient.STATUS_CONNECTING or http.get_status() == HTTPClient.STATUS_RESOLVING:
 			if cancelled:
 				return _finish(http, _outcome(false, 0, "stopped", 0.0, {}))
-			if Time.get_ticks_msec() >= deadline:
-				return _finish(http, _outcome(false, 0, "timeout", 1.0, {}))
 			http.poll()
 			await get_tree().process_frame
 		if http.get_status() != HTTPClient.STATUS_CONNECTED:
@@ -531,8 +562,6 @@ class GeminiTtsTransport:
 		while http.get_status() == HTTPClient.STATUS_REQUESTING:
 			if cancelled:
 				return _finish(http, _outcome(false, 0, "stopped", 0.0, {}))
-			if Time.get_ticks_msec() >= deadline:
-				return _finish(http, _outcome(false, 0, "timeout", 1.0, {}))
 			http.poll()
 			await get_tree().process_frame
 		var status := http.get_response_code()
@@ -544,8 +573,6 @@ class GeminiTtsTransport:
 		while http.get_status() == HTTPClient.STATUS_BODY:
 			if cancelled:
 				return _finish(http, _outcome(false, status, "stopped", 0.0, {}))
-			if Time.get_ticks_msec() >= deadline:
-				return _finish(http, _outcome(false, status, "timeout", 1.0, {}))
 			http.poll()
 			var chunk := _take_chunk(http)
 			if chunk.is_empty():
@@ -570,8 +597,7 @@ class GeminiTtsTransport:
 		return _finish(http, _outcome(true, status, "", 0.0, decoder.usage))
 
 	func _finish(http: HTTPClient, outcome: Dictionary) -> Dictionary:
-		var alive := http.get_status() == HTTPClient.STATUS_CONNECTED and not cancelled
-		HttpSession.checkin(HttpSession.HOST, http, alive)
+		http.close()
 		return outcome
 
 	func _outcome(ok: bool, status: int, error_kind: String, retry_after: float, usage: Dictionary) -> Dictionary:

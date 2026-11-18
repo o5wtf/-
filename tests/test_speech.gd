@@ -284,6 +284,83 @@ func test_gemini_plays_first_chunk_retries_and_counts_spend() -> void:
 	backend.free()
 
 
+func test_daily_quota_finishes_without_waiting() -> void:
+	assert_eq(GeminiTtsBackend.limit_kind(429, "{\"quotaMetric\":\"generate_requests_per_model_per_day\"}"), "quota_daily")
+	assert_eq(GeminiTtsBackend.limit_kind(429, "{\"error\":{\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RetryInfo\",\"retryDelay\":\"86399s\"}]}}"), "quota_daily")
+	assert_eq(GeminiTtsBackend.limit_kind(429, "{\"retryDelay\":\"2s\"}"), "rate_limited")
+	var transport := ScriptedGemini.new()
+	transport.scripted.append({"ok": false, "status": 429, "error": "quota_daily", "retry_after": 86399.0, "usage": {}})
+	var backend := GeminiTtsBackend.new()
+	backend.transport = transport
+	backend.api_key = "unit-test-key"
+	backend.use_cache = false
+	backend._instant = true
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(backend)
+	var errors: Array[String] = []
+	backend.speech_error.connect(func(_id: String, kind: String) -> void: errors.append(kind))
+	var started := backend._clock_s
+	await backend.speak("line", "Привет.", "Kore")
+	assert_eq(transport.calls.size(), 1)
+	assert_eq(errors.size(), 1)
+	assert_true(errors[0].contains("quota_daily"))
+	assert_true(backend._clock_s - started < 1.0)
+	backend.free()
+
+
+func test_short_rate_limit_pause_is_capped() -> void:
+	var transport := ScriptedGemini.new()
+	transport.scripted.append({"ok": false, "status": 429, "error": "rate_limited", "retry_after": 30.0, "usage": {}})
+	transport.scripted.append({
+		"ok": true,
+		"status": 200,
+		"error": "",
+		"retry_after": 0.0,
+		"usage": {},
+		"chunks": [PackedByteArray([0, 64])],
+	})
+	var backend := GeminiTtsBackend.new()
+	backend.transport = transport
+	backend.api_key = "unit-test-key"
+	backend.use_cache = false
+	backend._instant = true
+	backend.sink = PcmSink.new()
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(backend)
+	var started := backend._clock_s
+	await backend.speak("line", "Привет.", "Kore")
+	assert_eq(transport.calls.size(), 2)
+	assert_true(backend._clock_s - started <= GeminiTtsBackend.SHORT_RETRY_CAP_S)
+	assert_true(backend._clock_s - started > 0.0)
+	backend.free()
+
+
+func test_daily_quota_log_names_the_exit() -> void:
+	var http := _StepHttp.new()
+	http.code = 429
+	var body := "{\"error\":{\"code\":429,\"details\":[{\"quotaMetric\":\"generate_requests_per_model_per_day\"},{\"@type\":\"type.googleapis.com/google.rpc.RetryInfo\",\"retryDelay\":\"86399s\"}]}}"
+	var speaker := _voice_speaker(http)
+	var transport: GeminiTtsBackend.GeminiTtsTransport = speaker.get("backend").transport
+	var retries: Array[bool] = []
+	speaker.connect("voice_retry_available", func(show: bool) -> void: retries.append(show))
+	speaker.call("speak_reply", "agent", "Квота на сегодня кончилась.")
+	http.mode = "connected"
+	transport._tick()
+	http.mode = "body"
+	http.chunks = [body.to_utf8_buffer()]
+	transport._tick()
+	transport._tick()
+	http.mode = "done"
+	transport._tick()
+	assert_true(retries.has(true))
+	assert_true(str(speaker.get("last_error")).contains("quota_daily"))
+	var lines := Speaker.voice_log
+	var last := str(lines[lines.size() - 1])
+	assert_true(last.contains("exit=quota_daily"))
+	assert_false(last.contains("exit=eof"))
+	speaker.free()
+
+
 func test_gemini_failure_does_not_switch_to_system_voice() -> void:
 	var speaker: Node = load("res://src/voice/speaker.gd").new()
 	speaker.set("listen_to_game", false)
@@ -1085,6 +1162,7 @@ class _StepHttp:
 
 	var mode: String = "connecting"
 	var chunks: Array = []
+	var code: int = 200
 
 	func connect_to_host(_host: String, _port: int, _tls: TLSOptions = null) -> int:
 		return OK
@@ -1107,7 +1185,7 @@ class _StepHttp:
 		return OK
 
 	func get_response_code() -> int:
-		return 200
+		return code
 
 	func read_response_body_chunk() -> PackedByteArray:
 		if chunks.is_empty():

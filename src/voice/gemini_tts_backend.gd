@@ -12,6 +12,10 @@ const BUFFER_SECONDS := 1.0
 const PREFILL_SECONDS := 0.06
 const PREFILL_MIN_SECONDS := 0.04
 const MAX_ATTEMPTS := 3
+## Короткий 429 (в минуту) можно повторить, но не дольше этой паузы.
+const SHORT_RETRY_CAP_S := 2.0
+## retryDelay длиннее этого, или метрика per_day, — суточная квота, без ожидания.
+const DAILY_DELAY_S := 60.0
 const INPUT_USD_PER_MILLION := 0.50
 const OUTPUT_USD_PER_MILLION := 6.0
 
@@ -128,6 +132,8 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 		var pause := float(result.get("retry_after", 1.0))
 		if pause < 0.0:
 			pause = 1.0
+		if kind == "rate_limited":
+			pause = minf(pause, SHORT_RETRY_CAP_S)
 		if _instant:
 			_clock_s += pause
 		else:
@@ -299,7 +305,7 @@ func _on_transport_done(outcome: Dictionary) -> void:
 		return
 	if not bool(outcome.get("ok", false)):
 		var kind := str(outcome.get("error", "bad_response"))
-		if kind == "" or kind == "stopped":
+		if kind == "" or kind == "stopped" or _retries(kind):
 			return
 		_fail_kind = format_voice_error(kind, int(outcome.get("status", 0)), api_key)
 		_finish_speak(_generation, _line_id, _active_text, _active_voice, _active_style)
@@ -534,6 +540,39 @@ func _note_usage(usage: Variant) -> void:
 	SpendMeter.note(MODEL, prompt, 0, output)
 
 
+static func limit_kind(status: int, body: String) -> String:
+	if status != 429:
+		return ""
+	var lower := body.to_lower()
+	if lower.contains("per_day") or retry_seconds(body) > DAILY_DELAY_S:
+		return "quota_daily"
+	return "rate_limited"
+
+
+static func retry_seconds(body: String) -> float:
+	var parsed: Variant = JSON.parse_string(body)
+	if parsed is not Dictionary:
+		return 1.0
+	var err: Variant = (parsed as Dictionary).get("error", {})
+	if err is not Dictionary:
+		return 1.0
+	var details: Variant = (err as Dictionary).get("details", [])
+	if details is not Array:
+		return 1.0
+	for item in details:
+		if item is not Dictionary:
+			continue
+		var info := item as Dictionary
+		if not str(info.get("@type", "")).contains("RetryInfo"):
+			continue
+		var raw := str(info.get("retryDelay", "")).strip_edges()
+		if raw.ends_with("ms"):
+			return float(raw.trim_suffix("ms")) / 1000.0
+		if raw.ends_with("s"):
+			return float(raw.trim_suffix("s"))
+	return 1.0
+
+
 func _retries(kind: String) -> bool:
 	return kind == "rate_limited" or kind == "overloaded"
 
@@ -671,10 +710,16 @@ class GeminiTtsTransport:
 		if _decoder == null:
 			var raw := _redact(_error_body.get_string_from_utf8())
 			_preview = raw.substr(0, 300)
-			var kind := "http_%d" % _status if _status != 0 else "eof"
-			if _status != 200 and _status != 0:
+			var kind := "eof"
+			if _status == 429:
+				kind = GeminiTtsBackend.limit_kind(_status, raw)
+			elif _status != 200 and _status != 0:
 				kind = _kind(_status)
-			_complete(_outcome(false, _status, kind, _retry_after(raw), {}))
+			elif _status != 0:
+				kind = "http_%d" % _status
+			if _status != 0 and _status != 200:
+				_exit = kind
+			_complete(_outcome(false, _status, kind, GeminiTtsBackend.retry_seconds(raw), {}))
 			return
 		for pcm in _decoder.finish():
 			_emit_pcm(_on_chunk, pcm)

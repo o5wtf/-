@@ -16,11 +16,19 @@ static var key_override = null
 static var transport: Object = null
 static var _token: String = ""
 static var _expires_at: int = 0
+static var _active: HTTPRequest = null
 
 
 static func reset() -> void:
 	_token = ""
 	_expires_at = 0
+	cancel_active()
+
+
+static func cancel_active() -> void:
+	if _active != null and is_instance_valid(_active):
+		_active.cancel_request()
+	_active = null
 
 
 static func now_unix() -> int:
@@ -143,11 +151,16 @@ static func _post(host: Node, url: String, body: String, headers: PackedStringAr
 static func _live_post(host: Node, url: String, body: String, headers: PackedStringArray) -> Dictionary:
 	var request := HTTPRequest.new()
 	host.add_child(request)
+	_active = request
 	var err := request.request(url, headers, HTTPClient.METHOD_POST, body)
 	if err != OK:
+		if _active == request:
+			_active = null
 		request.queue_free()
 		return {"status": 0, "body": ""}
 	var args: Array = await request.request_completed
+	if _active == request:
+		_active = null
 	request.queue_free()
 	var bytes: PackedByteArray = args[3]
 	return {"status": int(args[1]), "body": bytes.get_string_from_utf8()}

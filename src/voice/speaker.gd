@@ -175,8 +175,6 @@ func _on_replied(agent_id: String, text: String, _remark: String) -> void:
 
 
 func cancel_inflight() -> void:
-	if queue.current_id == "" and _inflight.is_empty() and not speaking:
-		return
 	var line_id := queue.current_id
 	if line_id != "":
 		queue.allow_again(line_id)

@@ -64,3 +64,37 @@ func test_retry_stays_with_its_character_until_a_new_line_or_turn() -> void:
 	mock.free()
 	screen.free()
 	Speaker.stop_and_clear()
+
+
+func test_switching_suspect_cancels_playback() -> void:
+	assert_true(Game.open_case("res://tests/fixtures/turn_flow.json").ok)
+	var previous: Node = Speaker.backend
+	var spy := _Spy.new()
+	Speaker.backend = spy
+	var root: Window = (Engine.get_main_loop() as SceneTree).root
+	var screen := (load("res://ui/screens/interrogation.tscn") as PackedScene).instantiate()
+	root.add_child(screen)
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	screen.open_agent("a")
+	screen.open_agent("b")
+	assert_true(spy.stops >= 1)
+	Speaker._inflight = {"id": "case:a:1", "text": "Реплика.", "voice_hint": "Kore", "style": ""}
+	Speaker.skip_current()
+	assert_true(spy.stops >= 2)
+	Speaker.backend = previous
+	spy.free()
+	screen.free()
+	Speaker.dismiss_retry()
+	Speaker._inflight = {}
+
+
+class _Spy:
+	extends SpeechBackend
+
+	var stops: int = 0
+
+	func speak(_line_id: String, _text: String, _voice_hint: String = "", _style: String = "") -> void:
+		pass
+
+	func stop() -> void:
+		stops += 1

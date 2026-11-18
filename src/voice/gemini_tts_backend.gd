@@ -54,6 +54,10 @@ var _cache_style: String = ""
 var _capture_stored: bool = false
 var _extra_chars: int = -1
 var _extra_chunks: int = 0
+var _chirp_queue: Array[PackedByteArray] = []
+var _chirp_busy: bool = false
+var _chirp_token: int = -1
+var chirp_events: PackedStringArray = PackedStringArray()
 ## Вызывается один раз перед ожиданием лимита. Нужен, чтобы живая реплика обогнала подготовку.
 var before_wait: Callable = Callable()
 
@@ -83,16 +87,6 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 	_reset_audio()
 	_line_id = line_id
 	if spoken == "":
-		_finish_speak(token, line_id, spoken, "", style)
-		return
-	var home := TtsQuota.selected()
-	if TtsQuota.is_chirp(home):
-		if not TtsQuota.chirp_ready():
-			_fail_kind = format_voice_error("chirp_key", 0, api_key)
-			_finish_speak(token, line_id, spoken, "", style)
-			return
-	elif api_key.strip_edges() == "":
-		_fail_kind = "auth"
 		_finish_speak(token, line_id, spoken, "", style)
 		return
 	var voice := voice_hint.strip_edges()
@@ -157,8 +151,12 @@ func stop() -> void:
 	_prefetch_gen += 1
 	_live = false
 	_silent = false
+	_chirp_queue.clear()
+	_chirp_busy = false
+	_chirp_token = -1
 	_reset_audio()
 	_close_playback()
+	ChirpAuth.cancel_active()
 	if transport != null and transport.has_method("cancel"):
 		transport.call("cancel")
 
@@ -202,6 +200,8 @@ static func _friendly_voice_error(kind: String, status: int) -> String:
 	match kind:
 		"chirp_key":
 			return "Нет ключа Chirp"
+		"gemini_key":
+			return "Нет ключа Gemini"
 		"bad_json":
 			return "Ключ Chirp: это не JSON сервисного аккаунта"
 		"chirp_auth":
@@ -286,8 +286,11 @@ func _fetch(token: int, spoken: String, voice: String, style: String, silent_job
 				_download_done = true
 				_maybe_open(true)
 			return {"ok": true, "cached": true, "model": model, "reason": "cache", "status": 200, "usage": {}}
-		if not TtsQuota.is_chirp(model) and api_key.strip_edges() == "":
-			return {"ok": false, "error": "auth", "status": 0, "model": model, "reason": reason}
+		if TtsQuota.is_chirp(model):
+			if not TtsQuota.chirp_ready():
+				return {"ok": false, "error": "chirp_key", "status": 0, "model": model, "reason": reason}
+		elif api_key.strip_edges() == "":
+			return {"ok": false, "error": "gemini_key", "status": 0, "model": model, "reason": reason}
 		if probe and not TtsQuota.is_chirp(model):
 			TtsQuota.mark_probe(now)
 			probe = false
@@ -361,14 +364,24 @@ func _chirp_line(token: int, spoken: String, voice: String, style: String, silen
 	var pieces := ChirpVoices.chunks(text)
 	if pieces.is_empty():
 		return {"ok": false, "error": "empty", "status": 0, "usage": {}}
+	_chirp_queue.clear()
+	_chirp_busy = false
+	_chirp_token = token
+	chirp_events = PackedStringArray()
 	var joined := PackedByteArray()
+	var index := 0
 	for piece in pieces:
-		if (not silent_job and token != _generation) or (silent_job and (token != _prefetch_gen or _live)):
+		if _chirp_stopped(token, silent_job):
 			return {"ok": false, "error": "stopped", "status": 0, "usage": {}}
+		chirp_events.append("synth:%d" % index)
 		var attempt := 0
 		var result: Dictionary = {"ok": false, "error": "bad_response", "status": 0}
 		while attempt < MAX_ATTEMPTS:
+			if _chirp_stopped(token, silent_job):
+				return {"ok": false, "error": "stopped", "status": 0, "usage": {}}
 			result = await ChirpTts.synthesize(self, piece, name, rate)
+			if _chirp_stopped(token, silent_job):
+				return {"ok": false, "error": "stopped", "status": 0, "usage": {}}
 			if result.get("ok", false):
 				break
 			var kind := str(result.get("error", "bad_response"))
@@ -385,16 +398,77 @@ func _chirp_line(token: int, spoken: String, voice: String, style: String, silen
 		var pcm: PackedByteArray = result.get("pcm", PackedByteArray())
 		joined.append_array(pcm)
 		if not silent_job:
-			_push_pcm(pcm)
+			_chirp_queue.append(pcm)
+			_pump_chirp_playback()
+		index += 1
+	if not silent_job:
+		var spins := 0
+		while token == _generation and (_chirp_busy or not _chirp_queue.is_empty()):
+			_pump_chirp_playback()
+			if not _chirp_busy and _chirp_queue.is_empty():
+				break
+			spins += 1
+			if spins > 100000:
+				return {"ok": false, "error": "playback", "status": 0, "usage": {}}
+			if _instant:
+				if sink != null and sink.has_method("advance"):
+					sink.call("advance")
+				elif _chirp_busy:
+					return {"ok": false, "error": "playback", "status": 0, "usage": {}}
+			else:
+				await get_tree().process_frame
 	_capture = joined
 	_extra_chars = text.length()
 	_extra_chunks = pieces.size()
-	if use_cache:
+	if use_cache and token == _generation:
 		TtsCache.write(_cache_key(text, name, str(rate), ChirpVoices.MODEL_ID), joined)
 		_capture_stored = true
 	if silent_job and is_instance_valid(Speaker):
 		Speaker.note_line("tts model=%s reason=%s chars=%d chunks=%d" % [ChirpVoices.MODEL_ID, reason, text.length(), pieces.size()])
 	return {"ok": true, "status": 200, "usage": {"chars": text.length()}, "error": ""}
+
+
+func _chirp_stopped(token: int, silent_job: bool) -> bool:
+	if silent_job:
+		return token != _prefetch_gen or _live
+	return token != _generation
+
+
+func _pump_chirp_playback() -> void:
+	if _chirp_token != _generation:
+		_chirp_queue.clear()
+		_chirp_busy = false
+		return
+	if _chirp_busy:
+		if not _chirp_chunk_done():
+			return
+		_chirp_busy = false
+		chirp_events.append("end:%d" % _chirp_end_index())
+	if _chirp_queue.is_empty():
+		return
+	var pcm: PackedByteArray = _chirp_queue[0]
+	_chirp_queue.remove_at(0)
+	_chirp_busy = true
+	chirp_events.append("play:%d" % _chirp_play_count())
+	_push_pcm(pcm)
+	_maybe_open(true)
+	_feed()
+
+
+func _chirp_chunk_done() -> bool:
+	return _pending.is_empty() and _device_buffered() == 0
+
+
+func _chirp_play_count() -> int:
+	var count := 0
+	for event in chirp_events:
+		if str(event).begins_with("play:"):
+			count += 1
+	return count
+
+
+func _chirp_end_index() -> int:
+	return maxi(_chirp_play_count() - 1, 0)
 
 
 func _one_model(token: int, spoken: String, voice: String, style: String, model: String, silent_job: bool) -> Dictionary:
@@ -482,7 +556,9 @@ func _process(_delta: float) -> void:
 	if _line_id == "" or _closed_line == _line_id:
 		return
 	_feed()
-	if _download_done and _started_line and _heard():
+	if _chirp_busy or not _chirp_queue.is_empty():
+		_pump_chirp_playback()
+	if _download_done and _started_line and _heard() and _chirp_queue.is_empty() and not _chirp_busy:
 		_finish_speak(_generation, _line_id, _active_text, _active_voice, _active_style)
 
 

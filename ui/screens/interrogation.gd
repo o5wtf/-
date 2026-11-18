@@ -245,6 +245,8 @@ func _notification(what: int) -> void:
 
 
 func open_agent(next_id: String) -> void:
+	if agent_id != "" and next_id != agent_id:
+		Speaker.cancel_inflight()
 	agent_id = next_id
 	if not _feeds.has(next_id):
 		_feeds[next_id] = _saved_lines(next_id)

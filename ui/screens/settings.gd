@@ -153,6 +153,7 @@ func _ready() -> void:
 	var recheck := UiWidgets.button(UiStrings.STT_RECHECK, "SttRecheckButton")
 	recheck.pressed.connect(_recheck_stt)
 	scroll_box.add_child(recheck)
+	SystemStt.watch_report(_show_stt_diag)
 	_stt.item_selected.connect(_on_stt_picked)
 	var play_last := UiWidgets.button(UiStrings.MIC_PLAY_LAST, "PlayLastMicButton")
 	play_last.pressed.connect(_play_last_recording)

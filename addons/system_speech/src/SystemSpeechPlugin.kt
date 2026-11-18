@@ -3,6 +3,9 @@ package com.o5wtf.detective.speech
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.ResolveInfo
+import android.content.Context
+import android.media.AudioManager
+import android.os.SystemClock
 import android.os.Build
 import android.os.Bundle
 import android.os.Looper
@@ -15,11 +18,9 @@ import org.godotengine.godot.Godot
 import org.godotengine.godot.plugin.GodotPlugin
 import org.godotengine.godot.plugin.SignalInfo
 import org.godotengine.godot.plugin.UsedByGodot
+import android.os.Handler
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Системный распознаватель Android, тот же движок, что у микрофона Gboard.
@@ -30,6 +31,20 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
     private var latestPartial: String = ""
     private var acceptResults: Boolean = false
     private var createdOnDevice: Boolean = false
+    private var streamsMuted: Boolean = false
+    private var rmsMax: Float = 0f
+    private var partialCount: Int = 0
+    private var lastRawError: Int = -1
+    private var lastErrorName: String = ""
+    private var finalLength: Int = 0
+    private var listenComponent: String = ""
+    private var listenOnDevice: Boolean = false
+    private var startedAt: Long = 0L
+    private var readyAt: Long = 0L
+    private var beganAt: Long = 0L
+    private var endedAt: Long = 0L
+    private var attemptSummary: String = ""
+    private var cachedDiagnostics: String = ""
 
     override fun getPluginName(): String = "SystemSpeech"
 
@@ -38,39 +53,42 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
         signals.add(SignalInfo("partial", String::class.java))
         signals.add(SignalInfo("finished", String::class.java))
         signals.add(SignalInfo("failed", String::class.java))
+        signals.add(SignalInfo("diagnostics", String::class.java))
         return signals
     }
 
     @UsedByGodot
     fun isAvailable(): Boolean {
-        return reportSaysAvailable(readDiagnostics())
+        val raw = cachedDiagnostics
+        if (raw.isEmpty()) {
+            return false
+        }
+        return try {
+            reportSaysAvailable(JSONObject(raw))
+        } catch (_error: Throwable) {
+            false
+        }
     }
 
     @UsedByGodot
-    fun diagnosticsJson(): String = readDiagnostics().toString()
+    fun diagnosticsJson(): String {
+        requestDiagnostics()
+        return cachedDiagnostics
+    }
+
+    @UsedByGodot
+    fun requestDiagnostics() {
+        val looper = Looper.getMainLooper() ?: return
+        Handler(looper).post { publishDiagnostics() }
+    }
 
     @UsedByGodot
     fun apiLevel(): Int = Build.VERSION.SDK_INT
 
-    private fun readDiagnostics(): JSONObject {
-        val box = arrayOf(JSONObject())
-        val ran = runOnUiBlocking { box[0] = buildDiagnostics() }
-        if (!ran) {
-            return JSONObject()
-                .put("sdk_int", Build.VERSION.SDK_INT)
-                .put("manufacturer", Build.MANUFACTURER ?: "")
-                .put("model", Build.MODEL ?: "")
-                .put("activity", "missing")
-                .put("is_recognition_available", false)
-                .put("is_recognition_available_error", "ui thread timeout")
-                .put("on_device_available", false)
-                .put("on_device_available_error", "ui thread timeout")
-                .put("services", JSONArray())
-                .put("services_error", "ui thread timeout")
-                .put("voice_recognition_service", "")
-                .put("voice_recognition_service_error", "ui thread timeout")
-        }
-        return box[0]
+    private fun publishDiagnostics() {
+        val text = buildDiagnostics().toString()
+        cachedDiagnostics = text
+        emitSignal("diagnostics", text)
     }
 
     private fun buildDiagnostics(): JSONObject {
@@ -156,29 +174,69 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
         return names
     }
 
+    private fun componentFromSecure(raw: String): ComponentName? {
+        val text = raw.trim()
+        if (text.isEmpty()) return null
+        return ComponentName.unflattenFromString(text)
+    }
+
+    private fun muteBeeps() {
+        val am = audioManager() ?: return
+        if (streamsMuted) return
+        am.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_MUTE, 0)
+        am.adjustStreamVolume(AudioManager.STREAM_SYSTEM, AudioManager.ADJUST_MUTE, 0)
+        streamsMuted = true
+    }
+
+    private fun restoreBeeps() {
+        val am = audioManager() ?: return
+        if (!streamsMuted) return
+        am.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_UNMUTE, 0)
+        am.adjustStreamVolume(AudioManager.STREAM_SYSTEM, AudioManager.ADJUST_UNMUTE, 0)
+        streamsMuted = false
+    }
+
+    private fun audioManager(): AudioManager? {
+        val host = activity ?: return null
+        return host.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+    }
+
+    private fun resetAttempt(component: String, onDevice: Boolean) {
+        rmsMax = 0f
+        partialCount = 0
+        lastRawError = -1
+        lastErrorName = ""
+        finalLength = 0
+        listenComponent = component
+        listenOnDevice = onDevice
+        readyAt = 0L
+        beganAt = 0L
+        endedAt = 0L
+        startedAt = SystemClock.elapsedRealtime()
+        attemptSummary = ""
+    }
+
+    private fun writeAttempt() {
+        val origin = if (startedAt == 0L) SystemClock.elapsedRealtime() else startedAt
+        fun rel(at: Long): String = if (at == 0L) "-" else (at - origin).toString()
+        attemptSummary = "listen component=%s on_device=%s ready=%s begin=%s rms_max=%.1f end=%s partials=%d final_len=%d error=%s:%s".format(
+            listenComponent.ifEmpty { "-" },
+            if (listenOnDevice) "yes" else "no",
+            rel(readyAt),
+            rel(beganAt),
+            rmsMax,
+            rel(endedAt),
+            partialCount,
+            finalLength,
+            if (lastRawError < 0) "-" else lastRawError.toString(),
+            lastErrorName.ifEmpty { "-" },
+        )
+    }
+
     private fun preferGoogle(services: List<ComponentName>): ComponentName? {
         return services.firstOrNull {
             it.packageName.contains("googlequicksearchbox") || it.packageName.startsWith("com.google.")
         } ?: services.firstOrNull()
-    }
-
-    private fun runOnUiBlocking(block: () -> Unit): Boolean {
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            block()
-            return true
-        }
-        val finished = AtomicBoolean(false)
-        val latch = CountDownLatch(1)
-        runOnUiThread {
-            try {
-                block()
-                finished.set(true)
-            } finally {
-                latch.countDown()
-            }
-        }
-        val waited = latch.await(3, TimeUnit.SECONDS)
-        return waited && finished.get()
     }
 
     override fun onMainDestroy() {
@@ -187,6 +245,7 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
             latestPartial = ""
             recognizer?.destroy()
             recognizer = null
+            restoreBeeps()
         }
         super.onMainDestroy()
     }
@@ -200,41 +259,51 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
             }
             val report = buildDiagnostics()
             if (!reportSaysAvailable(report)) {
+                lastErrorName = "unavailable"
+                writeAttempt()
                 emitSignal("failed", "unavailable")
                 return@runOnUiThread
             }
             acceptResults = true
             latestPartial = ""
             val onDevice = report.optBoolean("on_device_available", false)
-            val flagged = report.optBoolean("is_recognition_available", false)
             val services = listedServices(report)
-            val useOnDevice = onDevice && (preferOffline || (!flagged && services.isEmpty()))
-            if (recognizer != null && createdOnDevice != useOnDevice) {
-                recognizer?.destroy()
-                recognizer = null
-            }
-            if (recognizer == null) {
-                val chosen = preferGoogle(services)
+            val useOnDevice = preferOffline && onDevice
+            val chosen = if (useOnDevice) null else componentFromSecure(report.optString("voice_recognition_service")) ?: preferGoogle(services)
+            recognizer?.destroy()
+            recognizer = null
+            resetAttempt(chosen?.flattenToString() ?: if (useOnDevice) "on-device" else "-", useOnDevice)
+            try {
+                muteBeeps()
                 recognizer = if (useOnDevice) {
                     SpeechRecognizer.createOnDeviceSpeechRecognizer(host)
-                } else if (!flagged && chosen != null) {
+                } else if (chosen != null) {
                     SpeechRecognizer.createSpeechRecognizer(host, chosen)
                 } else {
                     SpeechRecognizer.createSpeechRecognizer(host)
                 }
                 createdOnDevice = useOnDevice
                 recognizer?.setRecognitionListener(listener)
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU")
+                intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, host.packageName)
+                intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 60000)
+                intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 10000)
+                intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 8000)
+                if (preferOffline) {
+                    intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                }
+                recognizer?.startListening(intent)
+            } catch (error: Throwable) {
+                restoreBeeps()
+                lastRawError = -1
+                lastErrorName = "client"
+                writeAttempt()
+                emitSignal("failed", "client")
             }
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU")
-            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-            intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, host.packageName)
-            if (preferOffline) {
-                intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            }
-            recognizer?.startListening(intent)
         }
     }
 
@@ -249,30 +318,60 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
             acceptResults = false
             latestPartial = ""
             recognizer?.cancel()
+            restoreBeeps()
         }
     }
 
     @UsedByGodot
     fun partialText(): String = latestPartial
 
+    @UsedByGodot
+    fun rmsUnit(): Float {
+        val scaled = (rmsMax + 2f) / 12f
+        return scaled.coerceIn(0f, 1f)
+    }
+
+    @UsedByGodot
+    fun attemptLog(): String = attemptSummary
+
     private val listener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) {}
-        override fun onBeginningOfSpeech() {}
-        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onReadyForSpeech(params: Bundle?) {
+            readyAt = SystemClock.elapsedRealtime()
+        }
+        override fun onBeginningOfSpeech() {
+            beganAt = SystemClock.elapsedRealtime()
+        }
+        override fun onRmsChanged(rmsdB: Float) {
+            if (rmsdB > rmsMax) rmsMax = rmsdB
+        }
         override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onEndOfSpeech() {}
+        override fun onEndOfSpeech() {
+            endedAt = SystemClock.elapsedRealtime()
+            restoreBeeps()
+        }
         override fun onError(error: Int) {
             if (!acceptResults) {
+                restoreBeeps()
                 return
             }
-            emitSignal("failed", codeName(error))
+            lastRawError = error
+            lastErrorName = codeName(error)
+            writeAttempt()
+            restoreBeeps()
+            emitSignal("failed", lastErrorName)
         }
         override fun onResults(results: Bundle?) {
             if (!acceptResults) {
+                restoreBeeps()
                 return
             }
             val lines = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-            emitSignal("finished", lines?.firstOrNull() ?: "")
+            val text = lines?.firstOrNull() ?: ""
+            finalLength = text.length
+            if (endedAt == 0L) endedAt = SystemClock.elapsedRealtime()
+            writeAttempt()
+            restoreBeeps()
+            emitSignal("finished", text)
         }
         override fun onPartialResults(partialResults: Bundle?) {
             if (!acceptResults) {
@@ -281,6 +380,7 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
             val lines = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             val text = lines?.firstOrNull() ?: ""
             if (text.isNotEmpty()) {
+                partialCount += 1
                 latestPartial = text
                 emitSignal("partial", text)
             }

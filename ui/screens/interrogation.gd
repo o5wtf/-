@@ -178,6 +178,10 @@ func _ready() -> void:
 		await _warm_link()
 
 
+func _system_listen() -> bool:
+	return _talk != null and _talk.stt is SystemStt
+
+
 func _make_stt() -> SttBackend:
 	var store := SettingsStore.load_current()
 	if store.stt_backend == "system":
@@ -222,6 +226,12 @@ func _process(_delta: float) -> void:
 			_talk.cancel()
 		if _mic_input.api_name != "":
 			_mic_input.stop()
+		return
+	if _system_listen():
+		if _mic_input.api_name != "":
+			_mic_input.stop()
+		if _talk._holding:
+			_on_mic_level((_talk.stt as SystemStt).meter_unit())
 		return
 	if _talk.enabled and _access != null and _access.allowed():
 		MicAccess.start_if_allowed(_access, _mic_input)
@@ -337,6 +347,12 @@ func _mic_down() -> void:
 		return
 	if _access != null and _access.just_granted and _mic_input != null:
 		_mic_input.needs_restart = true
+	if _system_listen():
+		if _mic_input != null:
+			_mic_input.stop()
+		if _talk.press():
+			pass
+		return
 	if _mic_input != null and _access != null:
 		MicAccess.start_if_allowed(_access, _mic_input)
 	elif _mic_input != null and _mic_input.api_name == "":

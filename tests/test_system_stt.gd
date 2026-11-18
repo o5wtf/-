@@ -75,6 +75,7 @@ func test_fake_plugin_hold_sends_and_does_not_spend() -> void:
 	var before := SpendMeter.session_stt_usd
 	assert_true(talk.press())
 	assert_eq(fake.started, 1)
+	assert_eq(fake.available_checks, 0)
 	assert_true(fake.offline)
 	await (Engine.get_main_loop() as SceneTree).process_frame
 	talk.push_pcm(VoiceAudio.tone(VoiceAudio.UPLOAD_RATE, 3000))
@@ -191,7 +192,48 @@ func test_listen_timeout_offers_retry() -> void:
 	assert_false(bool(result.get("ok", true)))
 	assert_eq(str(result.get("error", "")), "timeout")
 	assert_eq(str(result.get("message", "")), "Повторить распознавание")
+	assert_eq(fake.cancelled, 1)
 	host.free()
+
+
+func test_slow_diagnostics_does_not_make_listen_unavailable() -> void:
+	var host := Node.new()
+	_attach(host)
+	var fake := _SlowDiagnostics.new()
+	var stt := SystemStt.new()
+	stt.bridge = fake
+	host.add_child(stt)
+	host.add_child(fake)
+	var started_at := Time.get_ticks_msec()
+	stt.start_listen()
+	var heard: Dictionary = await stt.finish_listen()
+	var elapsed := Time.get_ticks_msec() - started_at
+	assert_true(elapsed < 1500)
+	assert_eq(fake.diag_calls, 0)
+	assert_eq(fake.started, 1)
+	assert_eq(fake.stopped, 1)
+	assert_eq(fake.cancelled, 0)
+	assert_true(bool(heard.get("ok", false)))
+	assert_eq(str(heard.get("text", "")), "Где вы были?")
+	assert_true(str(heard.get("error", "")) != "unavailable")
+	fake.hold_result = true
+	stt.listen_timeout_s = 0.05
+	stt.start_listen()
+	var timed: Dictionary = await stt.finish_listen()
+	assert_eq(str(timed.get("error", "")), "timeout")
+	assert_true(str(timed.get("error", "")) != "unavailable")
+	assert_eq(fake.cancelled, 1)
+	assert_eq(fake.diag_calls, 0)
+	host.free()
+	SystemStt.clear_report()
+
+
+func test_cached_diagnostics_do_not_need_a_live_call() -> void:
+	SystemStt.clear_report()
+	SystemStt.note_diagnostics("{\"is_recognition_available\":true,\"on_device_available\":false,\"services\":[]}")
+	assert_true(SystemStt.plugin_available())
+	SystemStt.clear_report()
+	assert_false(SystemStt.plugin_available())
 
 
 func test_unavailable_system_selection_resets_to_gemini_once() -> void:
@@ -316,6 +358,7 @@ func test_turn_log_keeps_ten_and_names_the_span() -> void:
 	assert_true(source.contains("createOnDeviceSpeechRecognizer"))
 	var manifest := FileAccess.get_file_as_string("res://addons/system_speech/export_plugin.gd")
 	assert_true(manifest.contains("android.speech.RecognitionService"))
+	assert_true(manifest.contains("android.permission.MODIFY_AUDIO_SETTINGS"))
 	var stage := FileAccess.get_file_as_string("res://tools/stage_system_speech.sh")
 	assert_true(stage.contains("src/main/kotlin"))
 	var lines := SystemStt.status_lines()
@@ -349,8 +392,19 @@ func test_turn_log_keeps_ten_and_names_the_span() -> void:
 	assert_true(detailed.contains("is_recognition_available_error=hidden"))
 	assert_true(detailed.contains("причина=доступно"))
 	assert_true(source.contains("diagnosticsJson"))
-	assert_true(source.contains("queryIntentServices"))
+	assert_true(source.contains("ADJUST_MUTE"))
+	assert_true(source.contains("voice_recognition_service"))
+	assert_true(source.contains("EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS"))
+	assert_true(source.contains("onRmsChanged"))
+	assert_true(source.contains("attemptLog"))
+	assert_true(source.contains("emitSignal(\"diagnostics\""))
+	assert_false(source.contains("runOnUiBlocking"))
+	assert_false(source.contains("CountDownLatch"))
 	var stt_source := FileAccess.get_file_as_string("res://src/voice/system_stt.gd")
+	assert_false(stt_source.contains("isAvailable"))
+	assert_false(stt_source.contains("_live_plugin_ready"))
+	assert_false(stt_source.contains("bridge.call(\"diagnosticsJson\")"))
+	assert_true(source.contains("queryIntentServices"))
 	assert_false(stt_source.contains("has_method"))
 	assert_false(stt_source.contains("has_signal"))
 	assert_false(stt_source.contains("get_method_list"))
@@ -384,7 +438,7 @@ func _zip(path: String, complete: bool) -> void:
 	zipper.write_file(dex.to_utf8_buffer())
 	zipper.close_file()
 	zipper.start_file("AndroidManifest.xml")
-	var manifest := "android.speech.RecognitionService org.godotengine.plugin.v2.SystemSpeech SystemSpeechPlugin" if complete else "empty"
+	var manifest := "android.speech.RecognitionService org.godotengine.plugin.v2.SystemSpeech SystemSpeechPlugin android.permission.MODIFY_AUDIO_SETTINGS" if complete else "empty"
 	zipper.write_file(manifest.to_utf8_buffer())
 	zipper.close_file()
 	zipper.close()
@@ -455,7 +509,7 @@ class _FakeSpeech:
 	signal finished(text: String)
 	signal failed(code: String)
 
-	var available: bool = true
+	var available_checks: int = 0
 	var offline: bool = false
 	var started: int = 0
 	var stopped: int = 0
@@ -469,7 +523,8 @@ class _FakeSpeech:
 	var on_stop: Callable = Callable()
 
 	func isAvailable() -> bool:
-		return available
+		available_checks += 1
+		return false
 
 	func startListening(prefer: bool) -> void:
 		started += 1
@@ -493,6 +548,12 @@ class _FakeSpeech:
 	func cancelListening() -> void:
 		cancelled += 1
 
+	var diag_calls: int = 0
+
+	func diagnosticsJson() -> String:
+		diag_calls += 1
+		return "{\"activity\":\"missing\",\"is_recognition_available\":false,\"on_device_available\":false,\"services\":[],\"is_recognition_available_error\":\"ui thread timeout\"}"
+
 	func partialText() -> String:
 		partial_reads += 1
 		return partial_line
@@ -500,3 +561,12 @@ class _FakeSpeech:
 	func recover() -> Dictionary:
 		fail = ""
 		return {"ok": true, "text": text, "error": "", "message": "", "usage": {}}
+
+
+class _SlowDiagnostics:
+	extends _FakeSpeech
+
+	func diagnosticsJson() -> String:
+		diag_calls += 1
+		OS.delay_msec(3000)
+		return "{\"activity\":\"missing\",\"is_recognition_available\":false,\"on_device_available\":false,\"services\":[],\"is_recognition_available_error\":\"ui thread timeout\"}"

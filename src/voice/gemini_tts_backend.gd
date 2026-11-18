@@ -13,8 +13,6 @@ const PREFILL_SECONDS := 0.06
 const PREFILL_MIN_SECONDS := 0.04
 ## Если за это время не пришёл ни один звуковой кусок, поток отменяется.
 const FIRST_AUDIO_SECONDS := 10.0
-## Пауза без новых байт после того, как звук уже пошёл. Длинная реплика, которая всё ещё течёт, не обрывается.
-const STREAM_GAP_SECONDS := 30.0
 const MAX_ATTEMPTS := 3
 const INPUT_USD_PER_MILLION := 0.50
 const OUTPUT_USD_PER_MILLION := 6.0
@@ -41,10 +39,6 @@ var _live: bool = false
 var _prefetch_gen: int = 0
 var _closed_line: String = ""
 var _fail_kind: String = ""
-var _watch: bool = false
-var _audio_seen: bool = false
-var _sent_at: float = 0.0
-var _last_data_at: float = 0.0
 ## Вызывается один раз перед ожиданием лимита. Нужен, чтобы живая реплика обогнала подготовку.
 var before_wait: Callable = Callable()
 
@@ -191,7 +185,6 @@ func prefetch(text: String, voice_hint: String = "", style: String = "") -> Stri
 
 
 func stop() -> void:
-	_watch = false
 	_generation += 1
 	_prefetch_gen += 1
 	_live = false
@@ -278,42 +271,16 @@ func _send(text: String, voice_name: String, style: String) -> Dictionary:
 		"on_chunk": _push_pcm,
 	}
 	TurnTiming.mark("tts_sent")
-	_audio_seen = false
-	_sent_at = _now()
-	_last_data_at = _sent_at
-	_watch = true
 	var pending: Variant = transport.call("stream", request)
-	var result: Dictionary = pending if pending is Dictionary else await pending
-	_watch = false
-	return result
+	if pending is Dictionary:
+		return pending
+	return await pending
 
 
 func _process(_delta: float) -> void:
 	if _line_id == "":
 		return
 	_feed()
-	_guard_stream()
-
-
-func _guard_stream() -> void:
-	if not _watch:
-		return
-	var now := _now()
-	var stalled := false
-	if not _audio_seen:
-		stalled = now - _sent_at >= FIRST_AUDIO_SECONDS
-	else:
-		stalled = now - _last_data_at >= STREAM_GAP_SECONDS
-	if not stalled:
-		return
-	_watch = false
-	if transport != null and transport.has_method("cancel"):
-		transport.call("cancel")
-	if _silent:
-		return
-	_fail_kind = format_voice_error("timeout", 0, api_key)
-	_close_playback()
-	_finish_speak(_generation, _line_id, "реплика", "", "")
 
 
 func _push_pcm(bytes: PackedByteArray) -> void:
@@ -329,8 +296,6 @@ func _push_pcm(bytes: PackedByteArray) -> void:
 		return
 	_capture.append_array(ready)
 	_pending.append_array(frames)
-	_audio_seen = true
-	_last_data_at = _now()
 	TurnTiming.mark("first_audio")
 	_maybe_open(false)
 	_feed()
@@ -522,7 +487,7 @@ func _note_usage(usage: Variant) -> void:
 
 
 func _retries(kind: String) -> bool:
-	return kind == "rate_limited" or kind == "overloaded" or kind == "timeout"
+	return kind == "rate_limited" or kind == "overloaded"
 
 
 func _now() -> float:
@@ -534,81 +499,165 @@ func _now() -> float:
 class GeminiTtsTransport:
 	extends Node
 
+	signal settled(outcome: Dictionary)
+
 	var cancelled: bool = false
+	## Тесты подставляют часы и клиент. В игре оба пустые: системные время и HTTPClient.
+	var clock_ms: Callable = Callable()
+	var http_factory: Callable = Callable()
+	var _phase: String = ""
+	var _done: bool = false
+	var _saw_audio: bool = false
+	var _started_ms: int = 0
+	var _status: int = 0
+	var _http: Object = null
+	var _decoder: GeminiSseDecoder = null
+	var _error_body: PackedByteArray = PackedByteArray()
+	var _on_chunk: Variant = null
+	var _path: String = ""
+	var _body: String = ""
+	var _api_key: String = ""
+	var _result: Dictionary = {}
+	var _timer: Timer = null
+
+	func _ready() -> void:
+		process_mode = Node.PROCESS_MODE_ALWAYS
+		_timer = Timer.new()
+		_timer.process_mode = Node.PROCESS_MODE_ALWAYS
+		_timer.process_callback = Timer.TIMER_PROCESS_IDLE
+		_timer.wait_time = 0.05
+		_timer.one_shot = false
+		_timer.timeout.connect(_tick)
+		add_child(_timer)
+
+	func _process(_delta: float) -> void:
+		if _phase != "":
+			_tick()
 
 	func cancel() -> void:
 		cancelled = true
+		if _phase != "":
+			_tick()
 
 	func stream(request: Dictionary) -> Dictionary:
 		cancelled = false
-		var http := HTTPClient.new()
-		var err := http.connect_to_host(HttpSession.HOST, 443, TLSOptions.client())
+		_done = false
+		_saw_audio = false
+		_status = 0
+		_error_body = PackedByteArray()
+		_decoder = null
+		_on_chunk = request.get("on_chunk", Callable())
+		_path = str(request.get("path", ""))
+		_body = JSON.stringify(request.get("body", {}))
+		_api_key = str(request.get("api_key", ""))
+		_started_ms = _now_ms()
+		_http = _make_http()
+		var err: int = _http.connect_to_host(HttpSession.HOST, 443, TLSOptions.client())
 		if err != OK:
-			return _finish(http, _outcome(false, 0, "offline", 0.0, {}))
-		while http.get_status() == HTTPClient.STATUS_CONNECTING or http.get_status() == HTTPClient.STATUS_RESOLVING:
-			if cancelled:
-				return _finish(http, _outcome(false, 0, "stopped", 0.0, {}))
-			http.poll()
-			await get_tree().process_frame
-		if http.get_status() != HTTPClient.STATUS_CONNECTED:
-			return _finish(http, _outcome(false, 0, "offline", 0.0, {}))
-		var headers := PackedStringArray([
-			"Content-Type: application/json",
-			"x-goog-api-key: %s" % str(request.get("api_key", "")),
-		])
-		err = http.request(HTTPClient.METHOD_POST, str(request.get("path", "")), headers, JSON.stringify(request.get("body", {})))
-		if err != OK:
-			return _finish(http, _outcome(false, 0, "offline", 0.0, {}))
-		while http.get_status() == HTTPClient.STATUS_REQUESTING:
-			if cancelled:
-				return _finish(http, _outcome(false, 0, "stopped", 0.0, {}))
-			http.poll()
-			await get_tree().process_frame
-		var status := http.get_response_code()
-		var decoder: GeminiSseDecoder = null
-		var error_body := PackedByteArray()
-		if status == 200:
-			decoder = GeminiSseDecoder.new()
-		var on_chunk: Variant = request.get("on_chunk", Callable())
-		while http.get_status() == HTTPClient.STATUS_BODY:
-			if cancelled:
-				return _finish(http, _outcome(false, status, "stopped", 0.0, {}))
-			http.poll()
-			var chunk := _take_chunk(http)
-			if chunk.is_empty():
-				if http.get_status() != HTTPClient.STATUS_BODY:
-					break
-				await get_tree().process_frame
-				continue
-			while not chunk.is_empty():
-				if decoder == null:
-					error_body.append_array(chunk)
-				else:
-					for pcm in decoder.push(chunk):
-						_emit_pcm(on_chunk, pcm)
-				chunk = _take_chunk(http)
-		if decoder == null:
-			var raw := error_body.get_string_from_utf8()
-			return _finish(http, _outcome(false, status, _kind(status), _retry_after(raw), {}))
-		for pcm in decoder.finish():
-			_emit_pcm(on_chunk, pcm)
-		if decoder.audio_parts == 0:
-			return _finish(http, _outcome(false, status, "no_audio", 0.0, decoder.usage))
-		return _finish(http, _outcome(true, status, "", 0.0, decoder.usage))
-
-	func _finish(http: HTTPClient, outcome: Dictionary) -> Dictionary:
-		http.close()
+			return _close_with(_outcome(false, 0, "offline", 0.0, {}))
+		_phase = "connect"
+		if _timer != null:
+			_timer.start()
+		_tick()
+		if _done:
+			return _result
+		var outcome: Dictionary = await settled
 		return outcome
+
+	func _tick() -> void:
+		if _phase == "" or _done or _http == null:
+			return
+		if cancelled:
+			_complete(_outcome(false, _status, "stopped", 0.0, {}))
+			return
+		if not _saw_audio and _now_ms() - _started_ms >= int(FIRST_AUDIO_SECONDS * 1000.0):
+			_complete(_outcome(false, _status, "timeout", 1.0, {}))
+			return
+		_http.poll()
+		var state: int = _http.get_status()
+		if _phase == "connect":
+			if state == HTTPClient.STATUS_CONNECTING or state == HTTPClient.STATUS_RESOLVING:
+				return
+			if state != HTTPClient.STATUS_CONNECTED:
+				_complete(_outcome(false, 0, "offline", 0.0, {}))
+				return
+			var headers := PackedStringArray([
+				"Content-Type: application/json",
+				"x-goog-api-key: %s" % _api_key,
+			])
+			var err: int = _http.request(HTTPClient.METHOD_POST, _path, headers, _body)
+			if err != OK:
+				_complete(_outcome(false, 0, "offline", 0.0, {}))
+				return
+			_phase = "request"
+			return
+		if _phase == "request":
+			if state == HTTPClient.STATUS_REQUESTING:
+				return
+			_status = _http.get_response_code()
+			if _status == 200:
+				_decoder = GeminiSseDecoder.new()
+			_phase = "body"
+			return
+		if state == HTTPClient.STATUS_BODY:
+			var chunk := _take_chunk(_http)
+			while not chunk.is_empty():
+				if _decoder == null:
+					_error_body.append_array(chunk)
+				else:
+					for pcm in _decoder.push(chunk):
+						_emit_pcm(_on_chunk, pcm)
+				chunk = _take_chunk(_http)
+			return
+		if _decoder == null:
+			var raw := _error_body.get_string_from_utf8()
+			_complete(_outcome(false, _status, _kind(_status), _retry_after(raw), {}))
+			return
+		for pcm in _decoder.finish():
+			_emit_pcm(_on_chunk, pcm)
+		if _decoder.audio_parts == 0:
+			_complete(_outcome(false, _status, "no_audio", 0.0, _decoder.usage))
+		else:
+			_complete(_outcome(true, _status, "", 0.0, _decoder.usage))
+
+	func _complete(outcome: Dictionary) -> void:
+		if _done:
+			return
+		_done = true
+		_phase = ""
+		if _timer != null:
+			_timer.stop()
+		if _http != null:
+			_http.close()
+		_result = outcome
+		settled.emit(outcome)
+
+	func _close_with(outcome: Dictionary) -> Dictionary:
+		_complete(outcome)
+		return outcome
+
+	func _now_ms() -> int:
+		if clock_ms.is_valid():
+			return int(clock_ms.call())
+		return Time.get_ticks_msec()
+
+	func _make_http() -> Object:
+		if http_factory.is_valid():
+			var made: Variant = http_factory.call()
+			if made != null:
+				return made
+		return HTTPClient.new()
 
 	func _outcome(ok: bool, status: int, error_kind: String, retry_after: float, usage: Dictionary) -> Dictionary:
 		return {"ok": ok, "status": status, "error": error_kind, "retry_after": retry_after, "usage": usage}
 
-	func _take_chunk(http: HTTPClient) -> PackedByteArray:
+	func _take_chunk(http: Object) -> PackedByteArray:
 		return GeminiTtsBackend.body_chunk(http.get_status(), Callable(http, "read_response_body_chunk"))
 
 	func _emit_pcm(on_chunk: Variant, pcm: PackedByteArray) -> void:
 		if pcm.is_empty() or on_chunk is not Callable:
 			return
+		_saw_audio = true
 		(on_chunk as Callable).call(pcm)
 
 	func _kind(status: int) -> String:

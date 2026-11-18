@@ -118,8 +118,8 @@ static func _migrate_saved_settings() -> void:
 			file.set_value("mic", "mode", "push_to_talk")
 		if not file.has_section_key("mic", "stt") or str(file.get_value("mic", "stt", "")) == "system":
 			file.set_value("mic", "stt", "gemini")
-		if not file.has_section_key("mic", "stt_offline"):
-			file.set_value("mic", "stt_offline", false)
+		if file.has_section_key("mic", "stt_offline"):
+			file.erase_section_key("mic", "stt_offline")
 		file.set_value("llm", "settings_version", SETTINGS_VERSION)
 		changed = true
 	if changed:

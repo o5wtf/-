@@ -146,7 +146,6 @@ func test_settings_version_and_mic_defaults_stay() -> void:
 	assert_false(store.mic_enabled)
 	assert_eq(store.mic_mode, "push_to_talk")
 	assert_eq(store.stt_backend, "gemini")
-	assert_false(store.stt_offline)
 
 
 func test_ci_builds_android_only() -> void:

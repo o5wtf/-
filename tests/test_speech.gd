@@ -888,30 +888,71 @@ func _assert_bytes(actual: PackedByteArray, expected: PackedByteArray, message: 
 		assert_eq(int(actual[index]), int(expected[index]), message)
 
 
-func test_missing_first_audio_shows_retry_and_releases_the_mic() -> void:
-	var speaker: Node = load("res://src/voice/speaker.gd").new()
-	speaker.set("listen_to_game", false)
+func test_hung_stream_times_out_without_frames_and_releases_the_mic() -> void:
+	var now := {"ms": 0}
+	var transport := GeminiTtsBackend.GeminiTtsTransport.new()
+	transport.clock_ms = func() -> int: return int(now.ms)
+	transport.http_factory = func() -> Object: return _StuckHttp.new()
 	var backend := GeminiTtsBackend.new()
 	backend.api_key = "unit-test-key-1234"
 	backend.use_cache = false
-	backend._instant = true
-	backend.transport = _HangStream.new()
+	backend.transport = transport
+	var speaker: Node = load("res://src/voice/speaker.gd").new()
+	speaker.set("listen_to_game", false)
 	speaker.set("backend", backend)
 	var root := (Engine.get_main_loop() as SceneTree).root
 	root.add_child(speaker)
+	backend.add_child(transport)
 	speaker.set("enabled", true)
 	var retries: Array[bool] = []
 	speaker.connect("voice_retry_available", func(show: bool) -> void: retries.append(show))
 	speaker.call("speak_reply", "agent", "Где вы были ночью, когда погас свет?")
-	await (Engine.get_main_loop() as SceneTree).process_frame
-	backend._clock_s = GeminiTtsBackend.FIRST_AUDIO_SECONDS
-	backend._process(0.1)
-	await (Engine.get_main_loop() as SceneTree).process_frame
+	now.ms = int(GeminiTtsBackend.FIRST_AUDIO_SECONDS * 1000.0)
+	transport._tick()
 	assert_false(bool(speaker.get("speaking")))
 	assert_false((speaker.get("retry_line") as Dictionary).is_empty())
 	assert_true(retries.has(true))
 	assert_true(str(speaker.get("last_error")).begins_with("timeout"))
 	speaker.free()
+
+
+func test_stream_after_first_audio_is_not_cut_by_the_clock() -> void:
+	var now := {"ms": 0}
+	var http := _StepHttp.new()
+	var transport := GeminiTtsBackend.GeminiTtsTransport.new()
+	transport.clock_ms = func() -> int: return int(now.ms)
+	transport.http_factory = func() -> Object: return http
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(transport)
+	var pcm := _pcm_bytes(4)
+	var event := "data: {\"candidates\":[{\"content\":{\"parts\":[{\"inlineData\":{\"data\":\"%s\"}}]}}]}\r\n\r\n" % Marshalls.raw_to_base64(pcm)
+	var piece := event.to_utf8_buffer()
+	var got: Array = []
+	var pending: Variant = transport.call("stream", {
+		"path": "/v1beta/models/x:streamGenerateContent?alt=sse",
+		"body": {},
+		"api_key": "k",
+		"on_chunk": func(chunk: PackedByteArray) -> void: got.append(chunk),
+	})
+	http.mode = "connected"
+	transport._tick()
+	http.mode = "body"
+	http.chunks = [piece]
+	now.ms = 1000
+	transport._tick()
+	transport._tick()
+	assert_false(got.is_empty())
+	now.ms = 120000
+	http.chunks = [piece]
+	transport._tick()
+	http.mode = "done"
+	transport._tick()
+	assert_true(transport._done)
+	var result: Dictionary = transport._result
+	assert_true(bool(result.get("ok", false)))
+	assert_eq(str(result.get("error", "")), "")
+	assert_eq(got.size(), 2)
+	transport.free()
 
 
 func test_long_streaming_line_is_not_cut() -> void:
@@ -935,27 +976,82 @@ func test_long_streaming_line_is_not_cut() -> void:
 	assert_eq(errors, [])
 	assert_eq(finished_ids, ["line"])
 	assert_eq(paced.pieces, 8)
-	assert_true(backend._clock_s > GeminiTtsBackend.STREAM_GAP_SECONDS)
+	assert_true(backend._clock_s > GeminiTtsBackend.FIRST_AUDIO_SECONDS)
 	var source := FileAccess.get_file_as_string("res://src/voice/gemini_tts_backend.gd")
-	assert_true(source.contains("http.close()"))
+	var loop_from := source.find("func stream(")
+	var loop_to := source.find("func _tick(")
+	var loop := source.substr(loop_from, loop_to - loop_from)
+	assert_false(loop.contains("process_frame"))
+	assert_true(source.contains("PROCESS_MODE_ALWAYS"))
 	assert_false(source.contains("HttpSession.checkin"))
-	assert_true(source.contains("_guard_stream"))
+	var game := FileAccess.get_file_as_string("res://src/autoload/game.gd")
+	assert_false(game.contains("wait_until_quiet"))
+	var speaker := FileAccess.get_file_as_string("res://src/voice/speaker.gd")
+	assert_false(speaker.contains("wait_until_quiet"))
 	backend.free()
 
 
-class _HangStream:
+class _StuckHttp:
 	extends RefCounted
 
-	var cancelled: bool = false
+	func connect_to_host(_host: String, _port: int, _tls: TLSOptions = null) -> int:
+		return OK
 
-	func cancel() -> void:
-		cancelled = true
+	func get_status() -> int:
+		return HTTPClient.STATUS_CONNECTING
 
-	func stream(_request: Dictionary) -> Dictionary:
-		cancelled = false
-		while not cancelled:
-			await (Engine.get_main_loop() as SceneTree).process_frame
-		return {"ok": false, "status": 0, "error": "stopped", "retry_after": 0.0, "usage": {}}
+	func poll() -> void:
+		pass
+
+	func request(_method: int, _path: String, _headers: PackedStringArray, _body: String) -> int:
+		return OK
+
+	func get_response_code() -> int:
+		return 0
+
+	func read_response_body_chunk() -> PackedByteArray:
+		return PackedByteArray()
+
+	func close() -> void:
+		pass
+
+
+class _StepHttp:
+	extends RefCounted
+
+	var mode: String = "connecting"
+	var chunks: Array = []
+
+	func connect_to_host(_host: String, _port: int, _tls: TLSOptions = null) -> int:
+		return OK
+
+	func get_status() -> int:
+		match mode:
+			"connecting":
+				return HTTPClient.STATUS_CONNECTING
+			"requesting":
+				return HTTPClient.STATUS_REQUESTING
+			"body":
+				return HTTPClient.STATUS_BODY
+			_:
+				return HTTPClient.STATUS_CONNECTED
+
+	func poll() -> void:
+		pass
+
+	func request(_method: int, _path: String, _headers: PackedStringArray, _body: String) -> int:
+		return OK
+
+	func get_response_code() -> int:
+		return 200
+
+	func read_response_body_chunk() -> PackedByteArray:
+		if chunks.is_empty():
+			return PackedByteArray()
+		return chunks.pop_front()
+
+	func close() -> void:
+		pass
 
 
 class _PacedStream:

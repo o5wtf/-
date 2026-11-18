@@ -22,8 +22,6 @@ var mic_enabled: bool = false
 var mic_mode: String = "push_to_talk"
 ## gemini | system. По умолчанию облачное распознавание.
 var stt_backend: String = "gemini"
-## Для системного распознавания: EXTRA_PREFER_OFFLINE, если движок умеет.
-var stt_offline: bool = false
 
 
 static func load_current() -> SettingsStore:
@@ -47,8 +45,6 @@ static func load_current() -> SettingsStore:
 		store.mic_enabled = bool(file.get_value("mic", "enabled"))
 	if file.load(PATH) == OK and file.has_section_key("mic", "mode"):
 		store.mic_mode = "hands_free" if str(file.get_value("mic", "mode")) == "hands_free" else "push_to_talk"
-	if file.load(PATH) == OK and file.has_section_key("mic", "stt_offline"):
-		store.stt_offline = bool(file.get_value("mic", "stt_offline"))
 	store.stt_backend = "gemini"
 	if file.load(PATH) == OK and str(file.get_value("mic", "stt", "gemini")) == "system":
 		file.set_value("mic", "stt", "gemini")
@@ -84,8 +80,6 @@ static func save_values(provider: String, api_key: String, dialogue_model: Strin
 		file.set_value("mic", "mode", "hands_free" if str(mic_mode) == "hands_free" else "push_to_talk")
 	if stt_backend != null:
 		file.set_value("mic", "stt", "gemini")
-	if stt_offline != null:
-		file.set_value("mic", "stt_offline", bool(stt_offline))
 	file.save(PATH)
 
 

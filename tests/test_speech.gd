@@ -666,6 +666,145 @@ func test_gemini_stop_clears_the_unplayed_queue() -> void:
 	backend.free()
 
 
+func test_short_lines_finish_under_the_rate_limit() -> void:
+	var limiter := VoiceRateLimiter.new()
+	for _index in VoiceRateLimiter.LIMIT:
+		limiter.mark(0.0)
+	var speaker: Node = load("res://src/voice/speaker.gd").new()
+	speaker.set("listen_to_game", false)
+	var paced := PacedBackend.new()
+	paced.limiter = limiter
+	speaker.set("backend", paced)
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(speaker)
+	speaker.set("enabled", true)
+	var retries: Array[bool] = []
+	speaker.connect("voice_retry_available", func(show_button: bool) -> void: retries.append(show_button))
+	var queue: SpeechQueue = speaker.get("queue")
+	assert_true(queue.enqueue("s1", "Раз."))
+	assert_true(queue.enqueue("s2", "Два."))
+	assert_true(queue.enqueue("s3", "Три."))
+	speaker.call("_pump")
+	assert_eq(paced.started_ids, ["s1", "s2", "s3"])
+	assert_eq(paced.finished_ids, ["s1", "s2", "s3"])
+	assert_true(paced.waited)
+	assert_eq(queue.current_id, "")
+	assert_true(retries.is_empty())
+	var log := "\n".join(speaker.get("voice_log"))
+	assert_true(log.contains("started"))
+	assert_true(log.contains("finished"))
+	assert_false(log.contains("watchdog"))
+	speaker.free()
+
+
+func test_stop_then_the_same_line_can_play_again() -> void:
+	var speaker: Node = load("res://src/voice/speaker.gd").new()
+	speaker.set("listen_to_game", false)
+	var stuck := SilentBackend.new()
+	speaker.set("backend", stuck)
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(speaker)
+	speaker.set("enabled", true)
+	var buttons: Array[bool] = []
+	speaker.connect("voice_retry_available", func(show_button: bool) -> void: buttons.append(show_button))
+	var line_id := str(speaker.call("line_id_for", "a"))
+	speaker.call("speak_reply", "a", "Одна реплика.")
+	speaker.call("stop_and_clear")
+	var queue: SpeechQueue = speaker.get("queue")
+	assert_eq(queue.current_id, "")
+	assert_false(queue.has(line_id))
+	assert_true(buttons.is_empty() or not buttons[buttons.size() - 1])
+	speaker.call("speak_reply", "a", "Одна реплика.")
+	assert_eq(stuck.calls[stuck.calls.size() - 1], line_id)
+	speaker.free()
+
+
+func test_mismatched_finish_keeps_the_current_line() -> void:
+	var speaker: Node = load("res://src/voice/speaker.gd").new()
+	speaker.set("listen_to_game", false)
+	var stuck := SilentBackend.new()
+	speaker.set("backend", stuck)
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(speaker)
+	speaker.set("enabled", true)
+	speaker.call("speak_reply", "a", "Текущая реплика.")
+	var queue: SpeechQueue = speaker.get("queue")
+	var current := queue.current_id
+	stuck.finished.emit("другая")
+	assert_eq(queue.current_id, current)
+	var log := "\n".join(speaker.get("voice_log"))
+	assert_true(log.contains("mismatch"))
+	speaker.free()
+
+
+func test_duplicate_and_empty_text_do_not_stick_the_queue() -> void:
+	var speaker: Node = load("res://src/voice/speaker.gd").new()
+	speaker.set("listen_to_game", false)
+	var fake := StyleBackend.new()
+	speaker.set("backend", fake)
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(speaker)
+	speaker.set("enabled", true)
+	var buttons: Array[bool] = []
+	speaker.connect("voice_retry_available", func(show_button: bool) -> void: buttons.append(show_button))
+	speaker.call("speak_reply", "a", "Первая реплика.")
+	speaker.call("speak_reply", "a", "Первая реплика.")
+	assert_eq(fake.calls.size(), 1)
+	var log := "\n".join(speaker.get("voice_log"))
+	assert_true(log.contains("duplicate"))
+	speaker.call("speak_reply", "b", "(тихо)")
+	assert_eq(fake.calls.size(), 1)
+	assert_true("\n".join(speaker.get("voice_log")).contains("empty"))
+	assert_true(buttons[buttons.size() - 1])
+	var queue: SpeechQueue = speaker.get("queue")
+	assert_eq(queue.current_id, "")
+	speaker.free()
+
+
+func test_composed_style_reaches_the_backend_until_intonation_is_off() -> void:
+	var path := SettingsStore.PATH
+	var previous := FileAccess.get_file_as_string(path) if FileAccess.file_exists(path) else ""
+	var store := SettingsStore.load_current()
+	SettingsStore.save_values(store.provider, store.api_key, store.dialogue_model, store.text_scale, store.timing_debug, true, store.voice_engine, true)
+	Game.speech_style = "нервно, медленно"
+	var speaker: Node = load("res://src/voice/speaker.gd").new()
+	speaker.set("listen_to_game", false)
+	var fake := StyleBackend.new()
+	speaker.set("backend", fake)
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(speaker)
+	speaker.set("enabled", true)
+	speaker.call("speak_reply", "a", "Реплика с темпом.")
+	assert_eq(fake.styles[0], "нервно, медленно")
+	SettingsStore.save_values(store.provider, store.api_key, store.dialogue_model, store.text_scale, store.timing_debug, true, store.voice_engine, false)
+	Game.speech_line = VocalTags.for_backend("Я был дома. <sigh>", true, false)
+	speaker.call("_on_replied", "b", "Я был дома. <sigh>", "")
+	assert_eq(fake.styles[1], "")
+	assert_false(str(fake.texts[1]).contains("<"))
+	Game.speech_style = ""
+	Game.speech_line = ""
+	if previous == "":
+		DirAccess.remove_absolute(path)
+	else:
+		var restore := FileAccess.open(path, FileAccess.WRITE)
+		restore.store_string(previous)
+		restore.close()
+	speaker.free()
+
+
+func test_system_cancel_emits_stopped() -> void:
+	var driver := ScriptedTts.new()
+	var backend := _backend(driver)
+	driver.voices_plan = func(_language: String, _call_index: int) -> Array:
+		backend.stop()
+		return []
+	var errors: Array[String] = []
+	backend.speech_error.connect(func(_id: String, kind: String) -> void: errors.append(kind))
+	await backend.speak("line", "Текст для проверки.", "")
+	assert_eq(errors, ["stopped"])
+	backend.free()
+
+
 func test_speaker_queues_without_interrupting_and_stop_clears() -> void:
 	var speaker: Node = load("res://src/voice/speaker.gd").new()
 	speaker.set("listen_to_game", false)
@@ -862,6 +1001,59 @@ class FailingGemini:
 
 	func stop() -> void:
 		pass
+
+
+class PacedBackend:
+	extends SpeechBackend
+
+	var limiter: VoiceRateLimiter
+	var clock: float = 0.0
+	var waited: bool = false
+	var started_ids: Array[String] = []
+	var finished_ids: Array[String] = []
+
+	func speak(line_id: String, _text: String, _voice_hint: String = "", _style: String = "") -> void:
+		var wait := limiter.delay_for(clock)
+		if wait > 0.0:
+			waited = true
+			clock += wait
+		limiter.mark(clock)
+		started_ids.append(line_id)
+		started.emit(line_id)
+		finished_ids.append(line_id)
+		finished.emit(line_id)
+
+	func stop() -> void:
+		pass
+
+
+class SilentBackend:
+	extends SpeechBackend
+
+	var calls: Array[String] = []
+
+	func speak(line_id: String, _text: String, _voice_hint: String = "", _style: String = "") -> void:
+		calls.append(line_id)
+
+	func stop() -> void:
+		calls.append("stop")
+
+
+class StyleBackend:
+	extends SpeechBackend
+
+	var calls: Array[String] = []
+	var styles: Array[String] = []
+	var texts: Array[String] = []
+
+	func speak(line_id: String, text: String, _voice_hint: String = "", style: String = "") -> void:
+		calls.append(line_id)
+		styles.append(style)
+		texts.append(SpeechText.clean(text))
+		finished.emit(line_id)
+
+	func stop() -> void:
+		calls.append("stop")
 
 
 class FakeBackend:

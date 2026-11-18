@@ -20,6 +20,7 @@ var _utterances: Dictionary = {}
 var _next_utterance: int = 1
 var _active: int = 0
 var _generation: int = 0
+var _closed: bool = false
 var _instant: bool = false
 var _clock_s: float = 0.0
 
@@ -31,6 +32,7 @@ func _ready() -> void:
 
 
 func speak(line_id: String, text: String, voice_hint: String = "", _style: String = "") -> void:
+	_closed = false
 	var token := _generation
 	var spoken := VocalTags.visible(text).strip_edges()
 	if spoken == "":
@@ -41,6 +43,7 @@ func speak(line_id: String, text: String, voice_hint: String = "", _style: Strin
 	var any_voices: Array = []
 	while true:
 		if token != _generation:
+			_fail(line_id, "stopped")
 			return
 		russian = _voices("ru")
 		any_voices = _voices("")
@@ -55,6 +58,7 @@ func speak(line_id: String, text: String, voice_hint: String = "", _style: Strin
 		else:
 			await get_tree().create_timer(retry_interval_s).timeout
 	if token != _generation:
+		_fail(line_id, "stopped")
 		return
 	if russian.is_empty() and any_voices.is_empty():
 		last_voice_id = ""
@@ -111,6 +115,9 @@ static func choose_voice(hint: String, russian: Array, any_voices: Array) -> Str
 
 
 func _fail(line_id: String, kind: String) -> void:
+	if _closed:
+		return
+	_closed = true
 	last_error = kind
 	speech_error.emit(line_id, kind)
 
@@ -143,14 +150,18 @@ func _on_canceled(utterance_id: int) -> void:
 	_complete(utterance_id, true)
 
 
-func _complete(utterance_id: int, _canceled: bool) -> void:
+func _complete(utterance_id: int, canceled: bool) -> void:
 	var line_id := str(_utterances.get(utterance_id, ""))
 	if line_id == "":
 		return
 	_utterances.erase(utterance_id)
 	if _active == utterance_id:
 		_active = 0
-	finished.emit(line_id)
+	if canceled:
+		_fail(line_id, "stopped")
+	elif not _closed:
+		_closed = true
+		finished.emit(line_id)
 
 
 static func _match(hint: String, voices: Array) -> String:

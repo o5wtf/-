@@ -115,6 +115,13 @@ func _ready() -> void:
 	_voice_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_voice_status.add_theme_color_override("font_color", NoirTheme.MUTED)
 	scroll_box.add_child(_voice_status)
+	var voice_log := UiWidgets.label("", "VoiceLogLabel")
+	voice_log.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	voice_log.add_theme_color_override("font_color", NoirTheme.MUTED)
+	scroll_box.add_child(voice_log)
+	voice_log.text = "\n".join(Speaker.voice_log)
+	if not Speaker.voice_log_changed.is_connected(_show_voice_log):
+		Speaker.voice_log_changed.connect(_show_voice_log.bind(voice_log))
 	_status = UiWidgets.label("", "StatusLabel")
 	scroll_box.add_child(_status)
 	var save := UiWidgets.button(UiStrings.SAVE, "SaveButton")
@@ -215,6 +222,11 @@ func _ping_request() -> Dictionary:
 			"required": ["ok"],
 		},
 	}
+
+
+func _show_voice_log(label: Label) -> void:
+	if label != null and is_instance_valid(label):
+		label.text = "\n".join(Speaker.voice_log)
 
 
 func _check_voice() -> void:

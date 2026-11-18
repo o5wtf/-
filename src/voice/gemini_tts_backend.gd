@@ -33,6 +33,8 @@ var _capture: PackedByteArray = PackedByteArray()
 var _silent: bool = false
 var _live: bool = false
 var _prefetch_gen: int = 0
+var _closed_line: String = ""
+var _fail_kind: String = ""
 ## Вызывается один раз перед ожиданием лимита. Нужен, чтобы живая реплика обогнала подготовку.
 var before_wait: Callable = Callable()
 
@@ -52,28 +54,29 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 	_begin_live()
 	var token := _generation
 	var spoken := text.strip_edges()
+	_closed_line = ""
+	_fail_kind = ""
 	_line_id = line_id
 	_reset_audio()
 	_line_id = line_id
 	if spoken == "":
-		speech_error.emit(line_id, "empty")
-		_end_live()
+		_finish_speak(token, line_id, spoken, "", style)
 		return
 	if api_key.strip_edges() == "":
-		speech_error.emit(line_id, "auth")
-		_end_live()
+		_fail_kind = "auth"
+		_finish_speak(token, line_id, spoken, "", style)
 		return
 	var voice := voice_hint.strip_edges()
 	if voice == "":
 		voice = VoiceCast.FEMALE
 	if _play_cached(token, spoken, voice, style):
 		await _wait_until_heard(token)
-		_end_live()
+		_finish_speak(token, line_id, spoken, voice, style)
 		return
 	var attempt := 0
 	while attempt < MAX_ATTEMPTS:
 		if token != _generation:
-			_end_live()
+			_finish_speak(token, line_id, spoken, voice, style)
 			return
 		var wait := limiter.delay_for(_now())
 		if wait > 0.0:
@@ -82,13 +85,15 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 			else:
 				await get_tree().create_timer(wait).timeout
 		if token != _generation:
-			_end_live()
+			_finish_speak(token, line_id, spoken, voice, style)
 			return
 		limiter.mark(_now())
 		_reset_audio()
+		_line_id = line_id
 		var result: Dictionary = await _send(spoken, voice, style)
 		if token != _generation or str(result.get("error", "")) == "stopped":
-			_end_live()
+			_fail_kind = "stopped"
+			_finish_speak(token, line_id, spoken, voice, style)
 			return
 		var status := int(result.get("status", 0))
 		if result.get("ok", false):
@@ -97,11 +102,9 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 			_maybe_open(true)
 			if _started_line:
 				await _wait_until_heard(token)
-				_store_capture(spoken, voice, style)
 			else:
-				var shown_status := status if status > 0 else 200
-				speech_error.emit(line_id, format_voice_error("no_audio", shown_status, api_key))
-			_end_live()
+				_fail_kind = format_voice_error("no_audio", status if status > 0 else 200, api_key)
+			_finish_speak(token, line_id, spoken, voice, style)
 			return
 		var kind := str(result.get("error", "bad_response"))
 		if kind == "":
@@ -112,8 +115,8 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 		_reset_audio()
 		_close_playback()
 		if attempt >= MAX_ATTEMPTS or not _retries(kind):
-			speech_error.emit(line_id, format_voice_error(kind, status, api_key))
-			_end_live()
+			_fail_kind = format_voice_error(kind, status, api_key)
+			_finish_speak(token, line_id, spoken, voice, style)
 			return
 		var pause := float(result.get("retry_after", 1.0))
 		if pause < 0.0:
@@ -122,8 +125,8 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 			_clock_s += pause
 		else:
 			await get_tree().create_timer(pause).timeout
-	speech_error.emit(line_id, format_voice_error("bad_response", 0, api_key))
-	_end_live()
+	_fail_kind = format_voice_error("bad_response", 0, api_key)
+	_finish_speak(token, line_id, spoken, voice, style)
 
 
 func prefetch(text: String, voice_hint: String = "", style: String = "") -> String:
@@ -384,21 +387,42 @@ func _wait_until_heard(token: int) -> void:
 		_maybe_open(true)
 		_feed()
 		if _heard():
-			break
+			return
 		steps += 1
 		if steps > 100000:
-			speech_error.emit(_line_id, "playback")
+			_fail_kind = "playback"
 			return
 		if _instant:
 			if sink != null and sink.has_method("advance"):
 				sink.call("advance")
 			else:
-				break
+				_fail_kind = "playback"
+				return
 		else:
 			await get_tree().process_frame
-	if token != _generation or not _started_line or not _heard():
+	_fail_kind = "stopped"
+
+
+func _finish_speak(token: int, line_id: String, spoken: String, voice: String, style: String) -> void:
+	if _closed_line == line_id:
+		_end_live()
 		return
-	finished.emit(_line_id)
+	var kind := _fail_kind
+	if spoken == "":
+		kind = "empty"
+	elif token != _generation:
+		kind = "stopped"
+	elif kind == "" and _started_line and _heard():
+		_store_capture(spoken, voice, style)
+		kind = ""
+	elif kind == "":
+		kind = "no_audio" if not _started_line else "playback"
+	_closed_line = line_id
+	if kind == "":
+		finished.emit(line_id)
+	else:
+		speech_error.emit(line_id, kind)
+	_end_live()
 
 
 func _write(frames: PackedVector2Array) -> void:

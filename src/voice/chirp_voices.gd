@@ -5,9 +5,9 @@ extends RefCounted
 
 const MODEL_ID := "chirp-3-hd"
 const BYTE_LIMIT := 4800
-## Первый кусок короткий, чтобы звук начался быстро. Дальше — до лимита запроса.
-const FIRST_CHARS_MAX := 250
-const FIRST_SENTENCES_MAX := 2
+## Куски растут, чтобы следующий успел синтезироваться, пока играет текущий.
+const CHUNK_CHAR_TARGETS: Array[int] = [150, 300, 600, 1200]
+const PREFETCH_AHEAD := 2
 const FEMALE_FALLBACK := "Kore"
 const MALE_FALLBACK := "Charon"
 
@@ -71,84 +71,44 @@ static func spoken_text(text: String) -> String:
 
 
 static func chunks(text: String, limit: int = BYTE_LIMIT) -> PackedStringArray:
-	var clean := text.strip_edges()
-	if clean == "":
-		return PackedStringArray()
-	var sentences := _sentences(clean)
+	var sentences := _sentences(text.strip_edges())
 	if sentences.is_empty():
 		return PackedStringArray()
-	var first := ""
+	var out := PackedStringArray()
 	var index := 0
-	var sentence := str(sentences[0])
-	if sentence.length() <= FIRST_CHARS_MAX and sentence.to_utf8_buffer().size() <= limit:
-		first = sentence
-		index = 1
-		if sentences.size() > 1:
-			var second := str(sentences[1])
-			var pair := "%s %s" % [first, second]
-			if pair.length() <= FIRST_CHARS_MAX and pair.to_utf8_buffer().size() <= limit:
-				first = pair
-				index = 2
-	else:
-		first = _cut_chars(sentence, mini(FIRST_CHARS_MAX, sentence.length()), limit)
-		var tail := sentence.substr(first.length()).strip_edges()
-		if tail != "":
-			sentences[0] = tail
-			index = 0
-		else:
-			index = 1
-	var out := PackedStringArray()
-	if first != "":
-		out.append(first)
-	var rest := PackedStringArray()
+	var step := 0
 	while index < sentences.size():
-		rest.append(str(sentences[index]))
-		index += 1
-	if rest.is_empty():
-		return out
-	for part in _pack(" ".join(rest), limit):
-		out.append(part)
-	return out
-
-
-static func _cut_chars(text: String, max_chars: int, limit: int) -> String:
-	var cap := mini(max_chars, text.length())
-	if cap < 1:
-		cap = 1
-	var slice := text.substr(0, cap)
-	var space := slice.rfind(" ")
-	if space >= 150 and space < cap:
-		slice = slice.substr(0, space)
-	while slice.to_utf8_buffer().size() > limit and slice.length() > 1:
-		slice = slice.substr(0, slice.length() - 1)
-	return slice.strip_edges()
-
-
-static func _pack(text: String, limit: int) -> PackedStringArray:
-	var clean := text.strip_edges()
-	if clean == "":
-		return PackedStringArray()
-	if clean.to_utf8_buffer().size() <= limit:
-		return PackedStringArray([clean])
-	var out := PackedStringArray()
-	var current := ""
-	for sentence in _sentences(clean):
-		var piece := str(sentence)
-		if piece.to_utf8_buffer().size() > limit:
-			if current != "":
-				out.append(current)
+		var target := 1000000
+		if step < CHUNK_CHAR_TARGETS.size():
+			target = CHUNK_CHAR_TARGETS[step]
+		var current := ""
+		var progressed := false
+		while index < sentences.size():
+			var sentence := str(sentences[index])
+			if sentence.to_utf8_buffer().size() > limit:
+				if current != "":
+					break
+				for part in _split_long(sentence, limit):
+					out.append(part)
+				index += 1
+				progressed = true
 				current = ""
-			for part in _split_long(piece, limit):
-				out.append(part)
-			continue
-		var candidate := piece if current == "" else "%s %s" % [current, piece]
-		if candidate.to_utf8_buffer().size() > limit:
-			out.append(current)
-			current = piece
-		else:
+				break
+			var candidate := sentence if current == "" else "%s %s" % [current, sentence]
+			var over_target := current != "" and candidate.length() > target
+			var over_limit := candidate.to_utf8_buffer().size() > limit
+			if over_target or over_limit:
+				break
 			current = candidate
-	if current != "":
-		out.append(current)
+			index += 1
+			progressed = true
+			if sentence.length() > target:
+				break
+		if current != "":
+			out.append(current)
+		elif not progressed:
+			break
+		step += 1
 	return out
 
 

@@ -117,23 +117,26 @@ func test_chirp_strips_marks_maps_tempo_and_splits_long_lines() -> void:
 	assert_false(spoken.contains("<"))
 	assert_true(spoken.contains("Я был."))
 	assert_true(spoken.contains("Это правда."))
-	var short := ChirpVoices.chunks("Раз. Два. Три. Четыре.")
-	assert_eq(short[0], "Раз. Два.")
-	assert_true(short[0].length() <= ChirpVoices.FIRST_CHARS_MAX)
-	assert_true(short.size() >= 2)
-	var wordy := ("Слово ".repeat(200)).strip_edges()
-	var cut := ChirpVoices.chunks(wordy)
-	assert_true(cut[0].length() <= ChirpVoices.FIRST_CHARS_MAX, str(cut[0].length()))
-	assert_true(cut[0].length() >= 150, str(cut[0].length()))
-	assert_true(cut[1].length() > ChirpVoices.FIRST_CHARS_MAX, str(cut[1].length()))
+	var sequence := _sentences(40, 40)
+	var parts := ChirpVoices.chunks(sequence)
+	assert_true(parts.size() >= 3, str(parts.size()))
+	assert_true(parts[0].length() <= ChirpVoices.CHUNK_CHAR_TARGETS[0], str(parts[0].length()))
+	assert_true(parts[1].length() <= ChirpVoices.CHUNK_CHAR_TARGETS[1], str(parts[1].length()))
+	assert_true(parts[1].length() > parts[0].length())
+	assert_true(parts[2].length() <= ChirpVoices.CHUNK_CHAR_TARGETS[2], str(parts[2].length()))
 	var kept := ""
-	for piece in cut:
+	for piece in parts:
+		assert_true(piece.to_utf8_buffer().size() <= ChirpVoices.BYTE_LIMIT)
 		kept += piece.replace(" ", "")
-	assert_eq(kept, wordy.replace(" ", ""))
+	assert_eq(kept, sequence.replace(" ", ""))
+	var whole := "%s." % "Б".repeat(400)
+	var single := ChirpVoices.chunks(whole)
+	assert_eq(single.size(), 1)
+	assert_eq(single[0], whole)
 	var long_sentence := "%s." % "А".repeat(2000)
 	var text := "%s %s" % [long_sentence, long_sentence]
 	var pieces := ChirpVoices.chunks(text)
-	assert_true(pieces.size() >= 2)
+	assert_eq(pieces.size(), 2)
 	var flat := ""
 	for piece in pieces:
 		assert_true(piece.to_utf8_buffer().size() <= ChirpVoices.BYTE_LIMIT)
@@ -158,12 +161,11 @@ func test_chirp_strips_marks_maps_tempo_and_splits_long_lines() -> void:
 	http.sink = many.sink
 	await many.speak("line", text, "Kore")
 	assert_eq(http.synth_posts, pieces.size())
-	assert_true(int(http.seen_pushes[1]) >= 1)
 	var play0 := many.chirp_events.find("play:0")
 	var play1 := many.chirp_events.find("play:1")
 	var end0 := many.chirp_events.find("end:0")
 	var synth1 := many.chirp_events.find("synth:1")
-	assert_true(play0 >= 0 and synth1 > play0 and end0 > play0 and play1 > end0, " ".join(many.chirp_events))
+	assert_true(play0 >= 0 and synth1 >= 0 and synth1 < play1 and end0 > play0 and play1 > end0, " ".join(many.chirp_events))
 	many.free()
 	_cleanup()
 
@@ -177,26 +179,54 @@ func test_chirp_playback_is_ordered_and_cancel_drops_the_rest() -> void:
 	http.hold = hold
 	var backend := _backend([])
 	backend.sink = hold
-	var text := "Раз. Два. Три. Четыре. Пять. Шесть."
+	var text := _sentences(20, 80)
 	await backend.speak("line", text, "Kore")
 	assert_eq(hold.overlaps, 0)
 	assert_true(hold.plays >= 2)
-	assert_true(bool(http.saw_playing_during_prefetch))
 	var play0 := backend.chirp_events.find("play:0")
 	var play1 := backend.chirp_events.find("play:1")
 	var end0 := backend.chirp_events.find("end:0")
+	var synth1 := backend.chirp_events.find("synth:1")
+	var synth2 := backend.chirp_events.find("synth:2")
+	assert_true(synth1 >= 0 and synth1 < play1)
+	assert_true(synth2 >= 0 and synth2 < play1, " ".join(backend.chirp_events))
 	assert_true(play1 > end0 and end0 > play0)
 	backend.free()
-	http.hold = null
+	http.hold = _Hold.new()
+	http.hold.cancel_on_advance = true
 	http.synth_posts = 0
-	http.cancel_on_second = true
 	var again := _backend([])
-	again.sink = _Hold.new()
-	http.backend = again
+	again.sink = http.hold
+	http.hold.backend = again
 	await again.speak("line", text, "Kore")
-	assert_false(again.chirp_events.has("play:1"))
 	assert_true(again.chirp_events.has("play:0"))
+	assert_true(again.chirp_events.has("synth:1"))
+	assert_false(again.chirp_events.has("play:1"))
 	again.free()
+	_cleanup()
+
+
+func test_chirp_keeps_only_two_chunks_ahead() -> void:
+	var pem := str(_rsa()["private"])
+	_arm(pem)
+	TtsQuota.selected_override = ChirpVoices.MODEL_ID
+	var http := _http()
+	http.yield_synth = true
+	var backend := _backend([])
+	var text := _sentences(20, 80)
+	await backend.speak("line", text, "Kore")
+	assert_true(http.max_in_flight >= 2)
+	assert_eq(http.synth_posts, ChirpVoices.chunks(text).size())
+	var play1 := backend.chirp_events.find("play:1")
+	var synth2 := backend.chirp_events.find("synth:2")
+	var synth3 := backend.chirp_events.find("synth:3")
+	assert_true(synth2 >= 0 and synth2 < play1, " ".join(backend.chirp_events))
+	assert_true(synth3 > play1, " ".join(backend.chirp_events))
+	var flat := ""
+	for piece in ChirpVoices.chunks(text):
+		flat += piece.replace(" ", "")
+	assert_eq(flat, text.replace(" ", ""))
+	backend.free()
 	_cleanup()
 
 
@@ -285,6 +315,13 @@ func test_settings_greys_chirp_until_a_key_is_present() -> void:
 	assert_false(models.is_item_disabled(index))
 	screen.free()
 	_cleanup()
+
+
+func _sentences(count: int, width: int) -> String:
+	var parts := PackedStringArray()
+	for _index in count:
+		parts.append("%s." % "А".repeat(maxi(width - 1, 1)))
+	return " ".join(parts)
 
 
 func _arm(pem: String) -> void:
@@ -426,12 +463,21 @@ class _Http:
 	var backend: Object = null
 	var cancel_on_second: bool = false
 	var saw_playing_during_prefetch: bool = false
+	var yield_synth: bool = false
+	var in_flight: int = 0
+	var max_in_flight: int = 0
 
 	func post(url: String, body: String, _headers: PackedStringArray) -> Dictionary:
 		if url.contains("text:synthesize"):
 			seen_pushes.append(int(sink.pushes) if sink != null else 0)
 			synth_posts += 1
 			synth_bodies.append(body)
+			if yield_synth:
+				in_flight += 1
+				if in_flight > max_in_flight:
+					max_in_flight = in_flight
+				await (Engine.get_main_loop() as SceneTree).process_frame
+				in_flight -= 1
 			if cancel_on_second and synth_posts >= 2 and backend != null:
 				backend.call("stop")
 				return {"status": 200, "body": "{\"audioContent\":\"\"}"}
@@ -465,6 +511,9 @@ class _Hold:
 	var plays: int = 0
 	var overlaps: int = 0
 	var hold: bool = true
+	var cancel_on_advance: bool = false
+	var backend: Object = null
+	var _cancelled: bool = false
 
 	func start() -> void:
 		pass
@@ -476,7 +525,7 @@ class _Hold:
 		return buffered if hold else 0
 
 	func push(frames: PackedVector2Array) -> void:
-		if buffered > 0:
+		if hold and buffered > 0:
 			overlaps += 1
 		buffered += frames.size()
 		plays += 1
@@ -484,3 +533,10 @@ class _Hold:
 	func release() -> void:
 		hold = false
 		buffered = 0
+
+	func advance() -> void:
+		if cancel_on_advance and backend != null and not _cancelled:
+			_cancelled = true
+			backend.call("stop")
+			return
+		release()

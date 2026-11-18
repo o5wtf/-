@@ -16,19 +16,23 @@ static var key_override = null
 static var transport: Object = null
 static var _token: String = ""
 static var _expires_at: int = 0
-static var _active: HTTPRequest = null
+static var _fetching: bool = false
+static var _actives: Array = []
 
 
 static func reset() -> void:
 	_token = ""
 	_expires_at = 0
+	_fetching = false
 	cancel_active()
 
 
 static func cancel_active() -> void:
-	if _active != null and is_instance_valid(_active):
-		_active.cancel_request()
-	_active = null
+	var pending: Array = _actives.duplicate()
+	_actives.clear()
+	for item in pending:
+		if item is HTTPRequest and is_instance_valid(item):
+			(item as HTTPRequest).cancel_request()
 
 
 static func now_unix() -> int:
@@ -105,35 +109,49 @@ static func access_token(host: Node) -> Dictionary:
 	var now := now_unix()
 	if _token != "" and now < _expires_at - SKEW_S:
 		return {"ok": true, "token": _token, "refreshed": false}
+	while _fetching:
+		if _token != "" and now_unix() < _expires_at - SKEW_S:
+			return {"ok": true, "token": _token, "refreshed": false}
+		if host == null or not host.is_inside_tree():
+			break
+		await host.get_tree().process_frame
+	if _token != "" and now_unix() < _expires_at - SKEW_S:
+		return {"ok": true, "token": _token, "refreshed": false}
+	_fetching = true
 	var account := parse(account_json())
 	if not account.get("ok", false):
+		_fetching = false
 		return account
-	var built := build_jwt(str(account.get("email", "")), str(account.get("private_key", "")), now)
+	var built := build_jwt(str(account.get("email", "")), str(account.get("private_key", "")), now_unix())
 	if not built.get("ok", false):
+		_fetching = false
 		return built
 	var form := "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=%s" % str(built.get("token", "")).uri_encode()
 	var response: Dictionary = await _post(host, TOKEN_URL, form, PackedStringArray(["Content-Type: application/x-www-form-urlencoded"]))
 	var status := int(response.get("status", 0))
 	var raw := str(response.get("body", ""))
-	if status == 401:
-		return {"ok": false, "error": "chirp_auth", "status": status, "message": message_for("chirp_auth", status, raw)}
-	if status == 403:
-		var denied := raw.to_lower()
-		var kind := "chirp_denied"
-		if denied.contains("service_disabled") or denied.contains("has not been used") or denied.contains("is disabled"):
-			kind = "chirp_api"
-		return {"ok": false, "error": kind, "status": status, "message": message_for(kind, status, raw)}
 	if status != 200:
+		_fetching = false
+		if status == 401:
+			return {"ok": false, "error": "chirp_auth", "status": status, "message": message_for("chirp_auth", status, raw)}
+		if status == 403:
+			var denied := raw.to_lower()
+			var kind := "chirp_denied"
+			if denied.contains("service_disabled") or denied.contains("has not been used") or denied.contains("is disabled"):
+				kind = "chirp_api"
+			return {"ok": false, "error": kind, "status": status, "message": message_for(kind, status, raw)}
 		return {"ok": false, "error": "network" if status == 0 else "bad_response", "status": status, "message": message_for("network", status, "")}
 	var parsed: Variant = JSON.parse_string(raw)
 	if parsed is not Dictionary or str((parsed as Dictionary).get("access_token", "")) == "":
+		_fetching = false
 		return {"ok": false, "error": "bad_response", "status": status, "message": message_for("bad_response", status, "")}
 	var granted: Dictionary = parsed
 	_token = str(granted.get("access_token", ""))
 	var ttl := int(granted.get("expires_in", TTL_S))
 	if ttl <= 0:
 		ttl = TTL_S
-	_expires_at = now + ttl
+	_expires_at = now_unix() + ttl
+	_fetching = false
 	if is_instance_valid(Speaker):
 		Speaker.note_line("chirp token refresh")
 	return {"ok": true, "token": _token, "refreshed": true}
@@ -151,19 +169,23 @@ static func _post(host: Node, url: String, body: String, headers: PackedStringAr
 static func _live_post(host: Node, url: String, body: String, headers: PackedStringArray) -> Dictionary:
 	var request := HTTPRequest.new()
 	host.add_child(request)
-	_active = request
+	_actives.append(request)
 	var err := request.request(url, headers, HTTPClient.METHOD_POST, body)
 	if err != OK:
-		if _active == request:
-			_active = null
+		_untrack(request)
 		request.queue_free()
 		return {"status": 0, "body": ""}
 	var args: Array = await request.request_completed
-	if _active == request:
-		_active = null
+	_untrack(request)
 	request.queue_free()
 	var bytes: PackedByteArray = args[3]
 	return {"status": int(args[1]), "body": bytes.get_string_from_utf8()}
+
+
+static func _untrack(request: HTTPRequest) -> void:
+	var index := _actives.find(request)
+	if index >= 0:
+		_actives.remove_at(index)
 
 
 static func _sha256(bytes: PackedByteArray) -> PackedByteArray:

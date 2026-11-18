@@ -368,44 +368,60 @@ func _chirp_line(token: int, spoken: String, voice: String, style: String, silen
 	_chirp_busy = false
 	_chirp_token = token
 	chirp_events = PackedStringArray()
+	var count := pieces.size()
+	var jobs: Array = []
+	jobs.resize(count)
+	var ready: Array = []
+	ready.resize(count)
+	var launched := 0
+	var next_play := 0
+	var focus := 0
 	var joined := PackedByteArray()
-	var index := 0
-	for piece in pieces:
+	while next_play < count:
 		if _chirp_stopped(token, silent_job):
+			ChirpAuth.cancel_active()
 			return {"ok": false, "error": "stopped", "status": 0, "usage": {}}
-		chirp_events.append("synth:%d" % index)
-		var attempt := 0
-		var result: Dictionary = {"ok": false, "error": "bad_response", "status": 0}
-		while attempt < MAX_ATTEMPTS:
+		while launched < count and launched <= focus + ChirpVoices.PREFETCH_AHEAD:
 			if _chirp_stopped(token, silent_job):
+				ChirpAuth.cancel_active()
 				return {"ok": false, "error": "stopped", "status": 0, "usage": {}}
-			result = await ChirpTts.synthesize(self, piece, name, rate)
+			chirp_events.append("synth:%d" % launched)
+			jobs[launched] = call("_synth_piece", str(pieces[launched]), name, rate, token, silent_job)
+			launched += 1
+		if ready[next_play] == null:
+			var resolved: Dictionary = await _as_dict(jobs[next_play])
 			if _chirp_stopped(token, silent_job):
+				ChirpAuth.cancel_active()
 				return {"ok": false, "error": "stopped", "status": 0, "usage": {}}
-			if result.get("ok", false):
-				break
-			var kind := str(result.get("error", "bad_response"))
-			if kind != "rate_limited":
-				return result
-			attempt += 1
-			if attempt >= MAX_ATTEMPTS:
-				return result
-			var pause := minf(float(result.get("retry_after", 1.0)), SHORT_RETRY_CAP_S)
-			if _instant:
-				_clock_s += pause
-			else:
-				await get_tree().create_timer(pause).timeout
-		var pcm: PackedByteArray = result.get("pcm", PackedByteArray())
-		joined.append_array(pcm)
+			if not resolved.get("ok", false):
+				ChirpAuth.cancel_active()
+				return resolved
+			ready[next_play] = resolved
+		var pcm: PackedByteArray = (ready[next_play] as Dictionary).get("pcm", PackedByteArray())
+		if not silent_job and _chirp_busy:
+			_pump_chirp_playback()
+			if _chirp_busy and _instant and sink != null and sink.has_method("advance"):
+				sink.call("advance")
+				if _chirp_stopped(token, silent_job):
+					ChirpAuth.cancel_active()
+					return {"ok": false, "error": "stopped", "status": 0, "usage": {}}
+				_pump_chirp_playback()
+			if _chirp_busy:
+				if _instant:
+					return {"ok": false, "error": "playback", "status": 0, "usage": {}}
+				await get_tree().process_frame
+				continue
 		if not silent_job:
 			_chirp_queue.append(pcm)
 			_pump_chirp_playback()
-		index += 1
+		joined.append_array(pcm)
+		focus = next_play
+		next_play += 1
 	if not silent_job:
 		var spins := 0
-		while token == _generation and (_chirp_busy or not _chirp_queue.is_empty()):
+		while token == _generation and _chirp_busy:
 			_pump_chirp_playback()
-			if not _chirp_busy and _chirp_queue.is_empty():
+			if not _chirp_busy:
 				break
 			spins += 1
 			if spins > 100000:
@@ -419,13 +435,47 @@ func _chirp_line(token: int, spoken: String, voice: String, style: String, silen
 				await get_tree().process_frame
 	_capture = joined
 	_extra_chars = text.length()
-	_extra_chunks = pieces.size()
+	_extra_chunks = count
 	if use_cache and token == _generation:
 		TtsCache.write(_cache_key(text, name, str(rate), ChirpVoices.MODEL_ID), joined)
 		_capture_stored = true
 	if silent_job and is_instance_valid(Speaker):
 		Speaker.note_line("tts model=%s reason=%s chars=%d chunks=%d" % [ChirpVoices.MODEL_ID, reason, text.length(), pieces.size()])
 	return {"ok": true, "status": 200, "usage": {"chars": text.length()}, "error": ""}
+
+
+func _synth_piece(piece: String, voice_name: String, rate: float, token: int, silent_job: bool) -> Dictionary:
+	var attempt := 0
+	var result: Dictionary = {"ok": false, "error": "bad_response", "status": 0}
+	while attempt < MAX_ATTEMPTS:
+		if _chirp_stopped(token, silent_job):
+			return {"ok": false, "error": "stopped", "status": 0}
+		result = await ChirpTts.synthesize(self, piece, voice_name, rate)
+		if _chirp_stopped(token, silent_job):
+			return {"ok": false, "error": "stopped", "status": 0}
+		if result.get("ok", false):
+			return result
+		var kind := str(result.get("error", "bad_response"))
+		if kind != "rate_limited":
+			return result
+		attempt += 1
+		if attempt >= MAX_ATTEMPTS:
+			return result
+		var pause := minf(float(result.get("retry_after", 1.0)), SHORT_RETRY_CAP_S)
+		if _instant:
+			_clock_s += pause
+		else:
+			await get_tree().create_timer(pause).timeout
+	return result
+
+
+func _as_dict(state: Variant) -> Dictionary:
+	if state is Dictionary:
+		return state
+	var value: Variant = await state
+	if value is Dictionary:
+		return value
+	return {"ok": false, "error": "bad_response", "status": 0}
 
 
 func _chirp_stopped(token: int, silent_job: bool) -> bool:

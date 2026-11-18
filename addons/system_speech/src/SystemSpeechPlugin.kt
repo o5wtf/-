@@ -20,9 +20,6 @@ import org.json.JSONObject
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import org.godotengine.godot.plugin.GodotPlugin
-import org.godotengine.godot.plugin.SignalInfo
-import org.godotengine.godot.plugin.UsedByGodot
 
 /**
  * Системный распознаватель Android, тот же движок, что у микрофона Gboard.

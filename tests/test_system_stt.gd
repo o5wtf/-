@@ -75,6 +75,7 @@ func test_fake_plugin_hold_sends_and_does_not_spend() -> void:
 	var before := SpendMeter.session_stt_usd
 	assert_true(talk.press())
 	assert_eq(fake.started, 1)
+	assert_eq(fake.available_checks, 0)
 	assert_true(fake.offline)
 	await (Engine.get_main_loop() as SceneTree).process_frame
 	talk.push_pcm(VoiceAudio.tone(VoiceAudio.UPLOAD_RATE, 3000))
@@ -349,8 +350,14 @@ func test_turn_log_keeps_ten_and_names_the_span() -> void:
 	assert_true(detailed.contains("is_recognition_available_error=hidden"))
 	assert_true(detailed.contains("причина=доступно"))
 	assert_true(source.contains("diagnosticsJson"))
-	assert_true(source.contains("queryIntentServices"))
+	assert_true(source.contains("ADJUST_MUTE"))
+	assert_true(source.contains("voice_recognition_service"))
+	assert_true(source.contains("EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS"))
+	assert_true(source.contains("onRmsChanged"))
+	assert_true(source.contains("attemptLog"))
 	var stt_source := FileAccess.get_file_as_string("res://src/voice/system_stt.gd")
+	assert_false(stt_source.contains("isAvailable"))
+	assert_true(source.contains("queryIntentServices"))
 	assert_false(stt_source.contains("has_method"))
 	assert_false(stt_source.contains("has_signal"))
 	assert_false(stt_source.contains("get_method_list"))
@@ -455,7 +462,7 @@ class _FakeSpeech:
 	signal finished(text: String)
 	signal failed(code: String)
 
-	var available: bool = true
+	var available_checks: int = 0
 	var offline: bool = false
 	var started: int = 0
 	var stopped: int = 0
@@ -469,7 +476,8 @@ class _FakeSpeech:
 	var on_stop: Callable = Callable()
 
 	func isAvailable() -> bool:
-		return available
+		available_checks += 1
+		return false
 
 	func startListening(prefer: bool) -> void:
 		started += 1

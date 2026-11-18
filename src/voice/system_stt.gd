@@ -239,8 +239,12 @@ func start_listen() -> void:
 	_cached = {}
 	partial = ""
 	_ensure_bridge()
-	if bridge == null or not bool(bridge.call("isAvailable")):
+	if bridge == null:
 		_remember(_failure("unavailable"))
+		return
+	if not _live_plugin_ready():
+		_remember(_failure("unavailable"))
+		_note_attempt()
 		return
 	bridge.call("startListening", prefer_offline)
 
@@ -248,9 +252,12 @@ func start_listen() -> void:
 func finish_listen() -> Dictionary:
 	var token := _session
 	if _has_cached and not _closed and token == _session:
+		_note_attempt()
 		return _take_cached()
 	_ensure_bridge()
-	if bridge == null or not bool(bridge.call("isAvailable")):
+	if bridge == null:
+		return _failure("unavailable")
+	if not _live_plugin_ready():
 		return _failure("unavailable")
 	bridge.call("stopListening")
 	var started := Time.get_ticks_msec()
@@ -264,8 +271,35 @@ func finish_listen() -> Dictionary:
 	if _closed or token != _session:
 		return {"ok": false, "text": "", "error": "cancelled", "message": "", "usage": {}}
 	if _has_cached:
+		_note_attempt()
 		return _take_cached()
+	_note_attempt()
 	return _failure("timeout")
+
+
+func meter_unit() -> float:
+	if not _is_real_plugin():
+		return 0.0
+	return clampf(float(bridge.call("rmsUnit")), 0.0, 1.0)
+
+
+func _is_real_plugin() -> bool:
+	return bridge != null and Engine.has_singleton(PLUGIN) and bridge == Engine.get_singleton(PLUGIN)
+
+
+func _live_plugin_ready() -> bool:
+	if not _is_real_plugin():
+		return true
+	var parsed: Variant = JSON.parse_string(str(bridge.call("diagnosticsJson")))
+	return parsed is Dictionary and available_from_report(parsed)
+
+
+func _note_attempt() -> void:
+	if not _is_real_plugin() or not is_instance_valid(Speaker):
+		return
+	var line := str(bridge.call("attemptLog")).strip_edges()
+	if line != "":
+		Speaker.note_line(line)
 
 
 func partial_text() -> String:

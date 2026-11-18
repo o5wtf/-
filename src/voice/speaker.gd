@@ -155,7 +155,8 @@ func line_id_for(agent_id: String) -> String:
 
 
 func _on_replied(agent_id: String, text: String, _remark: String) -> void:
-	speak_reply(agent_id, text)
+	var spoken := Game.speech_line if Game.speech_line != "" else text
+	speak_reply(agent_id, spoken)
 
 
 func _pump() -> void:

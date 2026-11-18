@@ -36,6 +36,25 @@ func test_speech_tone_is_separate_from_the_reply() -> void:
 	assert_false(plain["contents"][0]["parts"][0].has("speechMetadata"))
 
 
+func test_vocal_tags_and_optional_pace_do_not_enter_the_reply() -> void:
+	var body := _body([], "Я был дома. <sigh> Правда. <laugh> И <gasp> ещё. <whisper>")
+	body["tone"] = "нервно"
+	body["pace"] = "fast"
+	var report := ResponseValidator.validate(body, [_basic()], _context())
+	assert_true(report["ok"])
+	assert_eq(report["reply"], "Я был дома. Правда. И ещё.")
+	assert_eq(report["spoken_reply"], "Я был дома. <sigh> Правда. <laugh> И ещё.")
+	assert_false(str(report["reply"]).contains("<"))
+	assert_eq(report["speech_tone"], "нервно")
+	assert_eq(report["pace"], "fast")
+	var legacy := _body([])
+	legacy.erase("tone")
+	var old := ResponseValidator.validate(legacy, [_basic()], _context())
+	assert_true(old["ok"])
+	assert_eq(old["pace"], "")
+	assert_eq(old["reply"], "Короткий спокойный ответ.")
+
+
 func test_format_requires_fields() -> void:
 	var report := ResponseValidator.validate({"reply": "Есть только реплика."}, [_basic()], _context())
 	assert_true(report["ok"])

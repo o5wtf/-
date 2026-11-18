@@ -32,7 +32,7 @@ func _ready() -> void:
 
 func speak(line_id: String, text: String, voice_hint: String = "", _style: String = "") -> void:
 	var token := _generation
-	var spoken := text.strip_edges()
+	var spoken := VocalTags.visible(text).strip_edges()
 	if spoken == "":
 		_fail(line_id, "empty")
 		return

@@ -1,6 +1,59 @@
 extends TestCase
 
 
+func test_vocal_tags_stay_in_gemini_text_and_leave_the_screen() -> void:
+	var raw := "Я был дома. <sigh> Это правда. <laugh> И ещё. <gasp> <whisper> конец <si"
+	assert_eq(VocalTags.limit(raw), "Я был дома. <sigh> Это правда. <laugh> И ещё. конец")
+	assert_eq(VocalTags.visible(raw), "Я был дома. Это правда. И ещё. конец")
+	var streamed := VocalTags.push_visible("Я был ", "<si")
+	assert_eq(str(streamed["shown"]), "Я был")
+	var next := VocalTags.push_visible(str(streamed["raw"]), "gh> тут")
+	assert_eq(str(next["shown"]), "Я был тут")
+	assert_eq(VocalTags.for_backend(raw, true, true), VocalTags.limit(raw))
+	assert_false(VocalTags.for_backend(raw, true, false).contains("<"))
+	assert_false(VocalTags.for_backend(raw, false, true).contains("<"))
+	assert_eq(SpeechStyle.compose("сдержанно, неторопливо", "нервно", "fast", true), "сдержанно, неторопливо, нервно, быстро")
+	assert_eq(SpeechStyle.compose("", "нейтрально", "normal", true), "")
+	assert_eq(SpeechStyle.compose("сдержанно", "нервно", "slow", false), "")
+	assert_eq(SpeechStyle.normalize_pace("FAST"), "fast")
+	assert_eq(SpeechStyle.normalize_pace("бодро"), "")
+	var with_tags := TtsCache.key_for("m", "Kore", "нервно", "Я был дома. <sigh>")
+	var plain := TtsCache.key_for("m", "Kore", "нервно", "Я был дома.")
+	var other_style := TtsCache.key_for("m", "Kore", "", "Я был дома. <sigh>")
+	assert_false(with_tags == plain)
+	assert_false(with_tags == other_style)
+	var styled := GeminiTtsBackend.build_request("Я был дома. <sigh>", "Kore", SpeechStyle.compose("", "нервно", "slow", true))
+	assert_eq(styled["contents"][0]["parts"][0]["text"], "Я был дома. <sigh>")
+	assert_eq(styled["contents"][0]["parts"][0]["speechMetadata"]["style"], "нервно, медленно")
+	var bare := GeminiTtsBackend.build_request("Я был дома.", "Kore", SpeechStyle.compose("", "нейтрально", "normal", true))
+	assert_false(bare["contents"][0]["parts"][0].has("speechMetadata"))
+
+
+func test_system_voice_strips_vocal_tags() -> void:
+	var driver := ScriptedTts.new()
+	driver.voices_plan = func(language: String, _call_index: int) -> Array:
+		if language == "ru":
+			return [{"id": "ru-1", "language": "ru"}]
+		return []
+	var backend := _backend(driver)
+	await backend.speak("line", "Я был дома. <sigh> Правда.", "")
+	assert_eq(driver.texts.size(), 1)
+	assert_false(driver.texts[0].contains("<"))
+	assert_true(driver.texts[0].contains("Правда"))
+	backend.free()
+
+
+func test_history_summary_and_prompt_drop_vocal_tags() -> void:
+	var dialogue := DialogueState.new()
+	dialogue.append_message("agent", VocalTags.visible("Я был дома. <sigh>"), 1, "")
+	assert_false(str(dialogue.messages[0]["text"]).contains("<"))
+	var summary := Summarizer.build_request("Ира", "", dialogue.messages)
+	assert_false(str(summary["user"]).contains("<sigh>"))
+	var old := Summarizer.build_request("Ира", "", [{"role": "agent", "text": "Я был дома. <laugh>"}])
+	assert_false(str(old["user"]).contains("<laugh>"))
+	assert_true(str(old["user"]).contains("Я был дома."))
+
+
 func test_cleaner_keeps_the_reply_and_drops_markup() -> void:
 	assert_eq(SpeechText.clean("Я был дома."), "Я был дома.")
 	assert_eq(SpeechText.clean("Я был дома. *отводит взгляд*"), "Я был дома.")
@@ -701,6 +754,7 @@ class ScriptedTts:
 	var voices_plan: Callable
 	var voice_calls: int = 0
 	var spoken: Array[String] = []
+	var texts: Array[String] = []
 
 	func voices(language: String) -> Array:
 		voice_calls += 1
@@ -709,7 +763,8 @@ class ScriptedTts:
 			return listed
 		return []
 
-	func speak(_text: String, voice_id: String, _utterance_id: int) -> void:
+	func speak(text: String, voice_id: String, _utterance_id: int) -> void:
+		texts.append(text)
 		spoken.append(voice_id)
 
 	func stop() -> void:

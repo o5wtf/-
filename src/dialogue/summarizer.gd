@@ -60,6 +60,8 @@ static func apply_fallback(dialogue: DialogueState, agent_name: String, heard: A
 
 static func _format_line(agent_name: String, message: Dictionary) -> String:
 	var text := str(message.get("text", ""))
+	if str(message.get("role", "")) != "player":
+		text = VocalTags.visible(text)
 	if str(message.get("role", "")) == "player":
 		return "Следователь: %s" % text
 	return "%s: %s" % [agent_name, text]

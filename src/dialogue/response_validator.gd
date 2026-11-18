@@ -28,6 +28,8 @@ static func validate(resp: Variant, packet: Array, context: Dictionary) -> Dicti
 		"reply": "",
 		"remark": "",
 		"speech_tone": "",
+		"pace": "",
+		"spoken_reply": "",
 		"mentioned_evidence": [] as Array[String],
 		"requested_evidence": "",
 	}
@@ -84,18 +86,21 @@ static func validate(resp: Variant, packet: Array, context: Dictionary) -> Dicti
 			"fact_id": str(entry.get("fact_id", "")),
 			"form": form,
 		})
-	var reply := _strip_markup(str(body["reply"]))
+	var tagged := VocalTags.limit(_strip_markup(str(body["reply"])))
 	if local_fixes:
-		var limited := _limit_sentences(reply, 4)
-		if limited != reply:
+		var limited := _limit_sentences(tagged, 4)
+		if limited != tagged:
 			_log_fix(report, "sentences")
-			reply = limited
-		if reply.length() > REPLY_MAX:
+			tagged = limited
+		if tagged.length() > REPLY_MAX:
 			_log_fix(report, "length")
-			reply = reply.substr(0, REPLY_MAX).strip_edges()
+			tagged = tagged.substr(0, REPLY_MAX).strip_edges()
+	var reply := VocalTags.visible(tagged)
+	report["spoken_reply"] = tagged
 	report["reply"] = reply
 	report["remark"] = str(body["remark"])
 	var speech_tone := VoiceTone.normalize(str(body.get("tone", "")))
+	report["pace"] = SpeechStyle.normalize_pace(str(body.get("pace", "")))
 	if str(body.get("tone", "")).strip_edges() != "" and speech_tone == "":
 		_log_fix(report, "tone")
 	report["speech_tone"] = speech_tone

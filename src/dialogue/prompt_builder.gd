@@ -78,13 +78,14 @@ static func _system_prompt(case_data: CaseData, agent: CaseData.Agent) -> String
 	head += RULES
 	head += "\n\nПОЛЯ ОТВЕТА:\n"
 	head += "- player_tone: оцени последний вопрос следователя: −3 очень мягкий и сочувственный, 0 нейтральный, +5 жёсткое обвинение, угроза или давление.\n"
-	head += "- reply: твоя реплика.\n"
+	head += "- reply: твоя реплика. Редко, не чаще одного-двух раз, можно вставить метку звука ровно так: <sigh>, <laugh>, <gasp>, <short pause>. Только если это естественно. Других меток в угловых скобках нет.\n"
 	head += "- remark: короткая ремарка о тебе от третьего лица, до 12 слов, без новых фактов. Например: «отводит взгляд».\n"
 	head += "- emotion: твоё состояние после ответа, одно значение из списка.\n"
 	head += "- tone: как звучит reply, одно слово из списка. Это не произносится и не входит в reply.\n"
 	head += "- stated: ключи записей, содержание которых ты действительно сказал в reply, с формой: lie — сказал свою ложь; basic — сказал полуправду или краткую правду; full — сказал полную правду. Ничего из записей не сказал — пустой список.\n"
 	head += "- mentioned_evidence: ключи улик, которые следователь упомянул в вопросе.\n"
-	head += "- requested_evidence: ключ улики, которую ты сам требуешь показать («Докажите!»), только если это в твоём характере; иначе null."
+	head += "- requested_evidence: ключ улики, которую ты сам требуешь показать («Докажите!»), только если это в твоём характере; иначе null.\n"
+	head += "- pace: необязательно. Скорость этой реплики: slow, normal или fast. normal можно не писать."
 	return head
 
 
@@ -183,6 +184,8 @@ static func _known_evidence_block(case_data: CaseData, state: GameState, evidenc
 
 static func _history_line(agent_name: String, message: Dictionary) -> String:
 	var text := str(message.get("text", ""))
+	if str(message.get("role", "")) != "player":
+		text = VocalTags.visible(text)
 	if str(message.get("role", "")) == "player":
 		return "Следователь: %s" % text
 	return "%s: %s" % [agent_name, text]
@@ -263,7 +266,8 @@ static func _turn_schema(packet_keys: PackedStringArray, evidence_keys: PackedSt
 				"type": ["string", "null"],
 				"description": "Ключ улики e1… или null",
 			},
+			"pace": {"type": "string", "enum": ["slow", "normal", "fast"]},
 		},
 		"required": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone"],
-		"propertyOrdering": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone"],
+		"propertyOrdering": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone", "pace"],
 	}

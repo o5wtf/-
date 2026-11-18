@@ -22,6 +22,8 @@ var last_turn_line: String = ""
 var last_turn_stats: Dictionary = {}
 ## Интонация последней реплики для синтеза. В текст реплики не входит.
 var speech_style: String = ""
+## Текст для синтеза. На экране и в истории остаётся ответ без меток.
+var speech_line: String = ""
 var is_busy: bool = false
 
 
@@ -173,6 +175,7 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 	var tone := 0
 	var emotion := str(state.emotion.get(agent_id, agent.starting_emotion))
 	speech_style = ""
+	speech_line = ""
 	var statements: Array = []
 	if report["ok"] and result.get("ok", false):
 		reply = str(report["reply"])
@@ -180,7 +183,10 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 		tone = int(report["tone"])
 		emotion = str(report["emotion"])
 		statements = report["statements"]
-		speech_style = VoiceTone.for_speech(str(report.get("speech_tone", "")), SettingsStore.load_current().voice_intonation)
+		var store := SettingsStore.load_current()
+		var gemini := store.voice_engine == "gemini"
+		speech_style = SpeechStyle.compose(agent.voice_style, str(report.get("speech_tone", "")), str(report.get("pace", "")), store.voice_intonation)
+		speech_line = VocalTags.for_backend(str(report.get("spoken_reply", reply)), gemini, store.voice_intonation)
 		for item in report["mentioned_evidence"]:
 			last_mentioned_evidence.append(str(item))
 		last_requested_evidence = str(report.get("requested_evidence", ""))

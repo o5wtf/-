@@ -386,7 +386,8 @@ func _render_feed() -> void:
 		elif kind == "agent":
 			var agent: CaseData.Agent = Game.case_data.agent_by_id.get(agent_id) as CaseData.Agent
 			var name := agent.name if agent != null else ""
-			_feed_box.add_child(UiWidgets.label("%s: %s" % [name, str(row.get("text", ""))]))
+			var shown := VocalTags.visible(str(row.get("text", "")))
+			_feed_box.add_child(UiWidgets.label("%s: %s" % [name, shown]))
 			var remark := str(row.get("remark", ""))
 			if remark != "":
 				var note := UiWidgets.label("(%s)" % remark)

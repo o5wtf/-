@@ -9,6 +9,7 @@ static var store_path: String = "user://config.cfg"
 
 
 static var session_usd: float = 0.0
+static var session_stt_usd: float = 0.0
 
 
 static func cost_usd(model: String, prompt_tokens: int, thought_tokens: int, output_tokens: int) -> float:
@@ -26,6 +27,23 @@ static func note(model: String, prompt_tokens: int, thought_tokens: int, output_
 		return
 	session_usd += cost
 	_add_total(cost)
+
+
+static func note_stt(model: String, prompt_tokens: int, output_tokens: int) -> void:
+	var cost := cost_usd(model, prompt_tokens, 0, output_tokens)
+	if cost <= 0.0:
+		return
+	session_usd += cost
+	session_stt_usd += cost
+	_add_total(cost)
+	_add_named("stt_usd", cost)
+
+
+static func stt_total_usd() -> float:
+	var file := ConfigFile.new()
+	if file.load(store_path) != OK:
+		return 0.0
+	return float(file.get_value("spend", "stt_usd", 0.0))
 
 
 static func total_usd() -> float:
@@ -65,4 +83,12 @@ static func _add_total(cost: float) -> void:
 	file.load(store_path)
 	var total := float(file.get_value("spend", "total_usd", 0.0)) + cost
 	file.set_value("spend", "total_usd", total)
+	file.save(store_path)
+
+
+static func _add_named(key: String, cost: float) -> void:
+	var file := ConfigFile.new()
+	file.load(store_path)
+	var total := float(file.get_value("spend", key, 0.0)) + cost
+	file.set_value("spend", key, total)
 	file.save(store_path)

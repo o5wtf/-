@@ -29,13 +29,20 @@ func test_error_codes_are_honest() -> void:
 	assert_eq(SystemStt.code_from_android(4), "server")
 	assert_eq(SystemStt.code_from_android(5), "client")
 	assert_eq(SystemStt.code_from_android(6), "speech_timeout")
-	assert_eq(SystemStt.code_from_android(12), "language")
+	assert_eq(SystemStt.code_from_android(10), "server_disconnected")
+	assert_eq(SystemStt.code_from_android(11), "language_not_supported")
+	assert_eq(SystemStt.code_from_android(12), "language_unavailable")
+	assert_eq(SystemStt.code_from_android(13), "cannot_check")
 	assert_eq(SystemStt.code_from_android(14), "too_many_requests")
+	assert_eq(SystemStt.hint_for_code("server_disconnected"), "Сервер распознавания отключился")
+	assert_eq(SystemStt.hint_for_code("language_not_supported"), "Язык распознавания не поддерживается")
+	assert_eq(SystemStt.hint_for_code("language_unavailable"), "Язык распознавания недоступен")
+	assert_eq(SystemStt.hint_for_code("cannot_check"), "Не удалось проверить распознавание")
 	assert_eq(SystemStt.hint_for_code("audio"), "Не слышно микрофон. Говорите ближе")
 	assert_eq(SystemStt.hint_for_code("client"), "Сбой распознавания на устройстве")
 	assert_eq(SystemStt.hint_for_code("server"), "Сервер распознавания не ответил")
 	assert_eq(SystemStt.hint_for_code("network_timeout"), "Истекло время сети распознавания")
-	assert_eq(SystemStt.hint_for_code("language"), "Язык распознавания недоступен")
+	assert_eq(SystemStt.hint_for_code("language_unavailable"), "Язык распознавания недоступен")
 	assert_eq(SystemStt.hint_for_code("too_many_requests"), "Слишком много запросов к распознаванию")
 	assert_eq(SystemStt.hint_for_code("timeout"), "Повторить распознавание")
 	assert_eq(GeminiStt.MODEL, "gemini-3.5-flash-lite")
@@ -300,10 +307,54 @@ func test_turn_log_keeps_ten_and_names_the_span() -> void:
 	assert_true(source.contains("onMainDestroy"))
 	assert_true(source.contains("ERROR_AUDIO"))
 	assert_true(source.contains("ERROR_CLIENT"))
-	assert_true(source.contains("ERROR_TOO_MANY_REQUESTS"))
+	assert_true(source.contains("isOnDeviceRecognitionAvailable"))
+	assert_true(source.contains("createOnDeviceSpeechRecognizer"))
+	var manifest := FileAccess.get_file_as_string("res://addons/system_speech/export_plugin.gd")
+	assert_true(manifest.contains("android.speech.RecognitionService"))
+	var stage := FileAccess.get_file_as_string("res://tools/stage_system_speech.sh")
+	assert_true(stage.contains("src/main/kotlin"))
+	var lines := SystemStt.status_lines()
+	var joined := "\n".join(lines)
+	assert_true(joined.contains("plugin=missing"))
+	assert_true(joined.contains("recognition_service=unknown"))
+	assert_true(joined.contains("on_device=unknown"))
+	assert_true(joined.contains("record_audio=n/a"))
+	assert_eq(SystemStt.user_hint(), "Системное распознавание не встроено в сборку")
+	_assert_apk_checker()
 	var workflow := FileAccess.get_file_as_string("res://.github/workflows/build.yml")
 	assert_true(workflow.contains("stage_system_speech.sh"))
 	assert_false(workflow.contains("Windows Desktop"))
+
+
+func _assert_apk_checker() -> void:
+	var good := "user://speech-good.apk"
+	var bad := "user://speech-bad.apk"
+	_zip(good, true)
+	_zip(bad, false)
+	var script := ProjectSettings.globalize_path("res://tools/check_system_speech_apk.py")
+	assert_eq(_python(script, ProjectSettings.globalize_path(good)), 0)
+	assert_false(_python(script, ProjectSettings.globalize_path(bad)) == 0)
+	DirAccess.remove_absolute(good)
+	DirAccess.remove_absolute(bad)
+
+
+func _zip(path: String, complete: bool) -> void:
+	var zipper := ZIPPacker.new()
+	assert_eq(zipper.open(path), OK)
+	zipper.start_file("classes.dex")
+	var dex := "SystemSpeechPlugin" if complete else "nothing"
+	zipper.write_file(dex.to_utf8_buffer())
+	zipper.close_file()
+	zipper.start_file("AndroidManifest.xml")
+	var manifest := "android.speech.RecognitionService org.godotengine.plugin.v2.SystemSpeech SystemSpeechPlugin" if complete else "empty"
+	zipper.write_file(manifest.to_utf8_buffer())
+	zipper.close_file()
+	zipper.close()
+
+
+func _python(script: String, apk: String) -> int:
+	var output: Array = []
+	return OS.execute("python3", PackedStringArray([script, apk]), output, true)
 
 
 func _attach(node: Node) -> void:

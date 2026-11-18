@@ -147,6 +147,7 @@ jobs:
             exit 1
           fi
           python3 tools/check_build.py builds/Detective.apk
+          python3 tools/check_system_speech_apk.py builds/Detective.apk
 
       - name: Артефакты
         uses: actions/upload-artifact@v4

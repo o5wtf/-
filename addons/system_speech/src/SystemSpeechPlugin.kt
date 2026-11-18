@@ -1,6 +1,7 @@
 package com.o5wtf.detective.speech
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -18,6 +19,7 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
     private var recognizer: SpeechRecognizer? = null
     private var latestPartial: String = ""
     private var acceptResults: Boolean = false
+    private var createdOnDevice: Boolean = false
 
     override fun getPluginName(): String = "SystemSpeech"
 
@@ -31,9 +33,26 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
 
     @UsedByGodot
     fun isAvailable(): Boolean {
+        return recognitionServiceAvailable() || onDeviceAvailable()
+    }
+
+    @UsedByGodot
+    fun recognitionServiceAvailable(): Boolean {
         val host = activity ?: return false
         return SpeechRecognizer.isRecognitionAvailable(host)
     }
+
+    @UsedByGodot
+    fun onDeviceAvailable(): Boolean {
+        val host = activity ?: return false
+        if (Build.VERSION.SDK_INT < 31) {
+            return false
+        }
+        return SpeechRecognizer.isOnDeviceRecognitionAvailable(host)
+    }
+
+    @UsedByGodot
+    fun apiLevel(): Int = Build.VERSION.SDK_INT
 
     override fun onMainDestroy() {
         runOnUiThread {
@@ -52,14 +71,24 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
                 emitSignal("failed", "unavailable")
                 return@runOnUiThread
             }
-            if (!SpeechRecognizer.isRecognitionAvailable(host)) {
+            if (!isAvailable()) {
                 emitSignal("failed", "unavailable")
                 return@runOnUiThread
             }
             acceptResults = true
             latestPartial = ""
+            val useOnDevice = onDeviceAvailable() && (preferOffline || !recognitionServiceAvailable())
+            if (recognizer != null && createdOnDevice != useOnDevice) {
+                recognizer?.destroy()
+                recognizer = null
+            }
             if (recognizer == null) {
-                recognizer = SpeechRecognizer.createSpeechRecognizer(host)
+                recognizer = if (useOnDevice) {
+                    SpeechRecognizer.createOnDeviceSpeechRecognizer(host)
+                } else {
+                    SpeechRecognizer.createSpeechRecognizer(host)
+                }
+                createdOnDevice = useOnDevice
                 recognizer?.setRecognitionListener(listener)
             }
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
@@ -130,13 +159,16 @@ class SystemSpeechPlugin(godot: Godot) : GodotPlugin(godot) {
             SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "network_timeout"
             SpeechRecognizer.ERROR_NETWORK -> "network"
             SpeechRecognizer.ERROR_AUDIO -> "audio"
-            SpeechRecognizer.ERROR_SERVER, SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "server"
+            SpeechRecognizer.ERROR_SERVER -> "server"
+            SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "server_disconnected"
             SpeechRecognizer.ERROR_CLIENT -> "client"
             SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "speech_timeout"
             SpeechRecognizer.ERROR_NO_MATCH -> "no_match"
             SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "busy"
             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "permissions"
-            SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "language"
+            SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "language_not_supported"
+            SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "language_unavailable"
+            SpeechRecognizer.ERROR_CANNOT_CHECK_SUPPORT -> "cannot_check"
             SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "too_many_requests"
             else -> "unavailable"
         }

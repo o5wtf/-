@@ -31,6 +31,57 @@ static func plugin_available() -> bool:
 	return bool(live.call("isAvailable"))
 
 
+static func user_hint() -> String:
+	if not Engine.has_singleton(PLUGIN):
+		return "Системное распознавание не встроено в сборку"
+	var live: Object = Engine.get_singleton(PLUGIN)
+	var service := _flag(live, "recognitionServiceAvailable")
+	var device := _flag(live, "onDeviceAvailable")
+	if not service and not device:
+		return "Служба распознавания речи не видна приложению"
+	return ""
+
+
+static func status_lines() -> PackedStringArray:
+	var loaded := Engine.has_singleton(PLUGIN)
+	var service := "unknown"
+	var device := "unknown"
+	var api := "n/a"
+	var reason := "плагин не загружен"
+	if loaded:
+		var live: Object = Engine.get_singleton(PLUGIN)
+		service = "yes" if _flag(live, "recognitionServiceAvailable") else "no"
+		device = "yes" if _flag(live, "onDeviceAvailable") else "no"
+		if live != null and live.has_method("apiLevel"):
+			api = str(int(live.call("apiLevel")))
+		if service == "yes" or device == "yes":
+			reason = "доступно"
+		else:
+			reason = "служба распознавания не найдена"
+	return PackedStringArray([
+		"plugin=%s" % ("loaded" if loaded else "missing"),
+		"recognition_service=%s" % service,
+		"on_device=%s" % device,
+		"api=%s" % api,
+		"record_audio=%s" % _record_state(),
+		"причина=%s" % reason,
+	])
+
+
+static func _flag(live: Object, method_name: String) -> bool:
+	if live == null or not live.has_method(method_name):
+		return false
+	return bool(live.call(method_name))
+
+
+static func _record_state() -> String:
+	if OS.get_name() != "Android":
+		return "n/a"
+	if OS.get_granted_permissions().has("android.permission.RECORD_AUDIO"):
+		return "granted"
+	return "denied"
+
+
 static func hint_for_code(code: String) -> String:
 	match code:
 		"no_match":
@@ -45,14 +96,20 @@ static func hint_for_code(code: String) -> String:
 			return "Сбой распознавания на устройстве"
 		"server":
 			return "Сервер распознавания не ответил"
+		"server_disconnected":
+			return "Сервер распознавания отключился"
 		"speech_timeout":
 			return "Речь не началась"
 		"busy":
 			return "Распознавание занято"
 		"permissions":
 			return "Нет разрешения на микрофон"
-		"language":
+		"language_not_supported":
+			return "Язык распознавания не поддерживается"
+		"language_unavailable":
 			return "Язык распознавания недоступен"
+		"cannot_check":
+			return "Не удалось проверить распознавание"
 		"too_many_requests":
 			return "Слишком много запросов к распознаванию"
 		"timeout":
@@ -73,7 +130,7 @@ static func code_from_android(error_code: int) -> String:
 			return "network"
 		3:
 			return "audio"
-		4, 10:
+		4:
 			return "server"
 		5:
 			return "client"
@@ -85,8 +142,14 @@ static func code_from_android(error_code: int) -> String:
 			return "busy"
 		9:
 			return "permissions"
-		11, 12:
-			return "language"
+		10:
+			return "server_disconnected"
+		11:
+			return "language_not_supported"
+		12:
+			return "language_unavailable"
+		13:
+			return "cannot_check"
 		14:
 			return "too_many_requests"
 		_:

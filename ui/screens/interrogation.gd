@@ -21,6 +21,7 @@ var _mic: Button
 var _mic_level: ProgressBar
 var _mic_state: Label
 var _mic_hint: Label
+var _partial: Label
 var _stt_retry: Button
 var _mic_settings: Button
 var _talk: PushToTalk
@@ -92,6 +93,10 @@ func _ready() -> void:
 	dismiss.pressed.connect(_dismiss_hint)
 	_hint.add_child(dismiss)
 	var input_row := HBoxContainer.new()
+	_partial = UiWidgets.label("", "PartialLabel")
+	_partial.add_theme_color_override("font_color", NoirTheme.GOLD)
+	_partial.visible = false
+	column.add_child(_partial)
 	column.add_child(input_row)
 	_prompt = ChatInput.new()
 	_prompt.name = "PromptField"
@@ -143,10 +148,11 @@ func _ready() -> void:
 	column.add_child(_stt_retry)
 	_talk = PushToTalk.new()
 	_talk.name = "PushToTalk"
-	var recognizer := GeminiStt.new()
+	var recognizer := _make_stt()
 	_talk.stt = recognizer
 	add_child(_talk)
 	_talk.add_child(recognizer)
+	_talk.partial_changed.connect(_on_partial)
 	_mic_input = MicInput.new()
 	add_child(_mic_input)
 	_access = MicAccess.new()
@@ -168,6 +174,29 @@ func _ready() -> void:
 		Game.events.connect(_on_events)
 		Game.llm_error.connect(_on_error)
 		Game.busy_changed.connect(_on_busy)
+	if DisplayServer.get_name() != "headless":
+		await _warm_link()
+
+
+func _make_stt() -> SttBackend:
+	var store := SettingsStore.load_current()
+	if store.stt_backend == "system":
+		var system := SystemStt.new()
+		system.prefer_offline = store.stt_offline
+		return system
+	return GeminiStt.new()
+
+
+func _warm_link() -> void:
+	await HttpSession.prewarm(self)
+
+
+func _on_partial(text: String) -> void:
+	if _partial == null:
+		return
+	var show := _talk != null and _talk._holding and text != ""
+	_partial.text = text if show else ""
+	_partial.visible = show
 
 
 func _show_voice_retry(show_button: bool) -> void:
@@ -291,6 +320,7 @@ func _send_text(text: String) -> void:
 	_clear_error()
 	_last = {"kind": "ask", "text": spoken}
 	_push({"kind": "player", "text": spoken})
+	TurnTiming.mark("line_shown")
 	await Game.ask(agent_id, spoken)
 
 
@@ -370,6 +400,9 @@ func _refresh_mic_button() -> void:
 func _on_mic_state(next: String) -> void:
 	if _mic_level != null:
 		_mic_level.visible = next == PushToTalk.STATE_LISTENING
+	if _partial != null and next != PushToTalk.STATE_LISTENING:
+		_partial.visible = false
+		_partial.text = ""
 	_refresh_mic_button()
 
 

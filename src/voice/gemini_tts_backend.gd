@@ -8,7 +8,9 @@ extends SpeechBackend
 const MODEL := "gemini-3.8-flash-lite-tts"
 const SAMPLE_RATE := 24000
 const BUFFER_SECONDS := 1.0
-const PREFILL_SECONDS := 0.15
+## Меньше 0.15 с, но не ниже одного короткого буфера: иначе на устройстве слышны разрывы.
+const PREFILL_SECONDS := 0.06
+const PREFILL_MIN_SECONDS := 0.04
 const MAX_ATTEMPTS := 3
 const INPUT_USD_PER_MILLION := 0.50
 const OUTPUT_USD_PER_MILLION := 6.0
@@ -266,6 +268,7 @@ func _send(text: String, voice_name: String, style: String) -> Dictionary:
 		"api_key": api_key,
 		"on_chunk": _push_pcm,
 	}
+	TurnTiming.mark("tts_sent")
 	var pending: Variant = transport.call("stream", request)
 	if pending is Dictionary:
 		return pending
@@ -291,6 +294,7 @@ func _push_pcm(bytes: PackedByteArray) -> void:
 		return
 	_capture.append_array(ready)
 	_pending.append_array(frames)
+	TurnTiming.mark("first_audio")
 	_maybe_open(false)
 	_feed()
 
@@ -333,10 +337,12 @@ func _maybe_open(download_finished: bool) -> void:
 	if _silent or _started_line or _line_id == "" or _pending.is_empty():
 		return
 	var hardware := sink == null
-	if hardware and not download_finished and _pending.size() < int(SAMPLE_RATE * PREFILL_SECONDS):
+	var prefill := maxf(PREFILL_SECONDS, PREFILL_MIN_SECONDS)
+	if hardware and not download_finished and _pending.size() < int(SAMPLE_RATE * prefill):
 		return
 	_started_line = true
 	_open_playback()
+	TurnTiming.mark("playback_start")
 	started.emit(_line_id)
 
 
@@ -498,32 +504,35 @@ class GeminiTtsTransport:
 
 	func stream(request: Dictionary) -> Dictionary:
 		cancelled = false
-		var http := HTTPClient.new()
-		var err := http.connect_to_host("generativelanguage.googleapis.com", 443, TLSOptions.client())
+		var slot := HttpSession.checkout(HttpSession.HOST)
+		var http: HTTPClient = slot.client
+		var err := OK
+		if http.get_status() != HTTPClient.STATUS_CONNECTED:
+			err = http.connect_to_host(HttpSession.HOST, 443, TLSOptions.client())
 		if err != OK:
-			return _outcome(false, 0, "offline", 0.0, {})
+			return _finish(http, _outcome(false, 0, "offline", 0.0, {}))
 		var deadline := Time.get_ticks_msec() + int(float(request.get("timeout_s", 30.0)) * 1000.0)
 		while http.get_status() == HTTPClient.STATUS_CONNECTING or http.get_status() == HTTPClient.STATUS_RESOLVING:
 			if cancelled:
-				return _outcome(false, 0, "stopped", 0.0, {})
+				return _finish(http, _outcome(false, 0, "stopped", 0.0, {}))
 			if Time.get_ticks_msec() >= deadline:
-				return _outcome(false, 0, "timeout", 1.0, {})
+				return _finish(http, _outcome(false, 0, "timeout", 1.0, {}))
 			http.poll()
 			await get_tree().process_frame
 		if http.get_status() != HTTPClient.STATUS_CONNECTED:
-			return _outcome(false, 0, "offline", 0.0, {})
+			return _finish(http, _outcome(false, 0, "offline", 0.0, {}))
 		var headers := PackedStringArray([
 			"Content-Type: application/json",
 			"x-goog-api-key: %s" % str(request.get("api_key", "")),
 		])
 		err = http.request(HTTPClient.METHOD_POST, str(request.get("path", "")), headers, JSON.stringify(request.get("body", {})))
 		if err != OK:
-			return _outcome(false, 0, "offline", 0.0, {})
+			return _finish(http, _outcome(false, 0, "offline", 0.0, {}))
 		while http.get_status() == HTTPClient.STATUS_REQUESTING:
 			if cancelled:
-				return _outcome(false, 0, "stopped", 0.0, {})
+				return _finish(http, _outcome(false, 0, "stopped", 0.0, {}))
 			if Time.get_ticks_msec() >= deadline:
-				return _outcome(false, 0, "timeout", 1.0, {})
+				return _finish(http, _outcome(false, 0, "timeout", 1.0, {}))
 			http.poll()
 			await get_tree().process_frame
 		var status := http.get_response_code()
@@ -534,9 +543,9 @@ class GeminiTtsTransport:
 		var on_chunk: Variant = request.get("on_chunk", Callable())
 		while http.get_status() == HTTPClient.STATUS_BODY:
 			if cancelled:
-				return _outcome(false, status, "stopped", 0.0, {})
+				return _finish(http, _outcome(false, status, "stopped", 0.0, {}))
 			if Time.get_ticks_msec() >= deadline:
-				return _outcome(false, status, "timeout", 1.0, {})
+				return _finish(http, _outcome(false, status, "timeout", 1.0, {}))
 			http.poll()
 			var chunk := _take_chunk(http)
 			if chunk.is_empty():
@@ -553,12 +562,17 @@ class GeminiTtsTransport:
 				chunk = _take_chunk(http)
 		if decoder == null:
 			var raw := error_body.get_string_from_utf8()
-			return _outcome(false, status, _kind(status), _retry_after(raw), {})
+			return _finish(http, _outcome(false, status, _kind(status), _retry_after(raw), {}))
 		for pcm in decoder.finish():
 			_emit_pcm(on_chunk, pcm)
 		if decoder.audio_parts == 0:
-			return _outcome(false, status, "no_audio", 0.0, decoder.usage)
-		return _outcome(true, status, "", 0.0, decoder.usage)
+			return _finish(http, _outcome(false, status, "no_audio", 0.0, decoder.usage))
+		return _finish(http, _outcome(true, status, "", 0.0, decoder.usage))
+
+	func _finish(http: HTTPClient, outcome: Dictionary) -> Dictionary:
+		var alive := http.get_status() == HTTPClient.STATUS_CONNECTED and not cancelled
+		HttpSession.checkin(HttpSession.HOST, http, alive)
+		return outcome
 
 	func _outcome(ok: bool, status: int, error_kind: String, retry_after: float, usage: Dictionary) -> Dictionary:
 		return {"ok": ok, "status": status, "error": error_kind, "retry_after": retry_after, "usage": usage}

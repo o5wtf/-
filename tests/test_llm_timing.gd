@@ -107,6 +107,8 @@ func _assert_flash_model_migrates() -> void:
 	assert_true(bool(check.get_value("voice", "intonation", false)))
 	assert_false(bool(check.get_value("mic", "enabled", true)))
 	assert_eq(str(check.get_value("mic", "mode", "")), "push_to_talk")
+	assert_eq(str(check.get_value("mic", "stt", "")), "gemini")
+	assert_false(bool(check.get_value("mic", "stt_offline", true)))
 	assert_eq(str(check.get_value("llm", "dialogue_model", "")), "gemini-3.5-flash-lite")
 	if previous == "":
 		DirAccess.remove_absolute(path)

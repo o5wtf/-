@@ -18,6 +18,9 @@ var _engine: OptionButton
 var _voice_status: Label
 var _mic: CheckBox
 var _mic_mode: OptionButton
+var _stt: OptionButton
+var _stt_offline: CheckBox
+var _stt_hint: Label
 var _voice_busy: bool = false
 var _status: Label
 var _show: Button
@@ -127,6 +130,21 @@ func _ready() -> void:
 	_mic_mode.add_item(UiStrings.MIC_HANDS_FREE)
 	_mic_mode.set_item_disabled(1, true)
 	scroll_box.add_child(_mic_mode)
+	scroll_box.add_child(UiWidgets.label(UiStrings.STT_BACKEND))
+	_stt = OptionButton.new()
+	_stt.name = "SttBackend"
+	_stt.custom_minimum_size = Vector2(0, 48)
+	_stt.add_item(UiStrings.STT_GEMINI)
+	_stt.add_item(UiStrings.STT_SYSTEM)
+	scroll_box.add_child(_stt)
+	_stt_offline = CheckBox.new()
+	_stt_offline.name = "SttOffline"
+	_stt_offline.text = UiStrings.STT_OFFLINE
+	_stt_offline.custom_minimum_size = Vector2(0, 48)
+	scroll_box.add_child(_stt_offline)
+	_stt_hint = UiWidgets.label("", "SttHintLabel")
+	_stt_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	scroll_box.add_child(_stt_hint)
 	var play_last := UiWidgets.button(UiStrings.MIC_PLAY_LAST, "PlayLastMicButton")
 	play_last.pressed.connect(_play_last_recording)
 	scroll_box.add_child(play_last)
@@ -139,6 +157,11 @@ func _ready() -> void:
 	mic_diag.add_theme_color_override("font_color", NoirTheme.MUTED)
 	mic_diag.text = "\n".join(MicInput.status_lines())
 	scroll_box.add_child(mic_diag)
+	var turn_log := UiWidgets.label("", "TurnLogLabel")
+	turn_log.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	turn_log.add_theme_color_override("font_color", NoirTheme.MUTED)
+	turn_log.text = "\n".join(TurnTiming.lines())
+	scroll_box.add_child(turn_log)
 	var voice_log := UiWidgets.label("", "VoiceLogLabel")
 	voice_log.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	voice_log.add_theme_color_override("font_color", NoirTheme.MUTED)
@@ -146,6 +169,8 @@ func _ready() -> void:
 	voice_log.text = "\n".join(Speaker.voice_log)
 	if not Speaker.voice_log_changed.is_connected(_show_voice_log):
 		Speaker.voice_log_changed.connect(_show_voice_log.bind(voice_log, mic_diag))
+	if not Speaker.turn_log_changed.is_connected(_show_turn_log):
+		Speaker.turn_log_changed.connect(_show_turn_log.bind(turn_log))
 	_status = UiWidgets.label("", "StatusLabel")
 	scroll_box.add_child(_status)
 	var save := UiWidgets.button(UiStrings.SAVE, "SaveButton")
@@ -167,6 +192,12 @@ func _load_fields() -> void:
 	_intonation.button_pressed = store.voice_intonation
 	_mic.button_pressed = store.mic_enabled
 	_mic_mode.select(0)
+	var system_ok := SystemStt.plugin_available()
+	_stt.select(1 if store.stt_backend == "system" else 0)
+	_stt.set_item_disabled(1, SystemStt.system_option_disabled(system_ok, store.stt_backend == "system"))
+	_stt_offline.button_pressed = store.stt_offline
+	_stt_hint.text = "" if system_ok else UiStrings.STT_UNAVAILABLE
+	_stt_hint.visible = not system_ok
 	_engine.select(1 if store.voice_engine == "gemini" else 0)
 	_loading = false
 	_spend.text = _spend_text()
@@ -192,7 +223,8 @@ func _save() -> void:
 	if key == "":
 		key = previous.api_key
 	var provider := "mock" if _mock.button_pressed else "gemini"
-	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "push_to_talk")
+	var stt_name := "system" if _stt.selected == 1 else "gemini"
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "push_to_talk", stt_name, _stt_offline.button_pressed)
 	Speaker.apply_settings()
 	_key.text = ""
 	_key.secret = true
@@ -255,6 +287,11 @@ func _show_voice_log(label: Label, mic_diag: Label) -> void:
 		label.text = "\n".join(Speaker.voice_log)
 	if mic_diag != null and is_instance_valid(mic_diag):
 		mic_diag.text = "\n".join(MicInput.status_lines())
+
+
+func _show_turn_log(label: Label) -> void:
+	if label != null and is_instance_valid(label):
+		label.text = "\n".join(Speaker.turn_log)
 
 
 func _check_voice() -> void:

@@ -112,6 +112,7 @@ func _post(body: Dictionary) -> Dictionary:
 		"x-goog-api-key": api_key,
 	}
 	var payload := JSON.stringify(body)
+	TurnTiming.mark("stt_sent")
 	return await transport.call("request", url, headers, payload, TIMEOUT_S)
 
 
@@ -185,20 +186,10 @@ class GeminiSttTransport:
 	extends Node
 
 	func request(url: String, headers: Dictionary, payload: String, timeout_s: float) -> Dictionary:
-		var http := HTTPRequest.new()
-		add_child(http)
-		http.timeout = timeout_s
 		var header_list: PackedStringArray = PackedStringArray()
 		for key in headers.keys():
 			header_list.append("%s: %s" % [str(key), str(headers[key])])
-		var err := http.request(url, header_list, HTTPClient.METHOD_POST, payload)
-		if err != OK:
-			http.queue_free()
-			return {"error": "offline", "status": 0, "body": ""}
-		var result: Array = await http.request_completed
-		http.queue_free()
-		if int(result[0]) == HTTPRequest.RESULT_TIMEOUT:
-			return {"error": "timeout", "status": 0, "body": ""}
-		if int(result[0]) != HTTPRequest.RESULT_SUCCESS:
-			return {"error": "offline", "status": 0, "body": ""}
-		return {"error": "", "status": int(result[1]), "body": (result[3] as PackedByteArray).get_string_from_utf8()}
+		var outcome: Dictionary = await HttpSession.exchange(self, url, header_list, payload, timeout_s)
+		if not bool(outcome.get("ok", false)):
+			return {"error": str(outcome.get("error", "offline")), "status": 0, "body": ""}
+		return {"error": "", "status": int(outcome.get("status", 0)), "body": str(outcome.get("body", ""))}

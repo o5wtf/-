@@ -514,39 +514,7 @@ class Transport:
 	extends Node
 
 	func request(url: String, headers: Dictionary, body: String, timeout_s: float) -> Dictionary:
-		var http := HTTPRequest.new()
-		http.timeout = timeout_s
-		add_child(http)
 		var lines: PackedStringArray = PackedStringArray()
 		for key in headers:
 			lines.append("%s: %s" % [str(key), str(headers[key])])
-		var err := http.request(url, lines, HTTPClient.METHOD_POST, body)
-		if err != OK:
-			http.queue_free()
-			return {"ok": false, "status": 0, "body": "", "headers": {}, "error": "offline"}
-		var args: Array = await http.request_completed
-		var result_code := int(args[0])
-		var status := int(args[1])
-		var response_headers: PackedStringArray = args[2]
-		var response_body: PackedByteArray = args[3]
-		http.queue_free()
-		if result_code == HTTPRequest.RESULT_TIMEOUT:
-			return {"ok": false, "status": 0, "body": "", "headers": {}, "error": "timeout"}
-		if result_code != HTTPRequest.RESULT_SUCCESS:
-			return {"ok": false, "status": 0, "body": "", "headers": {}, "error": "offline"}
-		return {
-			"ok": true,
-			"status": status,
-			"body": response_body.get_string_from_utf8(),
-			"headers": _header_map(response_headers),
-			"error": "",
-		}
-
-
-	func _header_map(lines: PackedStringArray) -> Dictionary:
-		var mapped := {}
-		for line in lines:
-			var parts := line.split(":", true, 1)
-			if parts.size() == 2:
-				mapped[parts[0].strip_edges()] = parts[1].strip_edges()
-		return mapped
+		return await HttpSession.exchange(self, url, lines, body, timeout_s)

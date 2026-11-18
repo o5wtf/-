@@ -147,7 +147,9 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 	var packet: Array = _engine.get_packet(agent_id)
 	var request := PromptBuilder.build_turn(case_data, state, agent_id, packet, dialogue, player_text, event_note)
 	LlmTiming.note_request(tally, "reply", "reply")
+	TurnTiming.mark("dialogue_sent")
 	var result := await _generate(request)
+	TurnTiming.mark("dialogue_done")
 	turn_model = str(result.get("model", turn_model))
 	if _is_network_error(result):
 		_abort_turn(snapshot, turn_started, turn_model, tally, str(result.get("error", "")), str(result.get("message", "")))

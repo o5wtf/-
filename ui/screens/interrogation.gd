@@ -163,6 +163,8 @@ func _ready() -> void:
 	_voice_retry.visible = not Speaker.retry_line.is_empty()
 	if not Speaker.voice_retry_available.is_connected(_show_voice_retry):
 		Speaker.voice_retry_available.connect(_show_voice_retry)
+	if not Speaker.voice_line_changed.is_connected(_render_feed):
+		Speaker.voice_line_changed.connect(_render_feed)
 	if not Game.agent_replied.is_connected(_on_replied):
 		Game.agent_replied.connect(_on_replied)
 		Game.events.connect(_on_events)
@@ -197,7 +199,7 @@ func _process(_delta: float) -> void:
 	var active := is_visible_in_tree() and not get_tree().paused
 	_talk.screen_active = active
 	_talk.enabled = SettingsStore.load_current().mic_enabled
-	_talk.character_busy = Game.is_busy or Speaker.speaking
+	_talk.character_busy = Speaker.speaking
 	if not active:
 		if _talk._holding or _talk.locked:
 			_talk.cancel()
@@ -308,6 +310,7 @@ func _send_text(text: String) -> void:
 func _mic_down() -> void:
 	if _talk == null or _mic.disabled:
 		return
+	Speaker.cancel_inflight()
 	var allowed := true
 	if _access != null:
 		allowed = await _access.ensure()
@@ -362,11 +365,11 @@ func _open_mic_settings() -> void:
 func _refresh_mic_button() -> void:
 	if _mic == null or _talk == null:
 		return
-	var blocked := Game.is_busy or Speaker.speaking or _talk.locked or not _talk.enabled
+	var blocked := Speaker.speaking or _talk.locked or not _talk.enabled
 	_mic.disabled = blocked and not _talk._holding
 	if _mic.disabled and _talk._holding:
 		_talk.cancel()
-	if Game.is_busy or Speaker.speaking:
+	if Speaker.speaking:
 		_mic_state.text = UiStrings.MIC_ANSWER
 	elif _talk.state_name == PushToTalk.STATE_LISTENING:
 		_mic_state.text = UiStrings.MIC_LISTEN
@@ -587,7 +590,12 @@ func _render_feed() -> void:
 	for child in _feed_box.get_children():
 		child.queue_free()
 	var rows: Array = _feeds.get(agent_id, [])
-	for row in rows:
+	var last_agent := -1
+	for index in rows.size():
+		if str(rows[index].get("kind", "")) == "agent":
+			last_agent = index
+	for index in rows.size():
+		var row: Dictionary = rows[index]
 		var kind := str(row.get("kind", ""))
 		if kind == "player":
 			_feed_box.add_child(UiWidgets.label("Вы: %s" % str(row.get("text", ""))))
@@ -596,6 +604,10 @@ func _render_feed() -> void:
 			var name := agent.name if agent != null else ""
 			var shown := VocalTags.visible(str(row.get("text", "")))
 			_feed_box.add_child(UiWidgets.label("%s: %s" % [name, shown]))
+			if index == last_agent and Speaker.can_skip():
+				var skip := UiWidgets.button(UiStrings.VOICE_SKIP, "SkipSpeechButton")
+				skip.pressed.connect(func() -> void: Speaker.skip_current())
+				_feed_box.add_child(skip)
 			var remark := str(row.get("remark", ""))
 			if remark != "":
 				var note := UiWidgets.label("(%s)" % remark)

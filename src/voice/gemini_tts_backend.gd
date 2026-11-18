@@ -11,8 +11,6 @@ const BUFFER_SECONDS := 1.0
 ## Меньше 0.15 с, но не ниже одного короткого буфера: иначе на устройстве слышны разрывы.
 const PREFILL_SECONDS := 0.06
 const PREFILL_MIN_SECONDS := 0.04
-## Если за это время не пришёл ни один звуковой кусок, поток отменяется.
-const FIRST_AUDIO_SECONDS := 10.0
 const MAX_ATTEMPTS := 3
 const INPUT_USD_PER_MILLION := 0.50
 const OUTPUT_USD_PER_MILLION := 6.0
@@ -39,6 +37,9 @@ var _live: bool = false
 var _prefetch_gen: int = 0
 var _closed_line: String = ""
 var _fail_kind: String = ""
+var _active_text: String = ""
+var _active_voice: String = ""
+var _active_style: String = ""
 ## Вызывается один раз перед ожиданием лимита. Нужен, чтобы живая реплика обогнала подготовку.
 var before_wait: Callable = Callable()
 
@@ -95,6 +96,8 @@ func speak(line_id: String, text: String, voice_hint: String = "", style: String
 		_reset_audio()
 		_line_id = line_id
 		var result: Dictionary = await _send(spoken, voice, style)
+		if _closed_line == line_id:
+			return
 		if token != _generation or str(result.get("error", "")) == "stopped":
 			_fail_kind = "stopped"
 			_finish_speak(token, line_id, spoken, voice, style)
@@ -271,6 +274,11 @@ func _send(text: String, voice_name: String, style: String) -> Dictionary:
 		"on_chunk": _push_pcm,
 	}
 	TurnTiming.mark("tts_sent")
+	_active_text = text
+	_active_voice = voice_name
+	_active_style = style
+	if transport is GeminiTtsTransport:
+		(transport as GeminiTtsTransport).on_settled = _on_transport_done
 	var pending: Variant = transport.call("stream", request)
 	if pending is Dictionary:
 		return pending
@@ -278,9 +286,49 @@ func _send(text: String, voice_name: String, style: String) -> Dictionary:
 
 
 func _process(_delta: float) -> void:
-	if _line_id == "":
+	if _line_id == "" or _closed_line == _line_id:
 		return
 	_feed()
+	if _download_done and _started_line and _heard():
+		_finish_speak(_generation, _line_id, _active_text, _active_voice, _active_style)
+
+
+func _on_transport_done(outcome: Dictionary) -> void:
+	_log_tts(outcome)
+	if _closed_line == _line_id:
+		return
+	if not bool(outcome.get("ok", false)):
+		var kind := str(outcome.get("error", "bad_response"))
+		if kind == "" or kind == "stopped":
+			return
+		_fail_kind = format_voice_error(kind, int(outcome.get("status", 0)), api_key)
+		_finish_speak(_generation, _line_id, _active_text, _active_voice, _active_style)
+		return
+	_download_done = true
+	_maybe_open(true)
+	if _started_line and _heard():
+		_finish_speak(_generation, _line_id, _active_text, _active_voice, _active_style)
+	elif not _started_line:
+		_fail_kind = format_voice_error("no_audio", int(outcome.get("status", 200)), api_key)
+		_finish_speak(_generation, _line_id, _active_text, _active_voice, _active_style)
+
+
+func _log_tts(outcome: Dictionary) -> void:
+	var diag: Dictionary = outcome.get("diag", {})
+	if diag.is_empty():
+		return
+	var body := str(diag.get("body", "")).replace("\n", " ")
+	var line := "tts status=%s type=%s bytes=%s events=%s audio=%s exit=%s body=%s" % [
+		str(diag.get("status", "")),
+		str(diag.get("content_type", "")),
+		str(diag.get("bytes", 0)),
+		str(diag.get("events", 0)),
+		str(diag.get("audio", 0)),
+		str(diag.get("exit", "")),
+		body,
+	]
+	if is_instance_valid(Speaker):
+		Speaker.note_line(line)
 
 
 func _push_pcm(bytes: PackedByteArray) -> void:
@@ -502,14 +550,19 @@ class GeminiTtsTransport:
 	signal settled(outcome: Dictionary)
 
 	var cancelled: bool = false
+	## Вызывается в том же тике, что закрыл поток, даже если await сигнала не продолжился.
+	var on_settled: Callable = Callable()
 	## Тесты подставляют часы и клиент. В игре оба пустые: системные время и HTTPClient.
 	var clock_ms: Callable = Callable()
 	var http_factory: Callable = Callable()
 	var _phase: String = ""
 	var _done: bool = false
 	var _saw_audio: bool = false
-	var _started_ms: int = 0
 	var _status: int = 0
+	var _bytes: int = 0
+	var _content_type: String = ""
+	var _preview: String = ""
+	var _exit: String = ""
 	var _http: Object = null
 	var _decoder: GeminiSseDecoder = null
 	var _error_body: PackedByteArray = PackedByteArray()
@@ -544,13 +597,16 @@ class GeminiTtsTransport:
 		_done = false
 		_saw_audio = false
 		_status = 0
+		_bytes = 0
+		_content_type = ""
+		_preview = ""
+		_exit = ""
 		_error_body = PackedByteArray()
 		_decoder = null
 		_on_chunk = request.get("on_chunk", Callable())
 		_path = str(request.get("path", ""))
 		_body = JSON.stringify(request.get("body", {}))
 		_api_key = str(request.get("api_key", ""))
-		_started_ms = _now_ms()
 		_http = _make_http()
 		var err: int = _http.connect_to_host(HttpSession.HOST, 443, TLSOptions.client())
 		if err != OK:
@@ -568,10 +624,8 @@ class GeminiTtsTransport:
 		if _phase == "" or _done or _http == null:
 			return
 		if cancelled:
+			_exit = "cancelled"
 			_complete(_outcome(false, _status, "stopped", 0.0, {}))
-			return
-		if not _saw_audio and _now_ms() - _started_ms >= int(FIRST_AUDIO_SECONDS * 1000.0):
-			_complete(_outcome(false, _status, "timeout", 1.0, {}))
 			return
 		_http.poll()
 		var state: int = _http.get_status()
@@ -579,6 +633,7 @@ class GeminiTtsTransport:
 			if state == HTTPClient.STATUS_CONNECTING or state == HTTPClient.STATUS_RESOLVING:
 				return
 			if state != HTTPClient.STATUS_CONNECTED:
+				_exit = "connect_%d" % state
 				_complete(_outcome(false, 0, "offline", 0.0, {}))
 				return
 			var headers := PackedStringArray([
@@ -587,6 +642,7 @@ class GeminiTtsTransport:
 			])
 			var err: int = _http.request(HTTPClient.METHOD_POST, _path, headers, _body)
 			if err != OK:
+				_exit = "request_%d" % err
 				_complete(_outcome(false, 0, "offline", 0.0, {}))
 				return
 			_phase = "request"
@@ -594,7 +650,8 @@ class GeminiTtsTransport:
 		if _phase == "request":
 			if state == HTTPClient.STATUS_REQUESTING:
 				return
-			_status = _http.get_response_code()
+			_status = int(_http.get_response_code())
+			_content_type = _header_value("content-type")
 			if _status == 200:
 				_decoder = GeminiSseDecoder.new()
 			_phase = "body"
@@ -602,6 +659,7 @@ class GeminiTtsTransport:
 		if state == HTTPClient.STATUS_BODY:
 			var chunk := _take_chunk(_http)
 			while not chunk.is_empty():
+				_note_bytes(chunk)
 				if _decoder == null:
 					_error_body.append_array(chunk)
 				else:
@@ -609,14 +667,26 @@ class GeminiTtsTransport:
 						_emit_pcm(_on_chunk, pcm)
 				chunk = _take_chunk(_http)
 			return
+		_exit = "eof"
 		if _decoder == null:
-			var raw := _error_body.get_string_from_utf8()
-			_complete(_outcome(false, _status, _kind(_status), _retry_after(raw), {}))
+			var raw := _redact(_error_body.get_string_from_utf8())
+			_preview = raw.substr(0, 300)
+			var kind := "http_%d" % _status if _status != 0 else "eof"
+			if _status != 200 and _status != 0:
+				kind = _kind(_status)
+			_complete(_outcome(false, _status, kind, _retry_after(raw), {}))
 			return
 		for pcm in _decoder.finish():
 			_emit_pcm(_on_chunk, pcm)
-		if _decoder.audio_parts == 0:
-			_complete(_outcome(false, _status, "no_audio", 0.0, _decoder.usage))
+		var events := _decoder.event_count
+		var audio := _decoder.audio_parts
+		if _bytes > 0 and events == 0:
+			_exit = "parse_failure"
+			_complete(_outcome(false, _status, "parse_failure", 0.0, _decoder.usage))
+		elif audio == 0 or _status != 200:
+			_exit = "no_audio" if _status == 200 else "http_%d" % _status
+			var fail := "no_audio" if _status == 200 else _kind(_status)
+			_complete(_outcome(false, _status, fail, 0.0, _decoder.usage))
 		else:
 			_complete(_outcome(true, _status, "", 0.0, _decoder.usage))
 
@@ -630,7 +700,13 @@ class GeminiTtsTransport:
 		if _http != null:
 			_http.close()
 		_result = outcome
+		outcome["diag"] = _diag()
+		_result = outcome
 		settled.emit(outcome)
+		if on_settled.is_valid():
+			var callback := on_settled
+			on_settled = Callable()
+			callback.call(outcome)
 
 	func _close_with(outcome: Dictionary) -> Dictionary:
 		_complete(outcome)
@@ -647,6 +723,47 @@ class GeminiTtsTransport:
 			if made != null:
 				return made
 		return HTTPClient.new()
+
+	func _note_bytes(chunk: PackedByteArray) -> void:
+		_bytes += chunk.size()
+		if _preview.length() >= 300:
+			return
+		var text := _redact(chunk.get_string_from_utf8())
+		_preview = (_preview + text).substr(0, 300)
+
+	func _header_value(name: String) -> String:
+		if _http == null or not _http.has_method("get_response_headers"):
+			return ""
+		var wanted := name.to_lower()
+		var headers: PackedStringArray = _http.call("get_response_headers")
+		for header in headers:
+			var line := str(header)
+			var split := line.split(":", true, 1)
+			if split.size() == 2 and split[0].strip_edges().to_lower() == wanted:
+				return split[1].strip_edges()
+		return ""
+
+	func _redact(text: String) -> String:
+		var clean := text
+		if _api_key.length() >= 6:
+			clean = clean.replace(_api_key, "[redacted]")
+		return clean
+
+	func _diag() -> Dictionary:
+		var events := 0
+		var audio := 0
+		if _decoder != null:
+			events = _decoder.event_count
+			audio = _decoder.audio_parts
+		return {
+			"status": _status,
+			"content_type": _content_type,
+			"bytes": _bytes,
+			"events": events,
+			"audio": audio,
+			"exit": _exit,
+			"body": _preview,
+		}
 
 	func _outcome(ok: bool, status: int, error_kind: String, retry_after: float, usage: Dictionary) -> Dictionary:
 		return {"ok": ok, "status": status, "error": error_kind, "retry_after": retry_after, "usage": usage}

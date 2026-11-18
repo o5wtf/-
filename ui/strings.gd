@@ -54,6 +54,7 @@ const MIC_FAILED := "Микрофон не записал звук. Провер
 const MIC_NO_CLIP := "Нет записи."
 const SPEND_STT := "Распознавание"
 const VOICE_RETRY := "Повторить озвучку"
+const VOICE_SKIP := "Пропустить"
 const STOP_SPEECH := "Стоп"
 const SPEND_LABEL := "Расход"
 const SCALE_LABEL := "Масштаб текста"

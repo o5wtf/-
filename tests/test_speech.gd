@@ -888,31 +888,77 @@ func _assert_bytes(actual: PackedByteArray, expected: PackedByteArray, message: 
 		assert_eq(int(actual[index]), int(expected[index]), message)
 
 
-func test_hung_stream_times_out_without_frames_and_releases_the_mic() -> void:
-	var now := {"ms": 0}
-	var transport := GeminiTtsBackend.GeminiTtsTransport.new()
-	transport.clock_ms = func() -> int: return int(now.ms)
-	transport.http_factory = func() -> Object: return _StuckHttp.new()
-	var backend := GeminiTtsBackend.new()
-	backend.api_key = "unit-test-key-1234"
-	backend.use_cache = false
-	backend.transport = transport
-	var speaker: Node = load("res://src/voice/speaker.gd").new()
-	speaker.set("listen_to_game", false)
-	speaker.set("backend", backend)
-	var root := (Engine.get_main_loop() as SceneTree).root
-	root.add_child(speaker)
-	backend.add_child(transport)
-	speaker.set("enabled", true)
+func test_waiting_for_audio_does_not_block_the_mic_and_a_new_turn_cancels() -> void:
+	var speaker := _voice_speaker(_StuckHttp.new())
+	var transport: GeminiTtsBackend.GeminiTtsTransport = speaker.get("backend").transport
+	speaker.call("speak_reply", "agent", "Где вы были ночью, когда погас свет?")
+	assert_false(bool(speaker.get("speaking")))
+	assert_eq(transport._phase, "connect")
+	speaker.call("cancel_inflight")
+	assert_true(transport.cancelled)
+	assert_eq(transport._phase, "")
+	assert_false(bool(speaker.get("speaking")))
+	assert_true((speaker.get("retry_line") as Dictionary).is_empty())
+	speaker.free()
+
+
+func test_skip_while_waiting_shows_retry_and_frees_the_mic() -> void:
+	var speaker := _voice_speaker(_StuckHttp.new())
+	var transport: GeminiTtsBackend.GeminiTtsTransport = speaker.get("backend").transport
 	var retries: Array[bool] = []
 	speaker.connect("voice_retry_available", func(show: bool) -> void: retries.append(show))
-	speaker.call("speak_reply", "agent", "Где вы были ночью, когда погас свет?")
-	now.ms = int(GeminiTtsBackend.FIRST_AUDIO_SECONDS * 1000.0)
-	transport._tick()
+	speaker.call("speak_reply", "agent", "Ждём звук и пропускаем.")
+	assert_false(bool(speaker.get("speaking")))
+	assert_true(speaker.call("can_skip"))
+	speaker.call("skip_current")
+	assert_true(transport.cancelled)
 	assert_false(bool(speaker.get("speaking")))
 	assert_false((speaker.get("retry_line") as Dictionary).is_empty())
 	assert_true(retries.has(true))
-	assert_true(str(speaker.get("last_error")).begins_with("timeout"))
+	speaker.free()
+
+
+func test_skip_during_playback_shows_retry() -> void:
+	var speaker: Node = load("res://src/voice/speaker.gd").new()
+	speaker.set("listen_to_game", false)
+	var fake := FakeBackend.new()
+	speaker.set("backend", fake)
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(speaker)
+	speaker.set("enabled", true)
+	var retries: Array[bool] = []
+	speaker.connect("voice_retry_available", func(show: bool) -> void: retries.append(show))
+	speaker.call("speak_reply", "agent", "Уже звучит.")
+	assert_true(bool(speaker.get("speaking")))
+	speaker.call("skip_current")
+	assert_false(bool(speaker.get("speaking")))
+	assert_false((speaker.get("retry_line") as Dictionary).is_empty())
+	assert_true(retries.has(true))
+	assert_eq(fake.calls[fake.calls.size() - 1], "stop")
+	speaker.free()
+
+
+func test_stream_without_audio_surfaces_an_error() -> void:
+	var http := _StepHttp.new()
+	var speaker := _voice_speaker(http)
+	var backend: GeminiTtsBackend = speaker.get("backend")
+	var transport: GeminiTtsBackend.GeminiTtsTransport = backend.transport
+	var retries: Array[bool] = []
+	speaker.connect("voice_retry_available", func(show: bool) -> void: retries.append(show))
+	speaker.call("speak_reply", "agent", "Пустой ответ синтеза.")
+	http.mode = "connected"
+	transport._tick()
+	http.mode = "done"
+	transport._tick()
+	transport._tick()
+	assert_false(bool(speaker.get("speaking")))
+	assert_true(retries.has(true))
+	var err := str(speaker.get("last_error"))
+	assert_true(err.contains("no_audio") or err.contains("parse_failure"))
+	var log := "\n".join(Speaker.voice_log)
+	assert_true(log.contains("tts status="))
+	assert_true(log.contains("exit="))
+	assert_false(log.contains("unit-test-key"))
 	speaker.free()
 
 
@@ -976,8 +1022,9 @@ func test_long_streaming_line_is_not_cut() -> void:
 	assert_eq(errors, [])
 	assert_eq(finished_ids, ["line"])
 	assert_eq(paced.pieces, 8)
-	assert_true(backend._clock_s > GeminiTtsBackend.FIRST_AUDIO_SECONDS)
+	assert_true(backend._clock_s > 30.0)
 	var source := FileAccess.get_file_as_string("res://src/voice/gemini_tts_backend.gd")
+	assert_false(source.contains("FIRST_AUDIO_SECONDS"))
 	var loop_from := source.find("func stream(")
 	var loop_to := source.find("func _tick(")
 	var loop := source.substr(loop_from, loop_to - loop_from)
@@ -989,6 +1036,23 @@ func test_long_streaming_line_is_not_cut() -> void:
 	var speaker := FileAccess.get_file_as_string("res://src/voice/speaker.gd")
 	assert_false(speaker.contains("wait_until_quiet"))
 	backend.free()
+
+
+func _voice_speaker(http: Object) -> Node:
+	var transport := GeminiTtsBackend.GeminiTtsTransport.new()
+	transport.http_factory = func() -> Object: return http
+	var backend := GeminiTtsBackend.new()
+	backend.api_key = "unit-test-key-1234"
+	backend.use_cache = false
+	backend.transport = transport
+	var speaker: Node = load("res://src/voice/speaker.gd").new()
+	speaker.set("listen_to_game", false)
+	speaker.set("backend", backend)
+	var root := (Engine.get_main_loop() as SceneTree).root
+	root.add_child(speaker)
+	backend.add_child(transport)
+	speaker.set("enabled", true)
+	return speaker
 
 
 class _StuckHttp:

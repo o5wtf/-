@@ -6,6 +6,7 @@ extends RefCounted
 
 var usage: Dictionary = {}
 var audio_parts: int = 0
+var event_count: int = 0
 var _raw: String = ""
 
 
@@ -90,11 +91,13 @@ func _take_events(flush: bool) -> PackedStringArray:
 		if idx < 0:
 			break
 		events.append(normalized.substr(start, idx - start))
+		event_count += 1
 		start = idx + 2
 	var tail := normalized.substr(start)
 	if flush:
 		if tail.strip_edges() != "":
 			events.append(tail)
+			event_count += 1
 		_raw = ""
 	else:
 		_raw = tail + held

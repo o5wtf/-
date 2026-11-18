@@ -3,7 +3,7 @@ extends TestCase
 const SCENES := {
 	"res://src/main.tscn": ["NewCaseButton", "ContinueButton", "RestartButton", "SettingsButton"],
 	"res://ui/screens/main_menu.tscn": ["NewCaseButton", "ContinueButton", "RestartButton", "SettingsButton"],
-	"res://ui/screens/settings.tscn": ["KeyField", "ShowKeyButton", "TestConnectionButton", "ModelField", "ScaleSlider", "MockCheck", "TimingDebug", "VoiceEnabled", "ToneEnabled", "VoiceEngine", "VoiceCheckButton", "VoiceStatusLabel", "VoiceLogLabel", "MicEnabled", "MicMode", "PlayLastMicButton", "SaveButton", "BackButton"],
+	"res://ui/screens/settings.tscn": ["KeyField", "ShowKeyButton", "TestConnectionButton", "ModelField", "ScaleSlider", "MockCheck", "TimingDebug", "VoiceEnabled", "ToneEnabled", "VoiceEngine", "VoiceCheckButton", "VoiceStatusLabel", "VoiceLogLabel", "MicDiagLabel", "MicEnabled", "MicMode", "PlayLastMicButton", "SaveButton", "BackButton"],
 	"res://ui/screens/briefing.tscn": ["TitleLabel", "BriefingLabel", "StartButton"],
 	"res://ui/screens/suspects.tscn": ["List"],
 	"res://ui/screens/interrogation.tscn": ["SendButton", "PromptField", "EvidenceButton", "NotebookButton", "ContradictionButton", "HintYesButton", "RetryButton", "TurnTimingLabel", "StopSpeechButton", "VoiceErrorLabel", "VoiceRetryButton", "MicButton", "MicLevel", "MicStateLabel", "MicHintLabel", "MicSettingsButton", "SttRetryButton"],

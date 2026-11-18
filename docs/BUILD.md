@@ -4,14 +4,14 @@
 
 ## Скачать готовую сборку
 
-1. Откройте вкладку Actions репозитория и workflow «Сборка Android и Windows».
+1. Откройте вкладку Actions репозитория и workflow «Сборка Android».
 2. Выберите зелёный запуск (после слияния в `main` или ручной запуск).
 3. Внизу страницы, в Artifacts, скачайте `detective-builds`.
-4. Внутри архива: `Detective.apk` и `Detective-windows.zip`.
+4. Внутри архива только `Detective.apk`.
 
-Ручной запуск: Actions → «Сборка Android и Windows» → Run workflow.
+Ручной запуск: Actions → «Сборка Android» → Run workflow.
 
-Если поставлен тег `v*`, те же файлы появляются в Releases.
+Если поставлен тег `v*`, тот же APK появляется в Releases. Пресет `Windows Desktop` в `export_presets.cfg` сохранён, но текущий workflow его не собирает.
 
 ## Планшет Android
 
@@ -22,11 +22,7 @@
 
 ## Windows
 
-1. Распакуйте `Detective-windows.zip`. Рядом должны лежать `Detective.exe` и `Detective.pck`.
-2. Запустите `Detective.exe`.
-3. Если SmartScreen пишет, что издатель неизвестен: «Подробнее» → «Выполнить в любом случае». Сборка подписана только отладочным ключом Android; у exe подписи нет.
-
-Если окно не открывается, запустите `Detective.console.exe` из того же каталога: он печатает ошибку Godot.
+Пресет `Windows Desktop` остаётся в репозитории. CI его сейчас не экспортирует: сборка — тесты и Android APK. Локальный экспорт тем же пресетом можно вернуть отдельно.
 
 ## Ключ Gemini
 

@@ -132,6 +132,7 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 	_turn_token += 1
 	var token := _turn_token
 	Speaker.cancel_inflight()
+	Speaker.dismiss_retry()
 	var turn_config := LLMConfig.load_settings()
 	last_mentioned_evidence = []
 	last_requested_evidence = ""

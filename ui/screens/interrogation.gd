@@ -160,7 +160,7 @@ func _ready() -> void:
 		_show_voice_error(Speaker.last_error)
 	if not Speaker.voice_error.is_connected(_show_voice_error):
 		Speaker.voice_error.connect(_show_voice_error)
-	_voice_retry.visible = not Speaker.retry_line.is_empty()
+	_sync_voice_retry()
 	if not Speaker.voice_retry_available.is_connected(_show_voice_retry):
 		Speaker.voice_retry_available.connect(_show_voice_retry)
 	if not Speaker.voice_line_changed.is_connected(_render_feed):
@@ -182,8 +182,18 @@ func _warm_link() -> void:
 	await HttpSession.prewarm(self)
 
 
-func _show_voice_retry(show_button: bool) -> void:
-	_voice_retry.visible = show_button
+func _show_voice_retry(_show_button: bool) -> void:
+	_sync_voice_retry()
+
+
+func _sync_voice_retry() -> void:
+	if _voice_retry == null:
+		return
+	var mine := Speaker.retry_visible_for(agent_id)
+	_voice_retry.visible = mine
+	if not mine:
+		_voice_error.text = ""
+		_voice_error.visible = false
 
 
 func _show_voice_error(kind: String) -> void:
@@ -235,11 +245,14 @@ func _notification(what: int) -> void:
 
 
 func open_agent(next_id: String) -> void:
+	if agent_id != "" and next_id != agent_id:
+		Speaker.cancel_inflight()
 	agent_id = next_id
 	if not _feeds.has(next_id):
 		_feeds[next_id] = _saved_lines(next_id)
 	_render_header()
 	_render_feed()
+	_sync_voice_retry()
 
 
 func _saved_lines(id: String) -> Array:

@@ -14,6 +14,8 @@ var contradictions: Array[String] = []
 var contradiction_turns: Dictionary = {}
 ## Улики, которые нужный персонаж сам назвал. Старые сохранения поля не имеют.
 var evidence_mentions: Array[String] = []
+## Сколько раз персонаж уже касался темы закрытой улики. Старые сохранения поля не имеют.
+var topic_touches: Dictionary = {}
 var talked_to: Array[String] = []
 var accusation: Dictionary = {
 	"killer_ok": false,
@@ -39,6 +41,7 @@ func to_dict() -> Dictionary:
 		"contradictions": contradictions.duplicate(),
 		"contradiction_turns": contradiction_turns.duplicate(true),
 		"evidence_mentions": evidence_mentions.duplicate(),
+		"topic_touches": topic_touches.duplicate(true),
 		"talked_to": talked_to.duplicate(),
 		"accusation": accusation.duplicate(true),
 		"dialogues": dialogues.duplicate(true),
@@ -60,6 +63,7 @@ static func from_dict(data: Dictionary) -> GameState:
 	state.contradictions = _string_list(data.get("contradictions", []))
 	state.contradiction_turns = _int_map(data.get("contradiction_turns", {}))
 	state.evidence_mentions = _string_list(data.get("evidence_mentions", []))
+	state.topic_touches = _int_map(data.get("topic_touches", {}))
 	state.talked_to = _string_list(data.get("talked_to", []))
 	state.accusation = _accusation(data.get("accusation", {}))
 	state.dialogues = (data.get("dialogues", {}) as Dictionary).duplicate(true)

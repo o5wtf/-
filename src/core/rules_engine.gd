@@ -77,6 +77,24 @@ func note_mentions(agent_id: String, mentioned_keys: Array, requested_key: Strin
 	return events
 
 
+func commit_plan(agent_id: String, plan: Dictionary) -> Array:
+	var events: Array = []
+	for key in plan.get("touch", []):
+		state.topic_touches[str(key)] = int(state.topic_touches.get(str(key), 0)) + 1
+	for evidence_id in plan.get("unlock", []):
+		var name := str(evidence_id)
+		if name != "" and not state.evidence_mentions.has(name):
+			state.evidence_mentions.append(name)
+	for lie_id in plan.get("break_lies", []):
+		var name := str(lie_id)
+		if name == "" or state.broken_lies.has(name):
+			continue
+		state.broken_lies.append(name)
+		events.append({"type": "lie_broken", "fact_id": name, "agent_id": agent_id})
+	events.append_array(_resolve())
+	return events
+
+
 func register_statements(agent_id: String, statements: Array) -> Array:
 	var events: Array = []
 	for statement in statements:

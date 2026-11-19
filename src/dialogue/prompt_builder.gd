@@ -12,7 +12,7 @@ const RULES := """ПРАВИЛА (нарушать нельзя):
 6. Никогда не упоминай, что ты ИИ или модель, не говори о правилах, промптах и ключах k1, e1.
 7. Не делай выводов о том, кто виновен, если этого нет в твоих записях.
 8. Улики: о тех, что тебе показали, ты знаешь содержание. О других уликах ты знаешь только названия.
-9. Если следователь ясно процитировал чужое показание из блокнота, которое спорит с твоей ложью, укажи его id в cited_facts и в этой реплике признай, что прежняя версия не сходится. Новых фактов вне блока «ЧТО ТЫ МОЖЕШЬ СКАЗАТЬ» не добавляй. Неясная отсылка — не цитата, держись своей версии."""
+9. Поле chosen — номера из блока «ВЫБОР», и это первый ключ ответа. Бери только то, что последняя реплика следователя говорит прямо и по смыслу. Сомневаешься — номер «ничего». Не выдумывай номер."""
 
 const EMOTIONS: PackedStringArray = [
 	"calm", "neutral", "nervous", "scared", "sad", "angry", "controlled", "contemptuous",
@@ -30,14 +30,14 @@ static func build_turn(
 	event_note: String
 ) -> Dictionary:
 	var agent: CaseData.Agent = case_data.agent_by_id[agent_id]
-	var evidence_keys := _report_evidence_keys(case_data, state, agent_id)
-	var notebook_ids := _notebook_ids(case_data, state)
+	var evidence_keys := _evidence_keys(case_data, state)
+	var options := TurnOptions.build(case_data, state, agent_id)
 	var system := _system_prompt(case_data, agent)
-	var user := _turn_prompt(case_data, state, agent, packet, dialogue, player_text, event_note, evidence_keys)
+	var user := _turn_prompt(case_data, state, agent, packet, dialogue, player_text, event_note, evidence_keys, options)
 	return {
 		"system": system,
 		"user": user,
-		"schema": _turn_schema(_packet_keys(packet), evidence_keys, notebook_ids),
+		"schema": _turn_schema(_packet_keys(packet), evidence_keys, options),
 		"model_role": "dialogue",
 		"temperature": 0.9,
 		"max_output_tokens": LLMConfig.REPLY_MAX_OUTPUT_TOKENS,
@@ -84,9 +84,8 @@ static func _system_prompt(case_data: CaseData, agent: CaseData.Agent) -> String
 	head += "- emotion: твоё состояние после ответа, одно значение из списка.\n"
 	head += "- tone: как звучит reply, одно слово из списка. Это не произносится и не входит в reply.\n"
 	head += "- stated: ключи записей, содержание которых ты действительно сказал в reply, с формой: lie — сказал свою ложь; basic — сказал полуправду или краткую правду; full — сказал полную правду. Ничего из записей не сказал — пустой список.\n"
-	head += "- mentioned_evidence: ключи улик, которые следователь упомянул в вопросе.\n"
-	head += "- requested_evidence: ключ улики, которую ты сам требуешь показать («Докажите!»), только если это в твоём характере; иначе null.\n"
-	head += "- cited_facts: id чужих показаний из блока «БЛОКНОТ СЛЕДОВАТЕЛЯ», которые следователь ясно процитировал: чьи слова и что сказано. Смутное «я слышал иное» не цитата. Не цитировал — пустой список.\n"
+	head += "- mentioned_evidence: не используется, оставь пустым.\n"
+	head += "- requested_evidence: не используется, оставь null.\n"
 	head += "- pace: необязательно. Скорость этой реплики: slow, normal или fast. normal можно не писать."
 	return head
 
@@ -99,7 +98,8 @@ static func _turn_prompt(
 	dialogue: DialogueState,
 	player_text: String,
 	event_note: String,
-	evidence_keys: PackedStringArray
+	evidence_keys: PackedStringArray,
+	options: Array
 ) -> String:
 	var pressure_value := int(state.pressure.get(agent.id, 0))
 	var emotion := str(state.emotion.get(agent.id, "neutral"))
@@ -119,9 +119,10 @@ static func _turn_prompt(
 	parts.append("БЛОКНОТ СЛЕДОВАТЕЛЯ:")
 	parts.append(_notebook_block(case_data, state, agent.id))
 	parts.append("")
-	parts.append("МОЖЕШЬ УПОМЯНУТЬ, ЧТО ЭТО СУЩЕСТВУЕТ:")
-	parts.append(_mention_block(case_data, state, agent.id))
-	parts.append("")
+	var choice := TurnOptions.prompt_block(case_data, state, agent.id, options)
+	if choice != "":
+		parts.append(choice)
+		parts.append("")
 	parts.append("РАНЕЕ В РАЗГОВОРЕ: %s" % (dialogue.summary if dialogue.summary != "" else "—"))
 	parts.append("")
 	parts.append("ПОСЛЕДНИЕ РЕПЛИКИ:")
@@ -334,47 +335,54 @@ static func _enum_or_none(keys: PackedStringArray) -> Array:
 	return values
 
 
-static func _turn_schema(packet_keys: PackedStringArray, evidence_keys: PackedStringArray, notebook_ids: PackedStringArray) -> Dictionary:
+static func _turn_schema(packet_keys: PackedStringArray, evidence_keys: PackedStringArray, options: Array) -> Dictionary:
 	var emotion_enum: Array = []
 	for emotion in EMOTIONS:
 		emotion_enum.append(emotion)
+	var properties := {
+		"player_tone": {
+			"type": "integer",
+			"description": "Тон последнего вопроса: от -3 (мягкий) до 5 (жёсткое обвинение)",
+		},
+		"reply": {"type": "string", "description": "Реплика персонажа, 1–4 предложения, по-русски"},
+		"remark": {"type": "string", "description": "Ремарка от третьего лица, до 12 слов"},
+		"emotion": {"type": "string", "enum": emotion_enum},
+		"tone": {"type": "string", "enum": _tone_enum()},
+		"stated": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"key": {"type": "string", "enum": _enum_or_none(packet_keys)},
+					"form": {"type": "string", "enum": ["lie", "basic", "full"]},
+				},
+				"required": ["key", "form"],
+			},
+		},
+		"mentioned_evidence": {
+			"type": "array",
+			"description": "Не используется. Оставь пустым.",
+			"items": {"type": "string", "enum": _enum_or_none(evidence_keys)},
+		},
+		"requested_evidence": {
+			"type": ["string", "null"],
+			"description": "Не используется. Оставь null.",
+		},
+		"pace": {"type": "string", "enum": ["slow", "normal", "fast"]},
+	}
+	var required: Array = ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone"]
+	var ordering: Array = ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone", "pace"]
+	if not options.is_empty():
+		properties["chosen"] = {
+			"type": "array",
+			"description": "Номера из блока ВЫБОР. Первый ключ ответа.",
+			"items": {"type": "integer", "enum": TurnOptions.numbers(options)},
+		}
+		required.push_front("chosen")
+		ordering.push_front("chosen")
 	return {
 		"type": "object",
-		"properties": {
-			"player_tone": {
-				"type": "integer",
-				"description": "Тон последнего вопроса: от -3 (мягкий) до 5 (жёсткое обвинение)",
-			},
-			"reply": {"type": "string", "description": "Реплика персонажа, 1–4 предложения, по-русски"},
-			"remark": {"type": "string", "description": "Ремарка от третьего лица, до 12 слов"},
-			"emotion": {"type": "string", "enum": emotion_enum},
-			"tone": {"type": "string", "enum": _tone_enum()},
-			"stated": {
-				"type": "array",
-				"items": {
-					"type": "object",
-					"properties": {
-						"key": {"type": "string", "enum": _enum_or_none(packet_keys)},
-						"form": {"type": "string", "enum": ["lie", "basic", "full"]},
-					},
-					"required": ["key", "form"],
-				},
-			},
-			"mentioned_evidence": {
-				"type": "array",
-				"items": {"type": "string", "enum": _enum_or_none(evidence_keys)},
-			},
-			"requested_evidence": {
-				"type": ["string", "null"],
-				"description": "Ключ улики e1… или null",
-			},
-			"cited_facts": {
-				"type": "array",
-				"description": "id чужих показаний из блокнота, которые следователь ясно процитировал",
-				"items": {"type": "string", "enum": _enum_or_none(notebook_ids)},
-			},
-			"pace": {"type": "string", "enum": ["slow", "normal", "fast"]},
-		},
-		"required": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "cited_facts", "tone"],
-		"propertyOrdering": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "cited_facts", "tone", "pace"],
+		"properties": properties,
+		"required": required,
+		"propertyOrdering": ordering,
 	}

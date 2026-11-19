@@ -56,6 +56,8 @@ func refresh() -> void:
 		_grid.add_child(_card(evidence))
 	if not any:
 		_grid.add_child(UiWidgets.label(UiStrings.NO_EVIDENCE))
+	if _open_id != "":
+		_detail_shown.text = "%s%s" % [UiStrings.SHOWN_TO, _shown_names(_open_id)]
 	_update_present_caption()
 
 

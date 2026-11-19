@@ -49,7 +49,7 @@ func push_pcm(pcm: PackedByteArray, force_limit: bool = false) -> String:
 		clip.push_preroll(pcm)
 		return "preroll"
 	var reached := clip.push_hold(pcm) or force_limit
-	level_changed.emit(clip.level())
+	level_changed.emit(clampf(float(VoiceAudio.peak(pcm)) / 8000.0, 0.0, 1.0))
 	if _is_live():
 		var heard := stt.partial_text()
 		if heard != "":

@@ -27,6 +27,9 @@ var _hands: HandsFreeListen
 var _mic_input: MicInput
 var _access: MicAccess
 var _limit_busy: bool = false
+var _voice_gate: bool = false
+var _heard_speech: bool = false
+var _meter: LevelMeter = LevelMeter.new()
 var _error: Label
 var _retry: Button
 var _busy: bool = false
@@ -104,14 +107,16 @@ func _ready() -> void:
 	_mic = UiWidgets.button("🎤", "MicButton")
 	_mic.button_down.connect(_mic_down)
 	_mic.button_up.connect(_mic_up)
-	input_row.add_child(_mic)
 	_mic_level = ProgressBar.new()
 	_mic_level.name = "MicLevel"
 	_mic_level.min_value = 0.0
 	_mic_level.max_value = 1.0
 	_mic_level.custom_minimum_size = Vector2(72, 16)
-	_mic_level.visible = false
+	_mic_level.show_percentage = false
+	_mic_level.visible = true
+	_mic_level.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	input_row.add_child(_mic_level)
+	input_row.add_child(_mic)
 	var tools := HBoxContainer.new()
 	column.add_child(tools)
 	var evidence := UiWidgets.button(UiStrings.EVIDENCE, "EvidenceButton")
@@ -121,7 +126,7 @@ func _ready() -> void:
 	notebook.pressed.connect(func() -> void: notebook_requested.emit())
 	tools.add_child(notebook)
 	var stop_speech := UiWidgets.button(UiStrings.STOP_SPEECH, "StopSpeechButton")
-	stop_speech.pressed.connect(func() -> void: Speaker.stop_and_clear())
+	stop_speech.pressed.connect(_skip_speech)
 	tools.add_child(stop_speech)
 	_mic_state = UiWidgets.label("", "MicStateLabel")
 	_mic_state.add_theme_color_override("font_color", NoirTheme.GOLD)
@@ -169,6 +174,12 @@ func _ready() -> void:
 	_sync_voice_retry()
 	if not Speaker.voice_retry_available.is_connected(_show_voice_retry):
 		Speaker.voice_retry_available.connect(_show_voice_retry)
+	if not Speaker.is_speaking.is_connected(_on_speaker):
+		Speaker.is_speaking.connect(_on_speaker)
+	if not Speaker.voice_error.is_connected(_on_voice_settled):
+		Speaker.voice_error.connect(_on_voice_settled)
+	if not Speaker.voice_retry_available.is_connected(_on_retry_gate):
+		Speaker.voice_retry_available.connect(_on_retry_gate)
 	if not Speaker.voice_line_changed.is_connected(_render_feed):
 		Speaker.voice_line_changed.connect(_render_feed)
 	if not Game.agent_replied.is_connected(_on_replied):
@@ -208,20 +219,25 @@ func _show_voice_error(kind: String) -> void:
 	_voice_error.visible = text != ""
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	_refresh_mic_button()
+	if not _capturing():
+		_meter.push(0.0)
+	if _mic_level != null and _meter.advance(delta):
+		_mic_level.value = _meter.shown
 	if _talk == null or _mic_input == null:
 		return
 	var active := is_visible_in_tree() and not get_tree().paused
 	var hands := _hands_free()
 	_talk.screen_active = active and not hands
 	_talk.enabled = SettingsStore.load_current().mic_enabled
-	_talk.character_busy = Speaker.speaking
+	_talk.character_busy = _voice_gate or Speaker.speaking
 	if _hands != null:
 		_hands.screen_active = active and hands
 		_hands.enabled = _talk.enabled
 		_hands.set_pause_ms(SettingsStore.load_current().mic_pause_ms)
 		_hands.set_echo(Speaker.speaking)
+		_hands.set_output_lock(_voice_gate or Speaker.speaking)
 	if not active:
 		if _talk._holding or _talk.locked:
 			_talk.cancel()
@@ -239,7 +255,7 @@ func _process(_delta: float) -> void:
 		_hands.push_pcm(pcm)
 		return
 	if _talk._holding:
-		_mic_input.observe_hold(pcm, _delta * 1000.0)
+		_mic_input.observe_hold(pcm, delta * 1000.0)
 	var kind := _talk.push_pcm(pcm)
 	if kind == "limit" and not _limit_busy:
 		_limit_busy = true
@@ -255,6 +271,9 @@ func _notification(what: int) -> void:
 			_mic_input.stop()
 	if what == NOTIFICATION_VISIBILITY_CHANGED and is_inside_tree() and not is_visible_in_tree():
 		Speaker.stop_and_clear(false)
+		_voice_gate = false
+		_heard_speech = false
+		_apply_voice_gate()
 		if _talk != null:
 			_talk.cancel()
 		if _hands != null:
@@ -334,10 +353,72 @@ func _send_text(text: String) -> void:
 		return
 	_hide_hint()
 	_clear_error()
+	_voice_gate = true
+	_heard_speech = false
+	_apply_voice_gate()
 	_last = {"kind": "ask", "text": spoken}
 	_push({"kind": "player", "text": spoken})
 	TurnTiming.mark("line_shown")
 	await Game.ask(agent_id, spoken)
+	_release_voice_gate()
+
+
+func _apply_voice_gate() -> void:
+	if _hands != null:
+		_hands.set_output_lock(_voice_gate or Speaker.speaking)
+	if _talk != null:
+		_talk.character_busy = _voice_gate or Speaker.speaking
+
+
+func _release_voice_gate() -> void:
+	var voice_off := not SettingsStore.load_current().voice_enabled
+	var failed := Speaker.last_error != "" or not Speaker.retry_line.is_empty()
+	if voice_off or failed:
+		_voice_gate = false
+		_heard_speech = false
+	elif Speaker.speaking or Speaker.queue.current_id != "" or not Speaker.queue.pending.is_empty():
+		_voice_gate = true
+	else:
+		_voice_gate = false
+		_heard_speech = false
+	_apply_voice_gate()
+
+
+func _on_speaker(active: bool) -> void:
+	if active:
+		_heard_speech = true
+		_voice_gate = true
+	elif _heard_speech:
+		_voice_gate = false
+		_heard_speech = false
+	_apply_voice_gate()
+
+
+func _on_voice_settled(_kind: String) -> void:
+	_voice_gate = false
+	_heard_speech = false
+	_apply_voice_gate()
+
+
+func _on_retry_gate(show_button: bool) -> void:
+	if show_button:
+		_voice_gate = false
+		_heard_speech = false
+		_apply_voice_gate()
+	_show_voice_retry(show_button)
+
+
+func _skip_speech() -> void:
+	Speaker.stop_and_clear()
+	_voice_gate = false
+	_heard_speech = false
+	_apply_voice_gate()
+
+
+func _capturing() -> bool:
+	if _hands_free() and _hands != null:
+		return _hands.enabled and not _hands.paused and not _hands.echo and not _hands.output_lock and not _hands.locked
+	return _talk != null and _talk._holding
 
 
 func _mic_down() -> void:
@@ -415,10 +496,8 @@ func _refresh_mic_button() -> void:
 	if _mic == null or _talk == null:
 		return
 	if _hands_free() and _hands != null:
-		_mic.disabled = not _hands.enabled
+		_mic.disabled = not _hands.enabled or _voice_gate or Speaker.speaking
 		_mic_state.text = _hands.label()
-		if _mic_level != null:
-			_mic_level.visible = _hands.state_name == HandsFreeListen.STATE_LISTEN and not _hands.paused and not _hands.echo
 		return
 	var blocked := Speaker.speaking or _talk.locked or not _talk.enabled
 	_mic.disabled = blocked and not _talk._holding
@@ -440,9 +519,7 @@ func _hands_free() -> bool:
 	return SettingsStore.load_current().mic_mode == "hands_free"
 
 
-func _on_mic_state(next: String) -> void:
-	if _mic_level != null:
-		_mic_level.visible = next == PushToTalk.STATE_LISTENING
+func _on_mic_state(_next: String) -> void:
 	_refresh_mic_button()
 
 
@@ -463,17 +540,20 @@ func _on_mic_hint(text: String) -> void:
 
 
 func _on_mic_level(unit: float) -> void:
-	if _mic_level != null:
-		_mic_level.value = unit
+	_meter.push(unit)
 
 
 func _confirm_from_board(evidence_id: String) -> void:
 	if _busy or agent_id == "":
 		return
 	_clear_error()
+	_voice_gate = true
+	_heard_speech = false
+	_apply_voice_gate()
 	_last = {"kind": "present", "text": "", "evidence_id": evidence_id}
 	_push({"kind": "system", "text": "Вы: %s" % UiStrings.presented_line(_evidence_title(evidence_id))})
 	await Game.present(agent_id, evidence_id, "")
+	_release_voice_gate()
 
 
 func _confirm_hint() -> void:

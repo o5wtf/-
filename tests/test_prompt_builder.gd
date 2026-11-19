@@ -83,8 +83,8 @@ func test_schema_enums_match_packet_and_evidence() -> void:
 	var built := _sample_request(0)
 	var schema: Dictionary = built["schema"]
 	var properties: Dictionary = schema["properties"]
-	assert_eq(schema["required"], ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone"])
-	assert_eq(schema["propertyOrdering"], ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone", "pace"])
+	assert_eq(schema["required"], ["chosen", "player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone"])
+	assert_eq(schema["propertyOrdering"], ["chosen", "player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone", "pace"])
 	assert_false(schema["required"].has("pace"))
 	assert_eq(properties["pace"]["enum"], ["slow", "normal", "fast"])
 	assert_eq(properties["tone"]["enum"], ["нейтрально", "нервно", "устало", "раздражённо", "испуганно", "грустно", "уверенно", "уклончиво", "саркастично"])
@@ -207,13 +207,15 @@ func _allowed(
 			continue
 		var body := entry as Dictionary
 		var mode := str(body.get("mode", ""))
-		if mode == "basic" or mode == "full" or mode == "lie_or_basic":
+		if mode == "basic" or mode == "full" or mode == "lie_or_basic" or mode == "partial":
 			chunks.append(str(body.get("content", "")))
 		if mode == "lie" or mode == "lie_or_basic":
 			chunks.append(str(body.get("lie_text", "")))
+			chunks.append(str(body.get("partial", "")))
 	for evidence in data.evidence:
 		if state.unlocked_evidence.has(evidence.id):
 			chunks.append(evidence.title)
+			chunks.append(evidence.full_text)
 		var shown: Array = state.shown.get(evidence.id, [])
 		if shown.has(agent.id):
 			chunks.append(evidence.title)
@@ -251,6 +253,8 @@ func _assert_case_hidden(data: CaseData, state: GameState, agent: CaseData.Agent
 		elif mode == "lie":
 			_forbid(prompt, allowed, fact.content_basic, "must_lie_truth")
 			_forbid(prompt, allowed, fact.content_full, "must_lie_truth")
+		elif mode == "partial":
+			_forbid(prompt, allowed, fact.content_full, "content_full")
 		elif mode == "lie_or_basic":
 			_forbid(prompt, allowed, fact.content_full, "content_full")
 	for other in data.agents:

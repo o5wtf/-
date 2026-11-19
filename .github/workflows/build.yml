@@ -121,11 +121,23 @@ jobs:
           source_zip="$(find "$HOME/.local/share/godot/export_templates" -name android_source.zip | head -1)"
           test -n "$source_zip"
           template_version="$(tr -d '[:space:]' < "$(dirname "$source_zip")/version.txt")"
-          rm -rf android
-          mkdir -p android/build
-          unzip -q "$source_zip" -d android/build
-          printf '%s\n' "$template_version" > android/.build_version
-          godot --headless --path . --export-release "Android" "$PWD/builds/Detective.apk"
+          prepare_android() {
+            rm -rf android
+            mkdir -p android/build
+            unzip -q "$source_zip" -d android/build
+            printf '%s\n' "$template_version" > android/.build_version
+          }
+          prepare_android
+          attempt=1
+          until godot --headless --path . --export-release "Android" "$PWD/builds/Detective.apk"; do
+            if [ "$attempt" -ge 2 ]; then
+              exit 1
+            fi
+            attempt=$((attempt + 1))
+            echo "Gradle не скачал зависимости, повтор экспорта."
+            sleep 20
+            prepare_android
+          done
           test -s builds/Detective.apk
 
       - name: В сборке нет ключа и лишних файлов

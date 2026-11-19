@@ -258,6 +258,34 @@ func test_citation_breaks_only_a_heard_pair() -> void:
 	assert_false(hit.is_empty())
 
 
+func test_evidence_mention_unlocks_for_the_right_speaker() -> void:
+	var data := _case()
+	_evidence(data, "open", [], false)
+	_evidence(data, "log", [], false, {
+		"type": "evidence_mentioned",
+		"agent_id": "b",
+		"evidence_id": "log",
+		"topic": "кто входил и выходил",
+	})
+	var engine := _engine(data)
+	engine.start_new()
+	assert_true(engine.state.unlocked_evidence.has("open"))
+	assert_false(engine.state.unlocked_evidence.has("log"))
+	engine.note_mentions("a", ["e2"], "")
+	assert_false(engine.state.unlocked_evidence.has("log"))
+	engine.note_mentions("b", ["e9"], "")
+	assert_false(engine.state.unlocked_evidence.has("log"))
+	engine.note_mentions("b", ["e2"], "")
+	assert_true(engine.state.unlocked_evidence.has("log"))
+	var fresh := _engine(data)
+	fresh.start_new()
+	fresh.note_mentions("b", [], "e2")
+	assert_true(fresh.state.unlocked_evidence.has("log"))
+	var old := GameState.from_dict({"pressure": {"a": 3}})
+	assert_false(old.evidence_mentions.has("log"))
+	assert_eq(int(old.pressure["a"]), 3)
+
+
 func test_contradiction_turn_and_filter() -> void:
 	var data := _case()
 	_fact(data, "a", "fa", 0, 0)

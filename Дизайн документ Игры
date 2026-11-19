@@ -318,8 +318,9 @@ contradiction {
 - { "type": "dialogue_with", "agent_id": "mira" } — с агентом был хотя бы один обмен репликами (вопрос игрока и ответ)
 - { "type": "evidence_shown", "evidence_id": "ev_knife" } — улика предъявлена любому агенту
 - { "type": "evidence_shown", "evidence_id": "ev_knife", "agent_id": "pavel" } — улика предъявлена конкретному агенту
-- { "type": "inconsistency_created", "contradiction_id": "arkady_alibi" } — зафиксировано указанное противоречие
-- { "type": "inconsistency_created" } — зафиксировано любое противоречие
+- { "type": "inconsistency_created", "contradiction_id": "arkady_alibi" } — тип допустим, но сам по себе улику больше не открывает
+- { "type": "inconsistency_created" } — то же для любого противоречия
+- { "type": "evidence_mentioned", "agent_id": "roman", "evidence_id": "ev_security_log", "topic": "кто входил и выходил" } — этот персонаж сам называет улику, когда разговор уже идёт об этой теме, не в первом ответе. Если игрок прямо спрашивает его про эту улику, она тоже открывается.
 
 Составные условия (вложенность любая):
 - { "AND": [ условие, условие, ... ] } — выполнены все

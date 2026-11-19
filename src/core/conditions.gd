@@ -28,6 +28,8 @@ static func evaluate(cond: Variant, state: GameState) -> bool:
 		if body.has("agent_id"):
 			return shown_to.has(str(body["agent_id"]))
 		return not shown_to.is_empty()
+	if kind == "evidence_mentioned":
+		return state.evidence_mentions.has(str(body.get("evidence_id", "")))
 	if kind == "inconsistency_created":
 		return false
 	return false
@@ -93,6 +95,14 @@ static func _check(
 			errors.append(_err(
 				"cond_unknown_agent",
 				"%s: агент %s не найден" % [where, _show(body["agent_id"])]
+			))
+	elif kind == "evidence_mentioned":
+		_require_agent(body, where, agent_ids, errors)
+		var evidence_id: Variant = body.get("evidence_id")
+		if not evidence_ids.has(evidence_id):
+			errors.append(_err(
+				"cond_unknown_evidence",
+				"%s: улика %s не найдена" % [where, _show(evidence_id)]
 			))
 	elif kind == "inconsistency_created":
 		if body.has("contradiction_id") and not contradiction_ids.has(body["contradiction_id"]):

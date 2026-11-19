@@ -210,6 +210,11 @@ def validate(case):
                 err(f"{where}: улика требует предъявления самой себя")
             if "agent_id" in cond and cond["agent_id"] not in agent_ids:
                 err(f"{where}: агент {cond['agent_id']} не найден")
+        elif t == "evidence_mentioned":
+            if cond.get("agent_id") not in agent_ids:
+                err(f"{where}: агент {cond.get('agent_id')} не найден")
+            if cond.get("evidence_id") not in ev_ids:
+                err(f"{where}: улика {cond.get('evidence_id')} не найдена")
         elif t == "inconsistency_created":
             if "contradiction_id" in cond and cond["contradiction_id"] not in contr_ids:
                 err(f"{where}: противоречие {cond['contradiction_id']} не найдено")
@@ -254,6 +259,8 @@ def eval_cond(cond, st):
         return True  # игрок говорит со всеми
     if t == "evidence_shown":
         return cond["evidence_id"] in st["shown_any"]
+    if t == "evidence_mentioned":
+        return True
     if t == "inconsistency_created":
         return False
     return False

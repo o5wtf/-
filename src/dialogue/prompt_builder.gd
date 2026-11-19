@@ -30,7 +30,7 @@ static func build_turn(
 	event_note: String
 ) -> Dictionary:
 	var agent: CaseData.Agent = case_data.agent_by_id[agent_id]
-	var evidence_keys := _evidence_keys(case_data, state)
+	var evidence_keys := _report_evidence_keys(case_data, state, agent_id)
 	var notebook_ids := _notebook_ids(case_data, state)
 	var system := _system_prompt(case_data, agent)
 	var user := _turn_prompt(case_data, state, agent, packet, dialogue, player_text, event_note, evidence_keys)
@@ -118,6 +118,9 @@ static func _turn_prompt(
 	parts.append("")
 	parts.append("БЛОКНОТ СЛЕДОВАТЕЛЯ:")
 	parts.append(_notebook_block(case_data, state, agent.id))
+	parts.append("")
+	parts.append("МОЖЕШЬ УПОМЯНУТЬ, ЧТО ЭТО СУЩЕСТВУЕТ:")
+	parts.append(_mention_block(case_data, state, agent.id))
 	parts.append("")
 	parts.append("РАНЕЕ В РАЗГОВОРЕ: %s" % (dialogue.summary if dialogue.summary != "" else "—"))
 	parts.append("")
@@ -240,8 +243,68 @@ static func evidence_keys(case_data: CaseData, state: GameState) -> PackedString
 	return _evidence_keys(case_data, state)
 
 
+static func report_evidence_keys(case_data: CaseData, state: GameState, agent_id: String) -> PackedStringArray:
+	return _report_evidence_keys(case_data, state, agent_id)
+
+
 static func notebook_ids(case_data: CaseData, state: GameState) -> PackedStringArray:
 	return _notebook_ids(case_data, state)
+
+
+static func _report_evidence_keys(case_data: CaseData, state: GameState, agent_id: String) -> PackedStringArray:
+	var keys := _evidence_keys(case_data, state)
+	var index := keys.size() + 1
+	for evidence in case_data.evidence:
+		if state.unlocked_evidence.has(evidence.id):
+			continue
+		if _mention_topic_for(evidence, agent_id) == "":
+			continue
+		keys.append("e%d" % index)
+		index += 1
+	return keys
+
+
+static func _mention_topic_for(evidence: CaseData.EvidenceItem, agent_id: String) -> String:
+	return _topic_in(evidence.unlock_condition, agent_id, evidence.id)
+
+
+static func _topic_in(cond: Variant, agent_id: String, evidence_id: String) -> String:
+	if cond is not Dictionary:
+		return ""
+	var body := cond as Dictionary
+	for op in ["AND", "OR"]:
+		if body.has(op) and body[op] is Array:
+			for sub in body[op]:
+				var topic := _topic_in(sub, agent_id, evidence_id)
+				if topic != "":
+					return topic
+			return ""
+	if str(body.get("type", "")) != "evidence_mentioned":
+		return ""
+	if str(body.get("agent_id", "")) != agent_id or str(body.get("evidence_id", "")) != evidence_id:
+		return ""
+	var topic := str(body.get("topic", "")).strip_edges()
+	return topic if topic != "" else evidence_id
+
+
+static func _mention_block(case_data: CaseData, state: GameState, agent_id: String) -> String:
+	var keys := _report_evidence_keys(case_data, state, agent_id)
+	var known := _evidence_keys(case_data, state).size()
+	if keys.size() == known:
+		return "нет"
+	var lines: PackedStringArray = PackedStringArray()
+	var index := known
+	for evidence in case_data.evidence:
+		if state.unlocked_evidence.has(evidence.id):
+			continue
+		var topic := _mention_topic_for(evidence, agent_id)
+		if topic == "":
+			continue
+		lines.append("%s — %s. Тема: %s. Не в первом ответе на эту тему." % [keys[index], evidence.title, topic])
+		index += 1
+	if lines.is_empty():
+		return "нет"
+	return "\n".join(lines)
 
 
 static func _evidence_keys(case_data: CaseData, state: GameState) -> PackedStringArray:

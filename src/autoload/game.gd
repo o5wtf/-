@@ -201,6 +201,7 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 		turn_events.append_array(_engine.register_statements(agent_id, statements))
 	if not cited.is_empty():
 		turn_events.append_array(_engine.apply_citations(agent_id, cited))
+	turn_events.append_array(_engine.note_mentions(agent_id, last_mentioned_evidence, last_requested_evidence))
 	turn_events.append_array(_engine.apply_tone(agent_id, tone))
 	if Balance.emotion_allowed(emotion):
 		_engine.set_emotion(agent_id, emotion)
@@ -291,7 +292,7 @@ func _validate_result(result: Dictionary, packet: Array, agent_id: String, dialo
 		"leak_max_stems": _leak_max_stems,
 		"log_leaks": _log_leaks,
 		"local_fixes": local_fixes,
-		"evidence_keys": PromptBuilder.evidence_keys(case_data, state),
+		"evidence_keys": PromptBuilder.report_evidence_keys(case_data, state, agent_id),
 		"notebook_ids": PromptBuilder.notebook_ids(case_data, state),
 	})
 
@@ -369,6 +370,7 @@ func _restore(snapshot: Dictionary) -> void:
 	state.heard = fresh.heard
 	state.contradictions = fresh.contradictions
 	state.contradiction_turns = fresh.contradiction_turns
+	state.evidence_mentions = fresh.evidence_mentions
 	state.talked_to = fresh.talked_to
 	state.accusation = fresh.accusation
 	state.dialogues = fresh.dialogues

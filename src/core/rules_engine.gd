@@ -56,6 +56,27 @@ func apply_citations(agent_id: String, cited_ids: Array) -> Array:
 	return events
 
 
+func note_mentions(agent_id: String, mentioned_keys: Array, requested_key: String) -> Array:
+	var events: Array = []
+	var changed := false
+	for row in _mention_rows(agent_id):
+		var key := str(row.get("key", ""))
+		var evidence_id := str(row.get("evidence_id", ""))
+		var named := false
+		for item in mentioned_keys:
+			if str(item) == key:
+				named = true
+		if requested_key == key:
+			named = true
+		if not named or evidence_id == "" or state.evidence_mentions.has(evidence_id):
+			continue
+		state.evidence_mentions.append(evidence_id)
+		changed = true
+	if changed:
+		events.append_array(_resolve())
+	return events
+
+
 func register_statements(agent_id: String, statements: Array) -> Array:
 	var events: Array = []
 	for statement in statements:
@@ -383,6 +404,50 @@ func _contradiction_side_heard(fact_id: String, form: String) -> bool:
 	if form == "truth":
 		return _journal_has(fact_id, "basic") or _journal_has(fact_id, "full")
 	return false
+
+
+func _mention_rows(agent_id: String) -> Array:
+	var known := 0
+	for evidence in case_data.evidence:
+		if state.unlocked_evidence.has(evidence.id):
+			known += 1
+	var rows: Array = []
+	var index := known + 1
+	for evidence in case_data.evidence:
+		if state.unlocked_evidence.has(evidence.id):
+			continue
+		var topic := _mention_topic(evidence.unlock_condition, agent_id, evidence.id)
+		if topic == "":
+			continue
+		rows.append({
+			"key": "e%d" % index,
+			"evidence_id": evidence.id,
+			"title": evidence.title,
+			"topic": topic,
+		})
+		index += 1
+	return rows
+
+
+func _mention_topic(cond: Variant, agent_id: String, evidence_id: String) -> String:
+	if cond is not Dictionary:
+		return ""
+	var body := cond as Dictionary
+	for op in ["AND", "OR"]:
+		if body.has(op) and body[op] is Array:
+			for sub in body[op]:
+				var topic := _mention_topic(sub, agent_id, evidence_id)
+				if topic != "":
+					return topic
+			return ""
+	if str(body.get("type", "")) != "evidence_mentioned":
+		return ""
+	if str(body.get("agent_id", "")) != agent_id:
+		return ""
+	if str(body.get("evidence_id", "")) != evidence_id:
+		return ""
+	var topic := str(body.get("topic", "")).strip_edges()
+	return topic if topic != "" else evidence_id
 
 
 func _cited_lie(agent_id: String, cited_id: String, contradiction: CaseData.Contradiction) -> String:

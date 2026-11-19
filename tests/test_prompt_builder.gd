@@ -33,6 +33,8 @@ func test_turn_template_key_lines() -> void:
 		"нет",
 		"УЛИКИ, ИЗВЕСТНЫЕ СЛЕДОВАТЕЛЮ (только названия):",
 		"e1 — Записка на столе",
+		"БЛОКНОТ СЛЕДОВАТЕЛЯ:",
+		"пусто",
 		"РАНЕЕ В РАЗГОВОРЕ: —",
 		"ПОСЛЕДНИЕ РЕПЛИКИ:",
 		"ВОПРОС СЛЕДОВАТЕЛЯ: Что вы видели?",
@@ -81,8 +83,8 @@ func test_schema_enums_match_packet_and_evidence() -> void:
 	var built := _sample_request(0)
 	var schema: Dictionary = built["schema"]
 	var properties: Dictionary = schema["properties"]
-	assert_eq(schema["required"], ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone"])
-	assert_eq(schema["propertyOrdering"], ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone", "pace"])
+	assert_eq(schema["required"], ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "cited_facts", "tone"])
+	assert_eq(schema["propertyOrdering"], ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "cited_facts", "tone", "pace"])
 	assert_false(schema["required"].has("pace"))
 	assert_eq(properties["pace"]["enum"], ["slow", "normal", "fast"])
 	assert_eq(properties["tone"]["enum"], ["нейтрально", "нервно", "устало", "раздражённо", "испуганно", "грустно", "уверенно", "уклончиво", "саркастично"])

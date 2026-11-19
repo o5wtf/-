@@ -29,9 +29,7 @@ static func evaluate(cond: Variant, state: GameState) -> bool:
 			return shown_to.has(str(body["agent_id"]))
 		return not shown_to.is_empty()
 	if kind == "inconsistency_created":
-		if body.has("contradiction_id"):
-			return state.contradictions.has(str(body["contradiction_id"]))
-		return not state.contradictions.is_empty()
+		return false
 	return false
 
 

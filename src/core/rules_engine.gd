@@ -37,6 +37,25 @@ func note_question(agent_id: String) -> Array:
 	return _resolve()
 
 
+func apply_citations(agent_id: String, cited_ids: Array) -> Array:
+	var events: Array = []
+	var changed := false
+	for raw_id in cited_ids:
+		var fact_id := str(raw_id)
+		if fact_id == "" or fact_id == "none":
+			continue
+		for contradiction in case_data.contradictions:
+			var lie_id := _cited_lie(agent_id, fact_id, contradiction)
+			if lie_id == "" or state.broken_lies.has(lie_id):
+				continue
+			state.broken_lies.append(lie_id)
+			events.append({"type": "lie_broken", "fact_id": lie_id, "agent_id": agent_id})
+			changed = true
+	if changed:
+		events.append_array(_resolve())
+	return events
+
+
 func register_statements(agent_id: String, statements: Array) -> Array:
 	var events: Array = []
 	for statement in statements:
@@ -252,14 +271,6 @@ func _lie_breaks(fact: CaseData.Fact) -> bool:
 		for evidence_id in fact.related_evidence_ids:
 			if _shown_to(evidence_id, agent_id):
 				return true
-	if breaks.has("contradiction"):
-		for contradiction in case_data.contradictions:
-			if not state.contradictions.has(contradiction.id):
-				continue
-			var involves := contradiction.fact_a_id == fact.id or contradiction.fact_b_id == fact.id
-			var has_lie := contradiction.fact_a_form == "lie" or contradiction.fact_b_form == "lie"
-			if involves and has_lie:
-				return true
 	return false
 
 
@@ -371,6 +382,49 @@ func _contradiction_side_heard(fact_id: String, form: String) -> bool:
 		return _journal_has(fact_id, "full")
 	if form == "truth":
 		return _journal_has(fact_id, "basic") or _journal_has(fact_id, "full")
+	return false
+
+
+func _cited_lie(agent_id: String, cited_id: String, contradiction: CaseData.Contradiction) -> String:
+	var pairs := [
+		[contradiction.fact_a_id, contradiction.fact_a_form, contradiction.fact_b_id, contradiction.fact_b_form],
+		[contradiction.fact_b_id, contradiction.fact_b_form, contradiction.fact_a_id, contradiction.fact_a_form],
+	]
+	for pair in pairs:
+		if str(pair[0]) != cited_id:
+			continue
+		if not _heard_by_other(str(pair[0]), str(pair[1]), agent_id):
+			continue
+		var lie_id := str(pair[2])
+		if str(pair[3]) != "lie":
+			continue
+		if str(case_data.fact_owner.get(lie_id, "")) != agent_id:
+			continue
+		var fact: CaseData.Fact = case_data.fact_by_id.get(lie_id) as CaseData.Fact
+		if fact == null or not fact.is_lie:
+			continue
+		return lie_id
+	return ""
+
+
+func _heard_by_other(fact_id: String, form: String, agent_id: String) -> bool:
+	for entry in state.heard:
+		if str(entry.get("agent_id", "")) == agent_id:
+			continue
+		if str(entry.get("fact_id", "")) != fact_id:
+			continue
+		if _journal_form_matches(str(entry.get("form", "")), form):
+			return true
+	return false
+
+
+func _journal_form_matches(journal_form: String, contradiction_form: String) -> bool:
+	if contradiction_form == "lie":
+		return journal_form == "lie"
+	if contradiction_form == "truth_full":
+		return journal_form == "full"
+	if contradiction_form == "truth":
+		return journal_form == "basic" or journal_form == "full"
 	return false
 
 

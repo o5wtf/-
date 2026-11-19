@@ -106,6 +106,7 @@ Content-Type: application/json
 - stated: ключи записей, содержание которых ты действительно сказал в reply, с формой: lie — сказал свою ложь; basic — сказал полуправду или краткую правду; full — сказал полную правду. Ничего из записей не сказал — пустой список.
 - mentioned_evidence: ключи улик, которые следователь упомянул в вопросе.
 - requested_evidence: ключ улики, которую ты сам требуешь показать («Докажите!»), только если это в твоём характере; иначе null.
+- cited_facts: id чужих показаний из «БЛОКНОТ СЛЕДОВАТЕЛЯ», которые следователь ясно процитировал. Смутное «я слышал иное» не входит. Не цитировал — пустой список.
 - pace: необязательно. `slow`, `normal` или `fast`. `normal` можно не писать. В стиль синтеза `normal` не уходит.
 ```
 
@@ -122,6 +123,9 @@ Content-Type: application/json
 
 УЛИКИ, ИЗВЕСТНЫЕ СЛЕДОВАТЕЛЮ (только названия):
 {для каждой открытой: ключ e1… + " — " + title | "нет"}
+
+БЛОКНОТ СЛЕДОВАТЕЛЯ:
+{чужие показания: id | кто сказал | короткий текст | "пусто"}
 
 РАНЕЕ В РАЗГОВОРЕ: {summary | "—"}
 
@@ -221,8 +225,8 @@ e1 — Журнал посещений
     "requested_evidence": { "type": ["string", "null"], "description": "Ключ улики e1… или null" },
     "tone": { "type": "string", "enum": ["нейтрально", "нервно", "устало", "раздражённо", "испуганно", "грустно", "уверенно", "уклончиво", "саркастично"] }
   },
-  "required": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone"],
-  "propertyOrdering": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone"]
+  "required": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "cited_facts", "tone"],
+  "propertyOrdering": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "cited_facts", "tone"]
 }
 ```
 

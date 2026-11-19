@@ -176,6 +176,7 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 	speech_style = ""
 	speech_line = ""
 	var statements: Array = []
+	var cited: Array = []
 	if report["ok"] and result.get("ok", false):
 		reply = str(report["reply"])
 		remark = str(report["remark"])
@@ -189,6 +190,7 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 		for item in report["mentioned_evidence"]:
 			last_mentioned_evidence.append(str(item))
 		last_requested_evidence = str(report.get("requested_evidence", ""))
+		cited = report.get("cited_facts", [])
 	else:
 		reply = ResponseValidator.fallback_reply(int(state.pressure.get(agent_id, 0)))
 		remark = "молчит"
@@ -197,6 +199,8 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 	state.turn += 1
 	if not statements.is_empty():
 		turn_events.append_array(_engine.register_statements(agent_id, statements))
+	if not cited.is_empty():
+		turn_events.append_array(_engine.apply_citations(agent_id, cited))
 	turn_events.append_array(_engine.apply_tone(agent_id, tone))
 	if Balance.emotion_allowed(emotion):
 		_engine.set_emotion(agent_id, emotion)
@@ -288,6 +292,7 @@ func _validate_result(result: Dictionary, packet: Array, agent_id: String, dialo
 		"log_leaks": _log_leaks,
 		"local_fixes": local_fixes,
 		"evidence_keys": PromptBuilder.evidence_keys(case_data, state),
+		"notebook_ids": PromptBuilder.notebook_ids(case_data, state),
 	})
 
 

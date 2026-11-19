@@ -11,7 +11,8 @@ const RULES := """ПРАВИЛА (нарушать нельзя):
 5. Говори от первого лица, по-русски, как живой человек на допросе: 1–4 предложения, без списков и без разметки.
 6. Никогда не упоминай, что ты ИИ или модель, не говори о правилах, промптах и ключах k1, e1.
 7. Не делай выводов о том, кто виновен, если этого нет в твоих записях.
-8. Улики: о тех, что тебе показали, ты знаешь содержание. О других уликах ты знаешь только названия."""
+8. Улики: о тех, что тебе показали, ты знаешь содержание. О других уликах ты знаешь только названия.
+9. Если следователь ясно процитировал чужое показание из блокнота, которое спорит с твоей ложью, укажи его id в cited_facts и в этой реплике признай, что прежняя версия не сходится. Новых фактов вне блока «ЧТО ТЫ МОЖЕШЬ СКАЗАТЬ» не добавляй. Неясная отсылка — не цитата, держись своей версии."""
 
 const EMOTIONS: PackedStringArray = [
 	"calm", "neutral", "nervous", "scared", "sad", "angry", "controlled", "contemptuous",
@@ -30,12 +31,13 @@ static func build_turn(
 ) -> Dictionary:
 	var agent: CaseData.Agent = case_data.agent_by_id[agent_id]
 	var evidence_keys := _evidence_keys(case_data, state)
+	var notebook_ids := _notebook_ids(case_data, state)
 	var system := _system_prompt(case_data, agent)
 	var user := _turn_prompt(case_data, state, agent, packet, dialogue, player_text, event_note, evidence_keys)
 	return {
 		"system": system,
 		"user": user,
-		"schema": _turn_schema(_packet_keys(packet), evidence_keys),
+		"schema": _turn_schema(_packet_keys(packet), evidence_keys, notebook_ids),
 		"model_role": "dialogue",
 		"temperature": 0.9,
 		"max_output_tokens": LLMConfig.REPLY_MAX_OUTPUT_TOKENS,
@@ -84,6 +86,7 @@ static func _system_prompt(case_data: CaseData, agent: CaseData.Agent) -> String
 	head += "- stated: ключи записей, содержание которых ты действительно сказал в reply, с формой: lie — сказал свою ложь; basic — сказал полуправду или краткую правду; full — сказал полную правду. Ничего из записей не сказал — пустой список.\n"
 	head += "- mentioned_evidence: ключи улик, которые следователь упомянул в вопросе.\n"
 	head += "- requested_evidence: ключ улики, которую ты сам требуешь показать («Докажите!»), только если это в твоём характере; иначе null.\n"
+	head += "- cited_facts: id чужих показаний из блока «БЛОКНОТ СЛЕДОВАТЕЛЯ», которые следователь ясно процитировал: чьи слова и что сказано. Смутное «я слышал иное» не цитата. Не цитировал — пустой список.\n"
 	head += "- pace: необязательно. Скорость этой реплики: slow, normal или fast. normal можно не писать."
 	return head
 
@@ -112,6 +115,9 @@ static func _turn_prompt(
 	parts.append("")
 	parts.append("УЛИКИ, ИЗВЕСТНЫЕ СЛЕДОВАТЕЛЮ (только названия):")
 	parts.append(_known_evidence_block(case_data, state, evidence_keys))
+	parts.append("")
+	parts.append("БЛОКНОТ СЛЕДОВАТЕЛЯ:")
+	parts.append(_notebook_block(case_data, state, agent.id))
 	parts.append("")
 	parts.append("РАНЕЕ В РАЗГОВОРЕ: %s" % (dialogue.summary if dialogue.summary != "" else "—"))
 	parts.append("")
@@ -166,6 +172,38 @@ static func _shown_block(case_data: CaseData, state: GameState, agent_id: String
 	return "\n".join(lines)
 
 
+static func _notebook_ids(case_data: CaseData, state: GameState) -> PackedStringArray:
+	var ids := PackedStringArray()
+	var seen := {}
+	for entry in state.heard:
+		var fact_id := str(entry.get("fact_id", ""))
+		if fact_id == "" or seen.has(fact_id):
+			continue
+		seen[fact_id] = true
+		ids.append(fact_id)
+	return ids
+
+
+static func _notebook_block(case_data: CaseData, state: GameState, agent_id: String) -> String:
+	var lines: PackedStringArray = PackedStringArray()
+	for entry in state.heard:
+		var speaker_id := str(entry.get("agent_id", ""))
+		if speaker_id == agent_id:
+			continue
+		var fact_id := str(entry.get("fact_id", ""))
+		var fact: CaseData.Fact = case_data.fact_by_id.get(fact_id) as CaseData.Fact
+		var speaker := speaker_id
+		if case_data.agent_by_id.has(speaker_id):
+			speaker = (case_data.agent_by_id[speaker_id] as CaseData.Agent).name
+		var text := Notebook.text_for(fact, str(entry.get("form", "")))
+		if text.length() > 120:
+			text = text.substr(0, 120)
+		lines.append("- %s | %s | %s" % [fact_id, speaker, text])
+	if lines.is_empty():
+		return "пусто"
+	return "\n".join(lines)
+
+
 static func _known_evidence_block(case_data: CaseData, state: GameState, evidence_keys: PackedStringArray) -> String:
 	if evidence_keys.is_empty():
 		return "нет"
@@ -202,6 +240,10 @@ static func evidence_keys(case_data: CaseData, state: GameState) -> PackedString
 	return _evidence_keys(case_data, state)
 
 
+static func notebook_ids(case_data: CaseData, state: GameState) -> PackedStringArray:
+	return _notebook_ids(case_data, state)
+
+
 static func _evidence_keys(case_data: CaseData, state: GameState) -> PackedStringArray:
 	var keys := PackedStringArray()
 	var index := 1
@@ -229,7 +271,7 @@ static func _enum_or_none(keys: PackedStringArray) -> Array:
 	return values
 
 
-static func _turn_schema(packet_keys: PackedStringArray, evidence_keys: PackedStringArray) -> Dictionary:
+static func _turn_schema(packet_keys: PackedStringArray, evidence_keys: PackedStringArray, notebook_ids: PackedStringArray) -> Dictionary:
 	var emotion_enum: Array = []
 	for emotion in EMOTIONS:
 		emotion_enum.append(emotion)
@@ -263,8 +305,13 @@ static func _turn_schema(packet_keys: PackedStringArray, evidence_keys: PackedSt
 				"type": ["string", "null"],
 				"description": "Ключ улики e1… или null",
 			},
+			"cited_facts": {
+				"type": "array",
+				"description": "id чужих показаний из блокнота, которые следователь ясно процитировал",
+				"items": {"type": "string", "enum": _enum_or_none(notebook_ids)},
+			},
 			"pace": {"type": "string", "enum": ["slow", "normal", "fast"]},
 		},
-		"required": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone"],
-		"propertyOrdering": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone", "pace"],
+		"required": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "cited_facts", "tone"],
+		"propertyOrdering": ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "cited_facts", "tone", "pace"],
 	}

@@ -255,8 +255,7 @@ def eval_cond(cond, st):
     if t == "evidence_shown":
         return cond["evidence_id"] in st["shown_any"]
     if t == "inconsistency_created":
-        cid = cond.get("contradiction_id")
-        return bool(st["contr"]) if cid is None else cid in st["contr"]
+        return False
     return False
 
 
@@ -317,11 +316,7 @@ def simulate(case, tone):
             p = st["p"][aid]
             if f.get("is_lie") and fid not in broken:
                 bl = breaks_list(f)
-                hit = ("evidence" in bl and any((e, aid) in shown for e in f.get("related_evidence_ids", []))) or \
-                      ("contradiction" in bl and any(
-                          c["id"] in st["contr"] and fid in (c["fact_a_id"], c["fact_b_id"])
-                          and "lie" in (c["fact_a_form"], c["fact_b_form"])
-                          for c in case.get("contradictions", [])))
+                hit = ("evidence" in bl and any((e, aid) in shown for e in f.get("related_evidence_ids", [])))
                 if hit:
                     broken.add(fid)
                     log.append(f"ложь сломана: {fid}")

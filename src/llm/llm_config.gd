@@ -3,7 +3,7 @@ extends RefCounted
 ## Ключ и модели. Ключ не пишется в логи.
 ## Порядок ключа: user://config.cfg, затем GEMINI_API_KEY, затем res://config/dev.cfg только в отладочной сборке.
 
-const SETTINGS_VERSION := 10
+const SETTINGS_VERSION := 11
 const DEFAULT_DIALOGUE_MODEL := "gemini-3.5-flash-lite"
 const DIALOGUE_MODELS: PackedStringArray = [
 	"gemini-3.5-flash-lite",
@@ -129,6 +129,8 @@ static func _migrate_saved_settings() -> void:
 			file.set_value("voice", "tts_auto", true)
 		elif not file.has_section_key("voice", "tts_auto"):
 			file.set_value("voice", "tts_auto", true)
+		if not file.has_section_key("mic", "pause_ms"):
+			file.set_value("mic", "pause_ms", 700)
 		file.set_value("llm", "settings_version", SETTINGS_VERSION)
 		changed = true
 	if changed:

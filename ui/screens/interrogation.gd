@@ -24,6 +24,7 @@ var _mic_hint: Label
 var _stt_retry: Button
 var _mic_settings: Button
 var _talk: PushToTalk
+var _hands: HandsFreeListen
 var _mic_input: MicInput
 var _access: MicAccess
 var _limit_busy: bool = false
@@ -147,6 +148,11 @@ func _ready() -> void:
 	_talk.stt = recognizer
 	add_child(_talk)
 	_talk.add_child(recognizer)
+	_hands = HandsFreeListen.new()
+	_hands.name = "HandsFreeListen"
+	_hands.stt = recognizer
+	_hands.submit = _send_text
+	add_child(_hands)
 	_mic_input = MicInput.new()
 	add_child(_mic_input)
 	_access = MicAccess.new()
@@ -156,6 +162,10 @@ func _ready() -> void:
 	_talk.hint_changed.connect(_on_mic_hint)
 	_talk.level_changed.connect(_on_mic_level)
 	_talk.retry_visible.connect(func(show_button: bool) -> void: _stt_retry.visible = show_button)
+	_hands.state_changed.connect(_on_mic_state)
+	_hands.hint_changed.connect(_on_mic_hint)
+	_hands.level_changed.connect(_on_mic_level)
+	_hands.retry_visible.connect(func(show_button: bool) -> void: _stt_retry.visible = show_button)
 	if Speaker.last_error != "":
 		_show_voice_error(Speaker.last_error)
 	if not Speaker.voice_error.is_connected(_show_voice_error):
@@ -207,12 +217,20 @@ func _process(_delta: float) -> void:
 	if _talk == null or _mic_input == null:
 		return
 	var active := is_visible_in_tree() and not get_tree().paused
-	_talk.screen_active = active
+	var hands := _hands_free()
+	_talk.screen_active = active and not hands
 	_talk.enabled = SettingsStore.load_current().mic_enabled
 	_talk.character_busy = Speaker.speaking
+	if _hands != null:
+		_hands.screen_active = active and hands
+		_hands.enabled = _talk.enabled
+		_hands.set_pause_ms(SettingsStore.load_current().mic_pause_ms)
+		_hands.set_echo(Speaker.speaking)
 	if not active:
 		if _talk._holding or _talk.locked:
 			_talk.cancel()
+		if _hands != null:
+			_hands.stop()
 		if _mic_input.api_name != "":
 			_mic_input.stop()
 		return
@@ -221,6 +239,9 @@ func _process(_delta: float) -> void:
 	if _mic_input.api_name == "":
 		return
 	var pcm := _mic_input.read_pcm()
+	if hands:
+		_hands.push_pcm(pcm)
+		return
 	if _talk._holding:
 		_mic_input.observe_hold(pcm, _delta * 1000.0)
 	var kind := _talk.push_pcm(pcm)
@@ -240,6 +261,8 @@ func _notification(what: int) -> void:
 		Speaker.stop_and_clear(false)
 		if _talk != null:
 			_talk.cancel()
+		if _hands != null:
+			_hands.stop()
 		if _mic_input != null:
 			_mic_input.stop()
 
@@ -323,6 +346,20 @@ func _send_text(text: String) -> void:
 func _mic_down() -> void:
 	if _talk == null or _mic.disabled:
 		return
+	if _hands_free():
+		var allowed := true
+		if _access != null:
+			allowed = await _access.ensure()
+		if not allowed:
+			_on_mic_hint(UiStrings.MIC_NO_PERMISSION)
+			if _mic_settings != null:
+				_mic_settings.visible = true
+			return
+		if _mic_input != null and _access != null:
+			MicAccess.start_if_allowed(_access, _mic_input)
+		_hands.toggle_pause()
+		_refresh_mic_button()
+		return
 	Speaker.cancel_inflight()
 	var allowed := true
 	if _access != null:
@@ -349,6 +386,8 @@ func _mic_down() -> void:
 
 
 func _mic_up() -> void:
+	if _hands_free():
+		return
 	if _talk == null or not _talk._holding:
 		return
 	await _talk.release(false)
@@ -378,6 +417,12 @@ func _open_mic_settings() -> void:
 func _refresh_mic_button() -> void:
 	if _mic == null or _talk == null:
 		return
+	if _hands_free() and _hands != null:
+		_mic.disabled = not _hands.enabled
+		_mic_state.text = _hands.label()
+		if _mic_level != null:
+			_mic_level.visible = _hands.state_name == HandsFreeListen.STATE_LISTEN and not _hands.paused and not _hands.echo
+		return
 	var blocked := Speaker.speaking or _talk.locked or not _talk.enabled
 	_mic.disabled = blocked and not _talk._holding
 	if _mic.disabled and _talk._holding:
@@ -392,6 +437,10 @@ func _refresh_mic_button() -> void:
 		_mic_state.text = UiStrings.MIC_ANSWER
 	else:
 		_mic_state.text = ""
+
+
+func _hands_free() -> bool:
+	return SettingsStore.load_current().mic_mode == "hands_free"
 
 
 func _on_mic_state(next: String) -> void:

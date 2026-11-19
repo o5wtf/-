@@ -47,6 +47,26 @@ jobs:
           cp -a "$RUNNER_TEMP/templates/templates/." "$dest/"
           godot --version
 
+      - name: Шаблон Android для кэша Gradle
+        run: |
+          set -euo pipefail
+          source_zip="$(find "$HOME/.local/share/godot/export_templates" -name android_source.zip | head -1)"
+          test -n "$source_zip"
+          rm -rf android
+          mkdir -p android/build
+          unzip -q "$source_zip" -d android/build
+          find android/build -name '*.gradle' -o -name '*.gradle.kts' -o -name 'gradle-wrapper.properties' -o -name '*.toml' | sort | head
+
+      - name: Кэш Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-godot-4.7.2-${{ hashFiles('android/build/**/*.gradle*', 'android/build/**/*.gradle.kts', 'android/build/**/gradle-wrapper.properties', 'android/build/**/*.toml') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-godot-4.7.2-
+
       - name: Тесты
         run: |
           set -euo pipefail
@@ -126,16 +146,36 @@ jobs:
             mkdir -p android/build
             unzip -q "$source_zip" -d android/build
             printf '%s\n' "$template_version" > android/.build_version
+            python3 -c 'import pathlib, re
+root = pathlib.Path("android/build")
+pattern = re.compile(r"repositories\s*\{([^{}]*)\}")
+
+def prefer_google(body):
+    lines = body.splitlines(keepends=True)
+    google = [line for line in lines if "google()" in line]
+    rest = [line for line in lines if "google()" not in line]
+    return "".join(google + rest)
+
+for path in root.rglob("*"):
+    if path.suffix not in {".gradle", ".kts"}:
+        continue
+    text = path.read_text(encoding="utf-8")
+    updated = pattern.sub(lambda match: "repositories {" + prefer_google(match.group(1)) + "}", text)
+    if updated != text:
+        path.write_text(updated, encoding="utf-8")
+'
           }
           prepare_android
           attempt=1
+          max_attempts=4
           until godot --headless --path . --export-release "Android" "$PWD/builds/Detective.apk"; do
-            if [ "$attempt" -ge 2 ]; then
+            if [ "$attempt" -ge "$max_attempts" ]; then
               exit 1
             fi
+            wait=$((30 * attempt))
+            echo "Gradle не скачал зависимости, попытка $((attempt + 1)) из $max_attempts, пауза ${wait} с."
+            sleep "$wait"
             attempt=$((attempt + 1))
-            echo "Gradle не скачал зависимости, повтор экспорта."
-            sleep 20
             prepare_android
           done
           test -s builds/Detective.apk

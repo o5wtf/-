@@ -146,24 +146,7 @@ jobs:
             mkdir -p android/build
             unzip -q "$source_zip" -d android/build
             printf '%s\n' "$template_version" > android/.build_version
-            python3 -c 'import pathlib, re
-root = pathlib.Path("android/build")
-pattern = re.compile(r"repositories\s*\{([^{}]*)\}")
-
-def prefer_google(body):
-    lines = body.splitlines(keepends=True)
-    google = [line for line in lines if "google()" in line]
-    rest = [line for line in lines if "google()" not in line]
-    return "".join(google + rest)
-
-for path in root.rglob("*"):
-    if path.suffix not in {".gradle", ".kts"}:
-        continue
-    text = path.read_text(encoding="utf-8")
-    updated = pattern.sub(lambda match: "repositories {" + prefer_google(match.group(1)) + "}", text)
-    if updated != text:
-        path.write_text(updated, encoding="utf-8")
-'
+            python3 tools/prefer_google_repos.py android/build
           }
           prepare_android
           attempt=1

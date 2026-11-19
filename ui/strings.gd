@@ -122,9 +122,14 @@ static func state_remark(band_name: String, emotion: String) -> String:
 		"breaking":
 			band_text = "на грани"
 	var emotion_text := emotion_word(emotion)
-	if emotion_text == "" or emotion == "neutral":
+	if emotion_text == "" or emotion == "neutral" or _same_stem(band_text, emotion_text):
 		return "«%s»" % band_text
 	return "«%s», %s" % [band_text, emotion_text]
+
+
+static func _same_stem(band_text: String, emotion_text: String) -> bool:
+	var stem := emotion_text.substr(0, mini(5, emotion_text.length())).to_lower()
+	return stem.length() >= 4 and band_text.to_lower().contains(stem)
 
 
 static func emotion_word(emotion: String) -> String:

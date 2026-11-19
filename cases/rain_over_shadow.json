@@ -84,6 +84,13 @@
           "breaks_lie_on": "contradiction",
           "tags": [
             "alina"
+          ],
+          "partial_truth": [
+            {
+              "source": "contradiction",
+              "id": "irina_knew",
+              "text": "Знала, что у Виктора кто-то есть."
+            }
           ]
         },
         {
@@ -117,6 +124,13 @@
           "breaks_lie_on": "evidence",
           "tags": [
             "secret"
+          ],
+          "partial_truth": [
+            {
+              "source": "evidence",
+              "id": "ev_divorce_papers",
+              "text": "Думала о разводе."
+            }
           ]
         },
         {
@@ -197,6 +211,18 @@
           "breaks_lie_on": "evidence",
           "tags": [
             "money"
+          ],
+          "partial_truth": [
+            {
+              "source": "contradiction",
+              "id": "arkady_debt",
+              "text": "Был должен Виктору крупную сумму. Точную цифру не называй, если её не показали."
+            },
+            {
+              "source": "evidence",
+              "id": "ev_financial_docs",
+              "text": "Должен около 2,5 млн. Больше не выдумывай."
+            }
           ]
         },
         {
@@ -213,6 +239,18 @@
           "breaks_lie_on": "contradiction",
           "tags": [
             "knife"
+          ],
+          "partial_truth": [
+            {
+              "source": "contradiction",
+              "id": "arkady_kitchen",
+              "text": "Вечером заходил на кухню."
+            },
+            {
+              "source": "evidence",
+              "id": "ev_kitchen_knife",
+              "text": "Брал нож с кухни и не вернул."
+            }
           ]
         },
         {
@@ -232,6 +270,23 @@
           ],
           "tags": [
             "time"
+          ],
+          "partial_truth": [
+            {
+              "source": "contradiction",
+              "id": "arkady_alibi",
+              "text": "Не ушёл в 00:30: был в клубе после закрытия."
+            },
+            {
+              "source": "contradiction",
+              "id": "arkady_alibi_mira",
+              "text": "Был в клубе около 00:50, не ушёл в 00:30."
+            },
+            {
+              "source": "evidence",
+              "id": "ev_security_log",
+              "text": "Вышел около 01:18 через чёрный ход."
+            }
           ]
         },
         {
@@ -247,6 +302,13 @@
           "tags": [
             "motive",
             "mira"
+          ],
+          "partial_truth": [
+            {
+              "source": "contradiction",
+              "id": "arkady_humiliation",
+              "text": "Виктор грозил выгнать из дела."
+            }
           ]
         },
         {
@@ -261,6 +323,13 @@
           "breaks_lie_on": "contradiction",
           "tags": [
             "mira"
+          ],
+          "partial_truth": [
+            {
+              "source": "contradiction",
+              "id": "arkady_mira_blame",
+              "text": "Мира сказала: если ты не решишь, я решу сама. Что было дальше, не рассказывай."
+            }
           ]
         },
         {
@@ -281,6 +350,13 @@
           "requires_broken_lies": [
             "fact_arkady_meeting",
             "fact_arkady_knife"
+          ],
+          "partial_truth": [
+            {
+              "source": "evidence",
+              "id": "ev_kitchen_knife",
+              "text": "Был с Виктором, когда это случилось, и ударил."
+            }
           ]
         }
       ]
@@ -318,6 +394,13 @@
           "tags": [
             "arkady",
             "secret"
+          ],
+          "partial_truth": [
+            {
+              "source": "contradiction",
+              "id": "mira_arkady",
+              "text": "Спала с Аркадием."
+            }
           ]
         },
         {
@@ -349,6 +432,18 @@
           "tags": [
             "knife",
             "pavel"
+          ],
+          "partial_truth": [
+            {
+              "source": "contradiction",
+              "id": "mira_knife",
+              "text": "Спрашивала у Павла про нож на кухне."
+            },
+            {
+              "source": "evidence",
+              "id": "ev_kitchen_knife",
+              "text": "Спрашивала у Павла про нож на кухне."
+            }
           ]
         },
         {
@@ -365,6 +460,13 @@
           "breaks_lie_on": "evidence",
           "tags": [
             "secret"
+          ],
+          "partial_truth": [
+            {
+              "source": "evidence",
+              "id": "ev_mira_notes",
+              "text": "Записывает кое-что о клиентах."
+            }
           ]
         },
         {
@@ -397,6 +499,18 @@
             "time",
             "arkady",
             "secret"
+          ],
+          "partial_truth": [
+            {
+              "source": "contradiction",
+              "id": "mira_return",
+              "text": "Возвращалась и платила Роману, чтобы не записывал."
+            },
+            {
+              "source": "evidence",
+              "id": "ev_mira_notes",
+              "text": "Возвращалась около 01:05 за блокнотом и заплатила Роману."
+            }
           ]
         },
         {
@@ -479,6 +593,13 @@
           "tags": [
             "mira",
             "knife"
+          ],
+          "partial_truth": [
+            {
+              "source": "evidence",
+              "id": "ev_kitchen_knife",
+              "text": "Мира вечером спрашивала его про нож."
+            }
           ]
         },
         {
@@ -497,6 +618,13 @@
             "arkady",
             "knife",
             "time"
+          ],
+          "partial_truth": [
+            {
+              "source": "evidence",
+              "id": "ev_kitchen_knife",
+              "text": "Видел, как Аркадий вечером заходил на кухню."
+            }
           ]
         },
         {
@@ -649,6 +777,13 @@
           "breaks_lie_on": "evidence",
           "tags": [
             "threat"
+          ],
+          "partial_truth": [
+            {
+              "source": "evidence",
+              "id": "ev_alina_messages",
+              "text": "Писала Виктору резкие сообщения."
+            }
           ]
         },
         {
@@ -763,6 +898,13 @@
           "tags": [
             "secret",
             "mira"
+          ],
+          "partial_truth": [
+            {
+              "source": "evidence",
+              "id": "ev_security_log",
+              "text": "Иногда за деньги не записывает, кто приходит и уходит после закрытия. В ту ночь ему заплатила Мира."
+            }
           ]
         }
       ]

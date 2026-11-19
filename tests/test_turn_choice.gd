@@ -205,3 +205,60 @@ func _engine(data: CaseData) -> RulesEngine:
 	var engine := RulesEngine.new(data, GameState.new())
 	engine.start_new()
 	return engine
+
+
+func test_partial_citation_admits_only_the_slice() -> void:
+	var data := _case()
+	var lie := _fact(data, "a", "fa")
+	lie.is_lie = true
+	lie.lie_type = "must_lie"
+	lie.lie_text = "Ушёл в полночь."
+	lie.content_full = "Вышел в час и встретился в аллее."
+	lie.partial_truth = [{"source": "contradiction", "id": "c", "text": "Вышел в час."}]
+	_fact(data, "b", "fb")
+	var contradiction := CaseData.Contradiction.new()
+	contradiction.id = "c"
+	contradiction.fact_a_id = "fa"
+	contradiction.fact_a_form = "lie"
+	contradiction.fact_b_id = "fb"
+	contradiction.fact_b_form = "truth"
+	data.contradictions = [contradiction]
+	var engine := _engine(data)
+	engine.state.heard.append({"agent_id": "b", "fact_id": "fb", "form": "basic", "turn": 1})
+	var options := TurnOptions.build(data, engine.state, "a")
+	var plan := TurnOptions.plan(data, engine.state, "a", options, [int(options[0]["n"])])
+	assert_true((plan["break_lies"] as Array).is_empty())
+	assert_eq((plan["grants"] as Array).size(), 1)
+	assert_eq(str((plan["admit"] as Array)[0]), "Вышел в час.")
+	engine.commit_plan("a", plan)
+	assert_true(engine.state.broken_lies.has("fa"))
+	var packet := engine.get_packet("a")
+	var dumped := JSON.stringify(packet)
+	assert_true(dumped.contains("Вышел в час"))
+	assert_false(dumped.contains("аллее"))
+
+
+func test_voice_present_uses_only_unlocked_evidence_and_its_substance() -> void:
+	var data := _case()
+	var evidence := CaseData.EvidenceItem.new()
+	evidence.id = "log"
+	evidence.title = "Журнал охраны"
+	evidence.full_text = "В журнале записан выход Аркадия в 01:18."
+	evidence.unlock_condition = {"type": "evidence_mentioned", "evidence_id": "log"}
+	data.evidence.append(evidence)
+	data.evidence_by_id["log"] = evidence
+	var engine := _engine(data)
+	for option in TurnOptions.build(data, engine.state, "a"):
+		assert_true(str(option.get("kind", "")) != "present")
+	engine.state.unlocked_evidence.append("log")
+	var options := TurnOptions.build(data, engine.state, "a")
+	var present: Dictionary = {}
+	for option in options:
+		if str(option.get("kind", "")) == "present":
+			present = option
+	assert_eq(str(present.get("evidence_id", "")), "log")
+	assert_true(str(present.get("text", "")).contains("01:18"))
+	assert_false(str(present.get("text", "")).begins_with("у меня есть"))
+	var plan := TurnOptions.plan(data, engine.state, "a", options, [int(present.get("n", 0))])
+	assert_true((plan["present"] as Array).has("log"))
+	assert_true(bool(plan["restart"]))

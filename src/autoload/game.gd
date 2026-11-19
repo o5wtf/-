@@ -262,7 +262,7 @@ func _admit_note(plan: Dictionary) -> String:
 		var item: CaseData.EvidenceItem = case_data.evidence_by_id.get(str(evidence_id)) as CaseData.EvidenceItem
 		if item != null:
 			mention += " Скажи, что существует «%s»." % item.title
-	return "ЭТОТ ОТВЕТ ЗАМЕНЯЕТ ПРЕДЫДУЩИЙ, ЕГО НЕ ПОКАЗЫВАЮТ И НЕ ОЗВУЧИВАЮТ. Признай в этой реплике: %s. Не повторяй старую ложь.%s" % [" ".join(truths), mention]
+	return "ЭТОТ ОТВЕТ ЗАМЕНЯЕТ ПРЕДЫДУЩИЙ, ЕГО НЕ ПОКАЗЫВАЮТ И НЕ ОЗВУЧИВАЮТ. Признай в этой реплике только это и ничего сверх: %s. Не повторяй старую ложь.%s" % [" ".join(truths), mention]
 
 
 func _log_choice(agent_id: String, options: Array, plan: Dictionary) -> void:
@@ -428,6 +428,7 @@ func _restore(snapshot: Dictionary) -> void:
 	state.contradiction_turns = fresh.contradiction_turns
 	state.evidence_mentions = fresh.evidence_mentions
 	state.topic_touches = fresh.topic_touches
+	state.revealed_parts = fresh.revealed_parts
 	state.talked_to = fresh.talked_to
 	state.accusation = fresh.accusation
 	state.dialogues = fresh.dialogues

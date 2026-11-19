@@ -47,6 +47,8 @@ class Fact:
 	var requires_broken_lies: Array[String] = []
 	## null, строка или список: pressure | evidence | contradiction.
 	var breaks_lie_on: Variant = null
+	## Пусто — при разоблачении открывается вся правда. Иначе только текст совпавшего источника.
+	var partial_truth: Array[Dictionary] = []
 
 
 class Agent:

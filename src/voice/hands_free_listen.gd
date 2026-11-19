@@ -18,6 +18,7 @@ var enabled: bool = false
 var screen_active: bool = false
 var paused: bool = false
 var echo: bool = false
+var output_lock: bool = false
 var locked: bool = false
 var state_name: String = STATE_LISTEN
 var submit: Callable = Callable()
@@ -29,13 +30,22 @@ func set_pause_ms(ms: int) -> void:
 	vad.set_pause_ms(ms)
 
 
+func set_output_lock(active: bool) -> void:
+	output_lock = active
+	vad.set_blocked(active or echo)
+	if active or echo:
+		_set_state(STATE_CHARACTER)
+	elif not paused and not locked:
+		_set_state(STATE_LISTEN)
+
+
 func set_echo(active: bool) -> void:
 	var was := echo
 	echo = active
-	vad.set_blocked(active)
+	vad.set_blocked(active or output_lock)
 	if active:
 		_set_state(STATE_CHARACTER)
-	elif was:
+	elif was and not output_lock:
 		_set_state(STATE_PAUSED if paused else STATE_LISTEN)
 
 
@@ -64,7 +74,7 @@ func stop() -> void:
 
 
 func push_pcm(pcm: PackedByteArray) -> void:
-	if not enabled or not screen_active or paused or locked or echo:
+	if not enabled or not screen_active or paused or locked or echo or output_lock:
 		return
 	var before := vad.events.size()
 	vad.push(pcm)
@@ -77,7 +87,7 @@ func push_pcm(pcm: PackedByteArray) -> void:
 
 
 func label() -> String:
-	if echo:
+	if echo or output_lock:
 		return UiStrings.MIC_HF_CHARACTER
 	if paused:
 		return UiStrings.MIC_HF_PAUSE

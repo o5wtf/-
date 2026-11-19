@@ -59,6 +59,18 @@ func test_developer_pressure_sits_next_to_the_remark() -> void:
 	assert_false(plain.contains("давление"))
 	assert_true(plain.contains("напряжён"))
 	assert_true(UiStrings.state_line("tense", "angry", 42, true).contains("давление 42"))
+	assert_eq(UiStrings.state_remark("nervous", "nervous"), "«заметно нервничает»")
+	assert_eq(UiStrings.state_remark("tense", "angry"), "«напряжён», злится")
+	var meter := LevelMeter.new()
+	meter.push(1.0)
+	assert_false(meter.advance(0.01))
+	assert_true(meter.shown > 0.1)
+	meter.push(0.0)
+	var steps := 0
+	while steps < 30 and meter.shown > 0.05:
+		meter.advance(0.05)
+		steps += 1
+	assert_true(meter.shown < 0.2)
 
 
 func test_remarks_have_no_digits() -> void:

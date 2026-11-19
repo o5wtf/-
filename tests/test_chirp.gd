@@ -226,7 +226,69 @@ func test_chirp_keeps_only_two_chunks_ahead() -> void:
 	for piece in ChirpVoices.chunks(text):
 		flat += piece.replace(" ", "")
 	assert_eq(flat, text.replace(" ", ""))
+	await (Engine.get_main_loop() as SceneTree).process_frame
 	backend.free()
+	_cleanup()
+
+
+func test_prefetch_that_finishes_early_still_plays_in_order() -> void:
+	var pem := str(_rsa()["private"])
+	_arm(pem)
+	TtsQuota.selected_override = ChirpVoices.MODEL_ID
+	var http := _http()
+	http.yield_synth = true
+	var hold := _Hold.new()
+	hold.release_after_polls = 8
+	var backend := _backend([])
+	backend._instant = false
+	backend.sink = hold
+	var text := _sentences(20, 80)
+	var pieces := ChirpVoices.chunks(text)
+	await backend.speak("line", text, "Kore")
+	assert_eq(hold.plays, pieces.size())
+	assert_eq(hold.overlaps, 0)
+	var previous_end := -1
+	for index in pieces.size():
+		var play_at := backend.chirp_events.find("play:%d" % index)
+		assert_true(play_at > previous_end, " ".join(backend.chirp_events))
+		if index + 1 < pieces.size():
+			previous_end = backend.chirp_events.find("end:%d" % index)
+			assert_true(previous_end > play_at)
+	await (Engine.get_main_loop() as SceneTree).process_frame
+	backend.free()
+	_cleanup()
+
+
+func test_prefetched_chunk_error_shows_retry_and_does_not_hang() -> void:
+	var pem := str(_rsa()["private"])
+	_arm(pem)
+	TtsQuota.selected_override = ChirpVoices.MODEL_ID
+	var http := _http()
+	http.yield_synth = true
+	http.fail_synth = 2
+	var backend := GeminiTtsBackend.new()
+	backend.transport = _Gemini.new()
+	backend.api_key = "unit-test-key"
+	backend.use_cache = false
+	backend._instant = true
+	var root: Window = (Engine.get_main_loop() as SceneTree).root
+	var speaker: Node = load("res://src/voice/speaker.gd").new()
+	speaker.set("listen_to_game", false)
+	speaker.set("enabled", true)
+	root.add_child(speaker)
+	speaker.call("use_backend", backend)
+	var retries: Array[bool] = []
+	speaker.connect("voice_retry_available", func(show: bool) -> void: retries.append(show))
+	var queue: SpeechQueue = speaker.get("queue")
+	assert_true(queue.enqueue("case:a:1", _sentences(12, 80), "Kore", ""))
+	speaker.call("_pump")
+	var frames := 0
+	while frames < 40 and not retries.has(true):
+		await (Engine.get_main_loop() as SceneTree).process_frame
+		frames += 1
+	assert_true(retries.has(true))
+	assert_false((speaker.get("retry_line") as Dictionary).is_empty())
+	speaker.free()
 	_cleanup()
 
 
@@ -466,6 +528,7 @@ class _Http:
 	var yield_synth: bool = false
 	var in_flight: int = 0
 	var max_in_flight: int = 0
+	var fail_synth: int = -1
 
 	func post(url: String, body: String, _headers: PackedStringArray) -> Dictionary:
 		if url.contains("text:synthesize"):
@@ -487,6 +550,8 @@ class _Http:
 			if fail_once:
 				fail_once = false
 				return {"status": 429, "body": "{\"error\":{\"code\":429}}"}
+			if fail_synth == synth_posts:
+				return {"status": 500, "body": "{\"error\":{\"code\":500}}"}
 			return {"status": 200, "body": JSON.stringify({"audioContent": Marshalls.raw_to_base64(PackedByteArray([0, 64, 0, 64]))})}
 		token_posts += 1
 		return {"status": 200, "body": JSON.stringify({"access_token": token, "expires_in": 3600})}
@@ -514,6 +579,8 @@ class _Hold:
 	var cancel_on_advance: bool = false
 	var backend: Object = null
 	var _cancelled: bool = false
+	var release_after_polls: int = -1
+	var polls: int = 0
 
 	func start() -> void:
 		pass
@@ -522,6 +589,10 @@ class _Hold:
 		return 100000
 
 	func buffered_frames() -> int:
+		if hold and release_after_polls >= 0:
+			polls += 1
+			if polls >= release_after_polls:
+				hold = false
 		return buffered if hold else 0
 
 	func push(frames: PackedVector2Array) -> void:

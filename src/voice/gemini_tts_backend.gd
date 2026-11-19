@@ -57,7 +57,11 @@ var _extra_chunks: int = 0
 var _chirp_queue: Array[PackedByteArray] = []
 var _chirp_busy: bool = false
 var _chirp_token: int = -1
+var _chirp_results: Array = []
+var _chirp_results_token: int = -1
 var chirp_events: PackedStringArray = PackedStringArray()
+
+signal chirp_piece_ready
 ## Вызывается один раз перед ожиданием лимита. Нужен, чтобы живая реплика обогнала подготовку.
 var before_wait: Callable = Callable()
 
@@ -154,9 +158,12 @@ func stop() -> void:
 	_chirp_queue.clear()
 	_chirp_busy = false
 	_chirp_token = -1
+	_chirp_results_token = -1
+	_chirp_results.clear()
 	_reset_audio()
 	_close_playback()
 	ChirpAuth.cancel_active()
+	chirp_piece_ready.emit.call_deferred()
 	if transport != null and transport.has_method("cancel"):
 		transport.call("cancel")
 
@@ -367,37 +374,39 @@ func _chirp_line(token: int, spoken: String, voice: String, style: String, silen
 	_chirp_queue.clear()
 	_chirp_busy = false
 	_chirp_token = token
+	_chirp_results_token = token
 	chirp_events = PackedStringArray()
 	var count := pieces.size()
-	var jobs: Array = []
-	jobs.resize(count)
-	var ready: Array = []
-	ready.resize(count)
+	_chirp_results = []
+	_chirp_results.resize(count)
 	var launched := 0
 	var next_play := 0
 	var focus := 0
 	var joined := PackedByteArray()
 	while next_play < count:
 		if _chirp_stopped(token, silent_job):
-			ChirpAuth.cancel_active()
+			_abandon_chirp(token)
 			return {"ok": false, "error": "stopped", "status": 0, "usage": {}}
 		while launched < count and launched <= focus + ChirpVoices.PREFETCH_AHEAD:
 			if _chirp_stopped(token, silent_job):
-				ChirpAuth.cancel_active()
+				_abandon_chirp(token)
 				return {"ok": false, "error": "stopped", "status": 0, "usage": {}}
 			chirp_events.append("synth:%d" % launched)
-			jobs[launched] = call("_synth_piece", str(pieces[launched]), name, rate, token, silent_job)
+			# Результат пишется в слот самим заданием. Состояние корутины нельзя
+			# ждать позже: если она завершится раньше, Godot теряет результат.
+			call("_run_piece", launched, str(pieces[launched]), name, rate, token, silent_job)
 			launched += 1
-		if ready[next_play] == null:
-			var resolved: Dictionary = await _as_dict(jobs[next_play])
-			if _chirp_stopped(token, silent_job):
-				ChirpAuth.cancel_active()
-				return {"ok": false, "error": "stopped", "status": 0, "usage": {}}
-			if not resolved.get("ok", false):
-				ChirpAuth.cancel_active()
-				return resolved
-			ready[next_play] = resolved
-		var pcm: PackedByteArray = (ready[next_play] as Dictionary).get("pcm", PackedByteArray())
+		if _chirp_results[next_play] == null:
+			await chirp_piece_ready
+			continue
+		var resolved: Dictionary = _chirp_results[next_play]
+		if _chirp_stopped(token, silent_job):
+			_abandon_chirp(token)
+			return {"ok": false, "error": "stopped", "status": 0, "usage": {}}
+		if not resolved.get("ok", false):
+			_abandon_chirp(token)
+			return resolved
+		var pcm: PackedByteArray = resolved.get("pcm", PackedByteArray())
 		if not silent_job and _chirp_busy:
 			_pump_chirp_playback()
 			if _chirp_busy and _instant and sink != null and sink.has_method("advance"):
@@ -444,6 +453,23 @@ func _chirp_line(token: int, spoken: String, voice: String, style: String, silen
 	return {"ok": true, "status": 200, "usage": {"chars": text.length()}, "error": ""}
 
 
+func _run_piece(index: int, piece: String, voice_name: String, rate: float, token: int, silent_job: bool) -> void:
+	var result: Dictionary = await _synth_piece(piece, voice_name, rate, token, silent_job)
+	if token != _chirp_results_token or _chirp_stopped(token, silent_job):
+		chirp_piece_ready.emit.call_deferred()
+		return
+	if index >= 0 and index < _chirp_results.size():
+		_chirp_results[index] = result
+	chirp_piece_ready.emit.call_deferred()
+
+
+func _abandon_chirp(token: int) -> void:
+	if _chirp_results_token == token:
+		_chirp_results_token = -1
+	ChirpAuth.cancel_active()
+	chirp_piece_ready.emit.call_deferred()
+
+
 func _synth_piece(piece: String, voice_name: String, rate: float, token: int, silent_job: bool) -> Dictionary:
 	var attempt := 0
 	var result: Dictionary = {"ok": false, "error": "bad_response", "status": 0}
@@ -467,15 +493,6 @@ func _synth_piece(piece: String, voice_name: String, rate: float, token: int, si
 		else:
 			await get_tree().create_timer(pause).timeout
 	return result
-
-
-func _as_dict(state: Variant) -> Dictionary:
-	if state is Dictionary:
-		return state
-	var value: Variant = await state
-	if value is Dictionary:
-		return value
-	return {"ok": false, "error": "bad_response", "status": 0}
 
 
 func _chirp_stopped(token: int, silent_job: bool) -> bool:

@@ -14,8 +14,8 @@ const MENU := "Меню"
 const SEND := "➤"
 const EVIDENCE := "Улики"
 const NOTEBOOK := "Блокнот"
-const CONTRADICTION := "Противоречие!"
-const CHECK := "Проверить"
+const NOTES_TAB := "Записи"
+const CONTRADICTIONS_TAB := "Противоречия"
 const YES := "Да"
 const DISMISS := "×"
 const RETRY := "Повторить"
@@ -77,10 +77,6 @@ const QUESTION_PLACEHOLDER := "Ваш вопрос…"
 const ALL_AGENTS := "все"
 const NO_EVIDENCE := "Открытых улик пока нет."
 const NO_NOTES := "Пока ничего не услышано."
-const CONTRADICTIONS := "Противоречия:"
-const NO_CONTRADICTION := "Здесь нет противоречия"
-const CONTRADICTION_FOUND := "Противоречие зафиксировано"
-const PICK_TWO := "Отметьте две записи"
 const SHOWN_TO := "Кому показана: "
 const NOBODY := "пока никому"
 const PRESENT := "Предъявить"
@@ -198,7 +194,10 @@ static func evidence_opened(title: String) -> String:
 
 
 static func contradiction_line(description: String) -> String:
-	return "Противоречие зафиксировано: %s" % description
+	var body := description.strip_edges()
+	if body == "":
+		return "Найдено противоречие"
+	return "Найдено противоречие: %s" % body
 
 
 static func lie_broken(agent_name: String) -> String:

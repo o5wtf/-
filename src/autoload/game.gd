@@ -88,14 +88,6 @@ func present(agent_id: String, evidence_id: String, player_text: String = "") ->
 	await _turn(agent_id, question, note, evidence_id)
 
 
-func mark_contradiction(a: Dictionary, b: Dictionary) -> Dictionary:
-	if _engine == null:
-		return {"ok": false}
-	var report := _engine.try_manual_contradiction(a, b)
-	_autosave()
-	return report
-
-
 func accuse(killer_id: String, motive_id: String, method_id: String) -> Dictionary:
 	if _engine == null:
 		return {"killer_ok": false, "motive_ok": false, "method_ok": false, "solved": false}
@@ -372,6 +364,7 @@ func _restore(snapshot: Dictionary) -> void:
 	state.fact_levels = fresh.fact_levels
 	state.heard = fresh.heard
 	state.contradictions = fresh.contradictions
+	state.contradiction_turns = fresh.contradiction_turns
 	state.talked_to = fresh.talked_to
 	state.accusation = fresh.accusation
 	state.dialogues = fresh.dialogues

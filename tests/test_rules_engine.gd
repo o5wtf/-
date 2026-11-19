@@ -231,44 +231,36 @@ func test_unlock_conditions() -> void:
 	assert_true(contradiction_engine.state.unlocked_evidence.has("any_c"))
 
 
-func test_manual_contradiction() -> void:
+func test_contradiction_turn_and_filter() -> void:
 	var data := _case()
 	_fact(data, "a", "fa", 0, 0)
 	_fact(data, "b", "fb", 0, 0)
-	_fact(data, "a", "other", 0, 0)
 	_contradiction(data, "c", "fa", "truth", "fb", "truth")
 	var engine := _engine(data)
 	engine.start_new()
-	engine.register_statements("a", [{"fact_id": "fa", "form": "basic"}, {"fact_id": "other", "form": "basic"}])
-	engine.register_statements("b", [{"fact_id": "fb", "form": "full"}])
+	engine.state.turn = 4
+	engine.register_statements("a", [{"fact_id": "fa", "form": "basic"}])
+	assert_false(engine.state.contradictions.has("c"))
+	engine.register_statements("b", [{"fact_id": "fb", "form": "basic"}])
 	assert_true(engine.state.contradictions.has("c"))
-	var pressure_a := int(engine.state.pressure["a"])
-	var pressure_b := int(engine.state.pressure["b"])
-	var wrong: Dictionary = engine.try_manual_contradiction(
-		{"fact_id": "other", "form": "basic"},
-		{"fact_id": "fb", "form": "full"}
-	)
-	assert_false(wrong["ok"])
-	assert_eq(int(engine.state.pressure["a"]), pressure_a)
-	assert_eq(int(engine.state.pressure["b"]), pressure_b)
-	var right: Dictionary = engine.try_manual_contradiction(
-		{"fact_id": "fb", "form": "full"},
-		{"fact_id": "fa", "form": "basic"}
-	)
-	assert_true(right["ok"])
-	assert_eq(right["contradiction_id"], "c")
-	assert_eq(int(engine.state.pressure["a"]), pressure_a)
-	var fresh := _engine(data)
-	fresh.start_new()
-	fresh.register_statements("a", [{"fact_id": "fa", "form": "basic"}])
-	fresh.state.heard.append({"agent_id": "b", "fact_id": "fb", "form": "basic", "turn": 0})
-	var manual: Dictionary = fresh.try_manual_contradiction(
-		{"fact_id": "fa", "form": "basic"},
-		{"fact_id": "fb", "form": "basic"}
-	)
-	assert_true(manual["ok"])
-	assert_true(fresh.state.contradictions.has("c"))
-	assert_eq(int(fresh.state.pressure["a"]), Balance.CONTRADICTION_PLAIN)
+	assert_eq(int(engine.state.contradiction_turns["c"]), 4)
+	assert_eq(int(engine.state.pressure["a"]), Balance.CONTRADICTION_PLAIN)
+	var book := Notebook.new(data, engine.state)
+	var all_rows := book.found_contradictions("")
+	assert_eq(all_rows.size(), 1)
+	assert_eq(str(all_rows[0]["description"]), "пара")
+	assert_eq(int(all_rows[0]["turn"]), 4)
+	assert_eq(book.found_contradictions("a").size(), 1)
+	assert_eq(book.found_contradictions("b").size(), 1)
+	assert_eq(book.found_contradictions("other").size(), 0)
+	var old := GameState.from_dict({"contradictions": ["c"], "pressure": {"a": 3}})
+	assert_true(old.contradictions.has("c"))
+	assert_eq(int(old.pressure["a"]), 3)
+	assert_false(old.contradiction_turns.has("c"))
+	var restored := Notebook.new(data, old)
+	var legacy := restored.found_contradictions("a")
+	assert_eq(legacy.size(), 1)
+	assert_eq(int(legacy[0]["turn"]), -1)
 
 
 func test_accusation_keeps_ticks() -> void:

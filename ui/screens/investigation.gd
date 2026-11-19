@@ -84,7 +84,6 @@ func _ready() -> void:
 	_suspects.agent_chosen.connect(_on_agent)
 	_chat.evidence_requested.connect(func() -> void: _show_tab(_evidence))
 	_chat.notebook_requested.connect(func() -> void: _show_tab(_notebook))
-	_chat.contradiction_requested.connect(_open_contradiction)
 	_chat.suspects_requested.connect(func() -> void: _show_tab(_suspects))
 	_evidence.present_requested.connect(_present_from_board)
 	Game.events.connect(_on_events)
@@ -173,11 +172,6 @@ func _show_tab(node: Control) -> void:
 	_side.current_tab = node.get_index()
 	if portrait:
 		_drawer.visible = true
-
-
-func _open_contradiction() -> void:
-	_show_tab(_notebook)
-	_notebook.enter_pick_mode()
 
 
 func _present_from_board(evidence_id: String) -> void:

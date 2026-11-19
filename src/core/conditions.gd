@@ -20,8 +20,6 @@ static func evaluate(cond: Variant, state: GameState) -> bool:
 				return true
 		return false
 	var kind: Variant = body.get("type")
-	if kind == "pressure_on_agent":
-		return int(state.pressure.get(str(body.get("agent_id", "")), 0)) >= int(body.get("gte", 0))
 	if kind == "dialogue_with":
 		return state.talked_to.has(str(body.get("agent_id", "")))
 	if kind == "evidence_shown":
@@ -81,10 +79,7 @@ static func _check(
 		return
 	var kind: Variant = body.get("type")
 	if kind == "pressure_on_agent":
-		_require_agent(body, where, agent_ids, errors)
-		var threshold: Variant = body.get("gte")
-		if not _is_number(threshold) or not _in_unit_interval(threshold):
-			errors.append(_err("cond_gte_range", "%s: gte=%s вне 0–100" % [where, _show(threshold)]))
+		return
 	elif kind == "dialogue_with":
 		_require_agent(body, where, agent_ids, errors)
 	elif kind == "evidence_shown":

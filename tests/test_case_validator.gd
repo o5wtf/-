@@ -133,7 +133,7 @@ func test_more_rules_and_warnings() -> void:
 	bad_gte["evidence"][0]["unlock_condition"] = {
 		"type": "pressure_on_agent", "agent_id": "a", "gte": 140,
 	}
-	_expect_code(bad_gte, "cond_gte_range")
+	assert_eq(CaseValidator.validate(bad_gte).size(), 0)
 	var unknown_type: Dictionary = minimal.duplicate(true)
 	unknown_type["evidence"][0]["unlock_condition"] = {"type": "phase_of_moon"}
 	_expect_code(unknown_type, "cond_unknown_type")

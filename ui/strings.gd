@@ -25,6 +25,7 @@ const TEST_LINK := "Проверить связь"
 const KEY_LABEL := "Ключ Gemini API"
 const MODEL_LABEL := "Модель диалога"
 const TIMING_DEBUG := "Показывать время хода"
+const DEVELOPER := "Для разработчика"
 const VOICE_ENABLED := "Озвучка"
 const VOICE_ENGINE := "Синтез"
 const VOICE_INTONATION := "Интонация"
@@ -102,6 +103,13 @@ const SAVE_HASH := "Дело изменилось. Это сохранение �
 const SAVE_CORRUPT := "Сохранение повреждено. Начните заново."
 const SAVE_VERSION := "Это сохранение от другой версии. Начните заново."
 const HOW_IT_ENDED := "Как всё было"
+
+
+static func state_line(band_name: String, emotion: String, pressure_value: int, developer: bool) -> String:
+	var remark := state_remark(band_name, emotion)
+	if not developer:
+		return remark
+	return "%s, давление %d" % [remark, pressure_value]
 
 
 static func state_remark(band_name: String, emotion: String) -> String:

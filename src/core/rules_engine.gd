@@ -248,9 +248,6 @@ func _present(agent_id: String, evidence_id: String, events: Array) -> bool:
 func _lie_breaks(fact: CaseData.Fact) -> bool:
 	var breaks := _breaks_of(fact)
 	var agent_id := str(case_data.fact_owner[fact.id])
-	var pressure_value := int(state.pressure.get(agent_id, 0))
-	if breaks.has("pressure") and pressure_value >= fact.pressure_for_full:
-		return true
 	if breaks.has("evidence"):
 		for evidence_id in fact.related_evidence_ids:
 			if _shown_to(evidence_id, agent_id):
@@ -267,13 +264,11 @@ func _lie_breaks(fact: CaseData.Fact) -> bool:
 
 
 func _desired_level(fact: CaseData.Fact) -> String:
-	var agent_id := str(case_data.fact_owner[fact.id])
-	var pressure_value := int(state.pressure.get(agent_id, 0))
 	var evidence_ok := _evidence_satisfied(fact)
 	var broken := state.broken_lies.has(fact.id)
-	if pressure_value >= fact.pressure_for_full and evidence_ok:
+	if evidence_ok:
 		return "full"
-	if (pressure_value >= fact.pressure_for_basic and evidence_ok) or broken:
+	if broken:
 		return "basic"
 	return "closed"
 
@@ -289,9 +284,7 @@ func _evidence_satisfied(fact: CaseData.Fact) -> bool:
 
 
 func _basic_threshold_met(fact: CaseData.Fact) -> bool:
-	var agent_id := str(case_data.fact_owner[fact.id])
-	var pressure_value := int(state.pressure.get(agent_id, 0))
-	return pressure_value >= fact.pressure_for_basic and _evidence_satisfied(fact)
+	return _evidence_satisfied(fact)
 
 
 func _packet_entry(fact: CaseData.Fact) -> Dictionary:

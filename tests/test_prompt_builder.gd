@@ -27,7 +27,7 @@ func test_turn_template_key_lines() -> void:
 	for line in [
 		"ТВОЁ СОСТОЯНИЕ: Ты спокоен и уверен в себе. Эмоция: neutral.",
 		"ЧТО ТЫ МОЖЕШЬ СКАЗАТЬ:",
-		"k1 [ПРАВДА]: Краткая версия видна",
+		"k1 [ПРАВДА]: Полная версия теперь видна",
 		"k2 [ЛОЖЬ]: Я этого не делал совсем",
 		"УЛИКИ, КОТОРЫЕ ТЕБЕ ПОКАЗАЛИ:",
 		"нет",
@@ -289,12 +289,15 @@ func _sample_case() -> CaseData:
 	var petr := _agent("petr", "Пётр", "дворник", "Подметает двор.", "Молчит.", "ЧУЖОЙ СЕКРЕТ ПЕТРА ДЛИННЫЙ")
 	data.agents = [ira, petr]
 	data.agent_by_id = {"ira": ira, "petr": petr}
-	_fact(data, ira, "visible", 0, 100, "Краткая версия видна", "ПОЛНАЯ ВЕРСИЯ СКРЫТА ОТ BASIC", false, "", null)
+	_fact(data, ira, "visible", 0, 100, "Краткая версия видна", "Полная версия теперь видна", false, "", null)
 	_fact(data, ira, "must", 0, 100, "ПРАВДА MUST LIE BASIC", "ПРАВДА MUST LIE FULL", true, "Я этого не делал совсем", "evidence")
 	_fact(data, ira, "slip", 0, 100, "Кажется, в коридоре кто-то был", "ПОЛНАЯ ОГОВОРКА СКРЫТА", true, "Никого не видела", "evidence")
 	var slip: CaseData.Fact = data.fact_by_id["slip"]
 	slip.lie_type = "can_lie"
 	_fact(data, ira, "closed", 100, 100, "ЗАКРЫТАЯ КРАТКАЯ ВЕРСИЯ", "ЗАКРЫТАЯ ПОЛНАЯ ВЕРСИЯ ФАКТА", false, "", null)
+	var closed: CaseData.Fact = data.fact_by_id["closed"]
+	closed.requires_evidence = true
+	closed.related_evidence_ids = ["note"]
 	_fact(data, petr, "foreign", 0, 0, "ЧУЖОЙ ФАКТ ПЕТРА КРАТКО", "ЧУЖОЙ ФАКТ ПЕТРА ПОЛНОСТЬЮ", false, "", null)
 	var evidence := CaseData.EvidenceItem.new()
 	evidence.id = "note"

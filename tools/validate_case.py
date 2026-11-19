@@ -199,11 +199,7 @@ def validate(case):
                 return
         t = cond.get("type")
         if t == "pressure_on_agent":
-            if cond.get("agent_id") not in agent_ids:
-                err(f"{where}: агент {cond.get('agent_id')} не найден")
-            g = cond.get("gte")
-            if not isinstance(g, (int, float)) or not 0 <= g <= 100:
-                err(f"{where}: gte={g} вне 0–100")
+            return
         elif t == "dialogue_with":
             if cond.get("agent_id") not in agent_ids:
                 err(f"{where}: агент {cond.get('agent_id')} не найден")
@@ -254,8 +250,6 @@ def eval_cond(cond, st):
     if "OR" in cond:
         return any(eval_cond(c, st) for c in cond["OR"])
     t = cond["type"]
-    if t == "pressure_on_agent":
-        return st["p"][cond["agent_id"]] >= cond["gte"]
     if t == "dialogue_with":
         return True  # игрок говорит со всеми
     if t == "evidence_shown":
@@ -323,8 +317,7 @@ def simulate(case, tone):
             p = st["p"][aid]
             if f.get("is_lie") and fid not in broken:
                 bl = breaks_list(f)
-                hit = ("pressure" in bl and p >= f["pressure_for_full"]) or \
-                      ("evidence" in bl and any((e, aid) in shown for e in f.get("related_evidence_ids", []))) or \
+                hit = ("evidence" in bl and any((e, aid) in shown for e in f.get("related_evidence_ids", []))) or \
                       ("contradiction" in bl and any(
                           c["id"] in st["contr"] and fid in (c["fact_a_id"], c["fact_b_id"])
                           and "lie" in (c["fact_a_form"], c["fact_b_form"])
@@ -336,9 +329,9 @@ def simulate(case, tone):
                     continue
                 continue
             new = None
-            if p >= f["pressure_for_full"] and ev_ok(fid):
+            if ev_ok(fid):
                 new = "full"
-            elif (p >= f["pressure_for_basic"] and ev_ok(fid)) or fid in broken:
+            elif fid in broken:
                 new = "basic"
             if new and level.get(fid) != new and not (level.get(fid) == "full"):
                 level[fid] = new

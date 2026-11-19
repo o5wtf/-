@@ -312,7 +312,8 @@ func _render_header() -> void:
 	var agent: CaseData.Agent = Game.case_data.agent_by_id[agent_id]
 	var band := Balance.band(int(Game.state.pressure.get(agent_id, 0)))
 	var emotion := str(Game.state.emotion.get(agent_id, agent.starting_emotion))
-	_header.text = "%s, %s   %s" % [agent.name, agent.role, UiStrings.state_remark(band, emotion)]
+	var pressure_value := int(Game.state.pressure.get(agent_id, 0))
+	_header.text = "%s, %s   %s" % [agent.name, agent.role, UiStrings.state_line(band, emotion, pressure_value, SettingsStore.load_current().developer)]
 
 
 func _send() -> void:

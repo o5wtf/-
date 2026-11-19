@@ -55,7 +55,8 @@ func _card(agent: CaseData.Agent, active_id: String, has_news: bool) -> Control:
 	box.add_child(role)
 	var band := Balance.band(int(Game.state.pressure.get(agent.id, 0)))
 	var emotion := str(Game.state.emotion.get(agent.id, agent.starting_emotion))
-	box.add_child(UiWidgets.label(UiStrings.state_remark(band, emotion)))
+	var pressure_value := int(Game.state.pressure.get(agent.id, 0))
+	box.add_child(UiWidgets.label(UiStrings.state_line(band, emotion, pressure_value, SettingsStore.load_current().developer)))
 	if has_news:
 		var news_label := UiWidgets.label("● %s" % UiStrings.NEWS)
 		news_label.add_theme_color_override("font_color", NoirTheme.GOLD)

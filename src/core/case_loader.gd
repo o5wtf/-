@@ -111,6 +111,7 @@ static func _fact(raw: Dictionary) -> CaseData.Fact:
 	fact.pressure_for_basic = _int(raw.get("pressure_for_basic", 0))
 	fact.pressure_for_full = _int(raw.get("pressure_for_full", 0))
 	fact.requires_evidence = raw.get("requires_evidence") == true
+	fact.requires_broken_lies = _strings(raw.get("requires_broken_lies"))
 	fact.breaks_lie_on = _breaks(raw.get("breaks_lie_on"))
 	return fact
 

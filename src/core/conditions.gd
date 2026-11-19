@@ -30,6 +30,8 @@ static func evaluate(cond: Variant, state: GameState) -> bool:
 		return not shown_to.is_empty()
 	if kind == "evidence_mentioned":
 		return state.evidence_mentions.has(str(body.get("evidence_id", "")))
+	if kind == "lie_broken":
+		return state.broken_lies.has(str(body.get("fact_id", "")))
 	if kind == "inconsistency_created":
 		return false
 	return false
@@ -41,10 +43,11 @@ static func check(
 	evidence_self: String,
 	agent_ids: Dictionary,
 	evidence_ids: Dictionary,
-	contradiction_ids: Dictionary
+	contradiction_ids: Dictionary,
+	fact_ids: Dictionary
 ) -> Array[Dictionary]:
 	var errors: Array[Dictionary] = []
-	_check(cond, where, evidence_self, agent_ids, evidence_ids, contradiction_ids, errors)
+	_check(cond, where, evidence_self, agent_ids, evidence_ids, contradiction_ids, fact_ids, errors)
 	return errors
 
 
@@ -55,6 +58,7 @@ static func _check(
 	agent_ids: Dictionary,
 	evidence_ids: Dictionary,
 	contradiction_ids: Dictionary,
+	fact_ids: Dictionary,
 	errors: Array[Dictionary]
 ) -> void:
 	if cond == null:
@@ -75,7 +79,7 @@ static func _check(
 			))
 			return
 		for sub in items as Array:
-			_check(sub, where, evidence_self, agent_ids, evidence_ids, contradiction_ids, errors)
+			_check(sub, where, evidence_self, agent_ids, evidence_ids, contradiction_ids, fact_ids, errors)
 		return
 	var kind: Variant = body.get("type")
 	if kind == "pressure_on_agent":
@@ -103,6 +107,13 @@ static func _check(
 			errors.append(_err(
 				"cond_unknown_evidence",
 				"%s: улика %s не найдена" % [where, _show(evidence_id)]
+			))
+	elif kind == "lie_broken":
+		var fact_id: Variant = body.get("fact_id")
+		if not fact_ids.has(fact_id):
+			errors.append(_err(
+				"cond_unknown_fact",
+				"%s: факт %s не найден" % [where, _show(fact_id)]
 			))
 	elif kind == "inconsistency_created":
 		if body.has("contradiction_id") and not contradiction_ids.has(body["contradiction_id"]):

@@ -80,13 +80,8 @@
           "lie_type": "can_lie",
           "lie_text": "Не знала ни о чём.",
           "related_evidence_ids": [],
-          "pressure_for_basic": 40,
-          "pressure_for_full": 50,
           "requires_evidence": false,
-          "breaks_lie_on": [
-            "pressure",
-            "contradiction"
-          ],
+          "breaks_lie_on": "contradiction",
           "tags": [
             "alina"
           ]
@@ -101,8 +96,6 @@
           "related_evidence_ids": [
             "ev_financial_docs"
           ],
-          "pressure_for_basic": 0,
-          "pressure_for_full": 35,
           "requires_evidence": false,
           "breaks_lie_on": null,
           "tags": [
@@ -120,10 +113,8 @@
           "related_evidence_ids": [
             "ev_divorce_papers"
           ],
-          "pressure_for_basic": 50,
-          "pressure_for_full": 60,
           "requires_evidence": false,
-          "breaks_lie_on": "pressure",
+          "breaks_lie_on": "evidence",
           "tags": [
             "secret"
           ]
@@ -136,8 +127,6 @@
           "lie_type": "cannot_lie",
           "lie_text": "",
           "related_evidence_ids": [],
-          "pressure_for_basic": 0,
-          "pressure_for_full": 0,
           "requires_evidence": false,
           "breaks_lie_on": null,
           "tags": [
@@ -152,13 +141,25 @@
           "lie_type": "cannot_lie",
           "lie_text": "",
           "related_evidence_ids": [],
-          "pressure_for_basic": 0,
-          "pressure_for_full": 0,
           "requires_evidence": false,
           "breaks_lie_on": null,
           "tags": [
             "mira"
           ]
+        },
+        {
+          "content_basic": "Кто входил и выходил — спросите Романа. Охранник ведёт журнал.",
+          "content_full": "Кто входил и выходил — спросите Романа. Охранник ведёт журнал.",
+          "is_lie": false,
+          "lie_type": "cannot_lie",
+          "lie_text": "",
+          "related_evidence_ids": [],
+          "requires_evidence": false,
+          "breaks_lie_on": null,
+          "tags": [
+            "hint"
+          ],
+          "id": "fact_irina_entry_log"
         }
       ]
     },
@@ -192,13 +193,8 @@
           "related_evidence_ids": [
             "ev_financial_docs"
           ],
-          "pressure_for_basic": 75,
-          "pressure_for_full": 75,
           "requires_evidence": false,
-          "breaks_lie_on": [
-            "evidence",
-            "pressure"
-          ],
+          "breaks_lie_on": "evidence",
           "tags": [
             "money"
           ]
@@ -213,13 +209,8 @@
           "related_evidence_ids": [
             "ev_kitchen_knife"
           ],
-          "pressure_for_basic": 70,
-          "pressure_for_full": 70,
           "requires_evidence": false,
-          "breaks_lie_on": [
-            "contradiction",
-            "pressure"
-          ],
+          "breaks_lie_on": "contradiction",
           "tags": [
             "knife"
           ]
@@ -234,8 +225,6 @@
           "related_evidence_ids": [
             "ev_security_log"
           ],
-          "pressure_for_basic": 75,
-          "pressure_for_full": 75,
           "requires_evidence": false,
           "breaks_lie_on": [
             "contradiction",
@@ -253,13 +242,8 @@
           "lie_type": "must_lie",
           "lie_text": "Виктор ничего такого не говорил, всё было спокойно.",
           "related_evidence_ids": [],
-          "pressure_for_basic": 80,
-          "pressure_for_full": 80,
           "requires_evidence": false,
-          "breaks_lie_on": [
-            "contradiction",
-            "pressure"
-          ],
+          "breaks_lie_on": "contradiction",
           "tags": [
             "motive",
             "mira"
@@ -273,13 +257,8 @@
           "lie_type": "can_lie",
           "lie_text": "Мира тут ни при чём.",
           "related_evidence_ids": [],
-          "pressure_for_basic": 60,
-          "pressure_for_full": 70,
           "requires_evidence": false,
-          "breaks_lie_on": [
-            "contradiction",
-            "pressure"
-          ],
+          "breaks_lie_on": "contradiction",
           "tags": [
             "mira"
           ]
@@ -294,12 +273,14 @@
           "related_evidence_ids": [
             "ev_kitchen_knife"
           ],
-          "pressure_for_basic": 90,
-          "pressure_for_full": 90,
           "requires_evidence": true,
-          "breaks_lie_on": "pressure",
+          "breaks_lie_on": "evidence",
           "tags": [
             "motive"
+          ],
+          "requires_broken_lies": [
+            "fact_arkady_meeting",
+            "fact_arkady_knife"
           ]
         }
       ]
@@ -332,13 +313,8 @@
           "lie_type": "can_lie",
           "lie_text": "Ничего такого не было.",
           "related_evidence_ids": [],
-          "pressure_for_basic": 40,
-          "pressure_for_full": 50,
           "requires_evidence": false,
-          "breaks_lie_on": [
-            "contradiction",
-            "pressure"
-          ],
+          "breaks_lie_on": "contradiction",
           "tags": [
             "arkady",
             "secret"
@@ -352,10 +328,8 @@
           "lie_type": "can_lie",
           "lie_text": "Только работала хостес.",
           "related_evidence_ids": [],
-          "pressure_for_basic": 35,
-          "pressure_for_full": 45,
           "requires_evidence": false,
-          "breaks_lie_on": "pressure",
+          "breaks_lie_on": null,
           "tags": [
             "viktor"
           ]
@@ -370,13 +344,8 @@
           "related_evidence_ids": [
             "ev_kitchen_knife"
           ],
-          "pressure_for_basic": 60,
-          "pressure_for_full": 60,
           "requires_evidence": false,
-          "breaks_lie_on": [
-            "contradiction",
-            "pressure"
-          ],
+          "breaks_lie_on": "contradiction",
           "tags": [
             "knife",
             "pavel"
@@ -392,13 +361,8 @@
           "related_evidence_ids": [
             "ev_mira_notes"
           ],
-          "pressure_for_basic": 70,
-          "pressure_for_full": 70,
           "requires_evidence": false,
-          "breaks_lie_on": [
-            "evidence",
-            "pressure"
-          ],
+          "breaks_lie_on": "evidence",
           "tags": [
             "secret"
           ]
@@ -411,8 +375,6 @@
           "lie_type": "cannot_lie",
           "lie_text": "",
           "related_evidence_ids": [],
-          "pressure_for_basic": 0,
-          "pressure_for_full": 0,
           "requires_evidence": false,
           "breaks_lie_on": null,
           "tags": [
@@ -429,13 +391,8 @@
           "related_evidence_ids": [
             "ev_mira_notes"
           ],
-          "pressure_for_basic": 50,
-          "pressure_for_full": 70,
           "requires_evidence": false,
-          "breaks_lie_on": [
-            "contradiction",
-            "pressure"
-          ],
+          "breaks_lie_on": "contradiction",
           "tags": [
             "time",
             "arkady",
@@ -450,8 +407,6 @@
           "lie_type": "cannot_lie",
           "lie_text": "",
           "related_evidence_ids": [],
-          "pressure_for_basic": 65,
-          "pressure_for_full": 75,
           "requires_evidence": false,
           "breaks_lie_on": null,
           "tags": [
@@ -488,8 +443,6 @@
           "lie_type": "cannot_lie",
           "lie_text": "",
           "related_evidence_ids": [],
-          "pressure_for_basic": 0,
-          "pressure_for_full": 0,
           "requires_evidence": false,
           "breaks_lie_on": null,
           "tags": [
@@ -504,8 +457,6 @@
           "lie_type": "cannot_lie",
           "lie_text": "",
           "related_evidence_ids": [],
-          "pressure_for_basic": 30,
-          "pressure_for_full": 40,
           "requires_evidence": false,
           "breaks_lie_on": null,
           "tags": [
@@ -523,13 +474,8 @@
           "related_evidence_ids": [
             "ev_kitchen_knife"
           ],
-          "pressure_for_basic": 40,
-          "pressure_for_full": 50,
           "requires_evidence": false,
-          "breaks_lie_on": [
-            "evidence",
-            "pressure"
-          ],
+          "breaks_lie_on": "evidence",
           "tags": [
             "mira",
             "knife"
@@ -545,13 +491,8 @@
           "related_evidence_ids": [
             "ev_kitchen_knife"
           ],
-          "pressure_for_basic": 50,
-          "pressure_for_full": 60,
           "requires_evidence": false,
-          "breaks_lie_on": [
-            "evidence",
-            "pressure"
-          ],
+          "breaks_lie_on": "evidence",
           "tags": [
             "arkady",
             "knife",
@@ -566,8 +507,6 @@
           "lie_type": "cannot_lie",
           "lie_text": "",
           "related_evidence_ids": [],
-          "pressure_for_basic": 35,
-          "pressure_for_full": 45,
           "requires_evidence": false,
           "breaks_lie_on": null,
           "tags": [
@@ -582,13 +521,25 @@
           "lie_type": "can_lie",
           "lie_text": "Никогда ничего такого не делал.",
           "related_evidence_ids": [],
-          "pressure_for_basic": 45,
-          "pressure_for_full": 55,
           "requires_evidence": false,
-          "breaks_lie_on": "pressure",
+          "breaks_lie_on": null,
           "tags": [
             "secret"
           ]
+        },
+        {
+          "content_basic": "Кто входил и выходил — спросите Романа. Охранник ведёт журнал.",
+          "content_full": "Кто входил и выходил — спросите Романа. Охранник ведёт журнал.",
+          "is_lie": false,
+          "lie_type": "cannot_lie",
+          "lie_text": "",
+          "related_evidence_ids": [],
+          "requires_evidence": false,
+          "breaks_lie_on": null,
+          "tags": [
+            "hint"
+          ],
+          "id": "fact_pavel_entry_log"
         }
       ]
     },
@@ -620,10 +571,8 @@
           "lie_type": "can_lie",
           "lie_text": "Ничего такого не было, только работала.",
           "related_evidence_ids": [],
-          "pressure_for_basic": 25,
-          "pressure_for_full": 35,
           "requires_evidence": false,
-          "breaks_lie_on": "pressure",
+          "breaks_lie_on": null,
           "tags": [
             "viktor"
           ]
@@ -636,8 +585,6 @@
           "lie_type": "cannot_lie",
           "lie_text": "",
           "related_evidence_ids": [],
-          "pressure_for_basic": 0,
-          "pressure_for_full": 0,
           "requires_evidence": false,
           "breaks_lie_on": null,
           "tags": [
@@ -652,8 +599,6 @@
           "lie_type": "cannot_lie",
           "lie_text": "",
           "related_evidence_ids": [],
-          "pressure_for_basic": 35,
-          "pressure_for_full": 45,
           "requires_evidence": false,
           "breaks_lie_on": null,
           "tags": [
@@ -669,8 +614,6 @@
           "lie_type": "cannot_lie",
           "lie_text": "",
           "related_evidence_ids": [],
-          "pressure_for_basic": 45,
-          "pressure_for_full": 55,
           "requires_evidence": false,
           "breaks_lie_on": null,
           "tags": [
@@ -686,8 +629,6 @@
           "lie_type": "cannot_lie",
           "lie_text": "",
           "related_evidence_ids": [],
-          "pressure_for_basic": 0,
-          "pressure_for_full": 0,
           "requires_evidence": false,
           "breaks_lie_on": null,
           "tags": [
@@ -704,8 +645,6 @@
           "related_evidence_ids": [
             "ev_alina_messages"
           ],
-          "pressure_for_basic": 0,
-          "pressure_for_full": 0,
           "requires_evidence": true,
           "breaks_lie_on": "evidence",
           "tags": [
@@ -720,8 +659,6 @@
           "lie_type": "cannot_lie",
           "lie_text": "",
           "related_evidence_ids": [],
-          "pressure_for_basic": 35,
-          "pressure_for_full": 45,
           "requires_evidence": false,
           "breaks_lie_on": null,
           "tags": [
@@ -736,8 +673,6 @@
           "lie_type": "cannot_lie",
           "lie_text": "",
           "related_evidence_ids": [],
-          "pressure_for_basic": 40,
-          "pressure_for_full": 50,
           "requires_evidence": false,
           "breaks_lie_on": null,
           "tags": [
@@ -776,8 +711,6 @@
           "related_evidence_ids": [
             "ev_security_log"
           ],
-          "pressure_for_basic": 0,
-          "pressure_for_full": 0,
           "requires_evidence": true,
           "breaks_lie_on": null,
           "tags": [
@@ -795,8 +728,6 @@
           "related_evidence_ids": [
             "ev_crime_scene"
           ],
-          "pressure_for_basic": 0,
-          "pressure_for_full": 0,
           "requires_evidence": false,
           "breaks_lie_on": null,
           "tags": [
@@ -811,10 +742,8 @@
           "lie_type": "can_lie",
           "lie_text": "Ничего такого не было.",
           "related_evidence_ids": [],
-          "pressure_for_basic": 35,
-          "pressure_for_full": 45,
           "requires_evidence": false,
-          "breaks_lie_on": "pressure",
+          "breaks_lie_on": null,
           "tags": [
             "mira"
           ]
@@ -829,13 +758,8 @@
           "related_evidence_ids": [
             "ev_security_log"
           ],
-          "pressure_for_basic": 30,
-          "pressure_for_full": 45,
           "requires_evidence": false,
-          "breaks_lie_on": [
-            "evidence",
-            "pressure"
-          ],
+          "breaks_lie_on": "evidence",
           "tags": [
             "secret",
             "mira"
@@ -874,9 +798,10 @@
       ],
       "is_key": true,
       "unlock_condition": {
-        "type": "pressure_on_agent",
+        "type": "evidence_mentioned",
         "agent_id": "irina_morozova",
-        "gte": 40
+        "evidence_id": "ev_financial_docs",
+        "topic": "дела мужа или Аркадий"
       }
     },
     {
@@ -896,8 +821,10 @@
       ],
       "is_key": true,
       "unlock_condition": {
-        "type": "dialogue_with",
-        "agent_id": "pavel_sokolov"
+        "type": "evidence_mentioned",
+        "agent_id": "roman_petrov",
+        "evidence_id": "ev_security_log",
+        "topic": "кто входил и выходил"
       }
     },
     {
@@ -918,23 +845,7 @@
         "mira_belova"
       ],
       "is_key": true,
-      "unlock_condition": {
-        "OR": [
-          {
-            "type": "inconsistency_created",
-            "contradiction_id": "arkady_alibi"
-          },
-          {
-            "type": "inconsistency_created",
-            "contradiction_id": "arkady_alibi_mira"
-          },
-          {
-            "type": "pressure_on_agent",
-            "agent_id": "arkady_volkov",
-            "gte": 70
-          }
-        ]
-      }
+      "unlock_condition": null
     },
     {
       "id": "ev_alina_messages",
@@ -950,9 +861,10 @@
       ],
       "is_key": false,
       "unlock_condition": {
-        "type": "pressure_on_agent",
+        "type": "evidence_mentioned",
         "agent_id": "alina_kuznetsova",
-        "gte": 40
+        "evidence_id": "ev_alina_messages",
+        "topic": "ссора с Виктором"
       }
     },
     {
@@ -969,9 +881,10 @@
       ],
       "is_key": false,
       "unlock_condition": {
-        "type": "pressure_on_agent",
+        "type": "evidence_mentioned",
         "agent_id": "irina_morozova",
-        "gte": 60
+        "evidence_id": "ev_divorce_papers",
+        "topic": "брак или развод"
       }
     },
     {
@@ -989,17 +902,8 @@
       ],
       "is_key": false,
       "unlock_condition": {
-        "OR": [
-          {
-            "type": "inconsistency_created",
-            "contradiction_id": "mira_return"
-          },
-          {
-            "type": "pressure_on_agent",
-            "agent_id": "mira_belova",
-            "gte": 60
-          }
-        ]
+        "type": "lie_broken",
+        "fact_id": "fact_roman_bribe"
       }
     }
   ],

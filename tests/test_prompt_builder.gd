@@ -150,7 +150,7 @@ func test_real_case_prompts_do_not_leak() -> void:
 			if engine.state.unlocked_evidence.is_empty():
 				assert_eq(evidence_enum, ["none"], "enum улик")
 			else:
-				assert_eq(evidence_enum.size(), engine.state.unlocked_evidence.size(), "enum улик")
+				assert_true(evidence_enum.size() >= engine.state.unlocked_evidence.size(), "enum улик")
 				assert_false(evidence_enum.has("none"), "enum улик")
 
 

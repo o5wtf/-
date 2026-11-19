@@ -43,6 +43,8 @@ class Fact:
 	var pressure_for_basic: int = 0
 	var pressure_for_full: int = 0
 	var requires_evidence: bool = false
+	## Ложь открывается только после того, как сломаны эти факты.
+	var requires_broken_lies: Array[String] = []
 	## null, строка или список: pressure | evidence | contradiction.
 	var breaks_lie_on: Variant = null
 

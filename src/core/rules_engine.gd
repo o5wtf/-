@@ -286,6 +286,8 @@ func _present(agent_id: String, evidence_id: String, events: Array) -> bool:
 
 
 func _lie_breaks(fact: CaseData.Fact) -> bool:
+	if not _required_lies_broken(fact):
+		return false
 	var breaks := _breaks_of(fact)
 	var agent_id := str(case_data.fact_owner[fact.id])
 	if breaks.has("evidence"):
@@ -296,6 +298,8 @@ func _lie_breaks(fact: CaseData.Fact) -> bool:
 
 
 func _desired_level(fact: CaseData.Fact) -> String:
+	if not _required_lies_broken(fact):
+		return "closed"
 	var evidence_ok := _evidence_satisfied(fact)
 	var broken := state.broken_lies.has(fact.id)
 	if evidence_ok:
@@ -303,6 +307,13 @@ func _desired_level(fact: CaseData.Fact) -> String:
 	if broken:
 		return "basic"
 	return "closed"
+
+
+func _required_lies_broken(fact: CaseData.Fact) -> bool:
+	for fact_id in fact.requires_broken_lies:
+		if not state.broken_lies.has(fact_id):
+			return false
+	return true
 
 
 func _evidence_satisfied(fact: CaseData.Fact) -> bool:

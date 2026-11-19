@@ -25,6 +25,8 @@ var _chirp_hint: Label
 var _voice_status: Label
 var _mic: CheckBox
 var _mic_mode: OptionButton
+var _pause: HSlider
+var _pause_value: Label
 var _voice_busy: bool = false
 var _status: Label
 var _show: Button
@@ -163,8 +165,19 @@ func _ready() -> void:
 	_mic_mode.custom_minimum_size = Vector2(0, 48)
 	_mic_mode.add_item(UiStrings.MIC_PUSH)
 	_mic_mode.add_item(UiStrings.MIC_HANDS_FREE)
-	_mic_mode.set_item_disabled(1, true)
 	scroll_box.add_child(_mic_mode)
+	scroll_box.add_child(UiWidgets.label(UiStrings.MIC_PAUSE_LABEL))
+	_pause = HSlider.new()
+	_pause.name = "PauseSlider"
+	_pause.min_value = 400
+	_pause.max_value = 2000
+	_pause.step = 50
+	_pause.value = 700
+	_pause.custom_minimum_size = Vector2(0, 48)
+	_pause.value_changed.connect(_on_pause_changed)
+	scroll_box.add_child(_pause)
+	_pause_value = UiWidgets.label("700 мс", "PauseValue")
+	scroll_box.add_child(_pause_value)
 	var play_last := UiWidgets.button(UiStrings.MIC_PLAY_LAST, "PlayLastMicButton")
 	play_last.pressed.connect(_play_last_recording)
 	scroll_box.add_child(play_last)
@@ -211,7 +224,9 @@ func _load_fields() -> void:
 	_voice.button_pressed = store.voice_enabled
 	_intonation.button_pressed = store.voice_intonation
 	_mic.button_pressed = store.mic_enabled
-	_mic_mode.select(0)
+	_mic_mode.select(1 if store.mic_mode == "hands_free" else 0)
+	_pause.value = store.mic_pause_ms
+	_pause_value.text = "%d мс" % store.mic_pause_ms
 	_engine.select(1 if store.voice_engine == "gemini" else 0)
 	_tts_model.select(_tts_model_index(store.tts_model))
 	_tts_auto.button_pressed = store.tts_auto
@@ -224,6 +239,11 @@ func _load_fields() -> void:
 	_scale.value = store.text_scale
 	_mock.button_pressed = store.provider == "mock"
 	_timing.button_pressed = store.timing_debug
+
+
+func _on_pause_changed(value: float) -> void:
+	if _pause_value != null:
+		_pause_value.text = "%d мс" % int(value)
 
 
 func _toggle_key() -> void:
@@ -243,7 +263,7 @@ func _save() -> void:
 	if key == "":
 		key = previous.api_key
 	var provider := "mock" if _mock.button_pressed else "gemini"
-	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "push_to_talk", "gemini", false, _tts_model_value(), _tts_auto.button_pressed, _chirp_key_value())
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "hands_free" if _mic_mode.selected == 1 else "push_to_talk", "gemini", false, _tts_model_value(), _tts_auto.button_pressed, _chirp_key_value(), int(_pause.value))
 	Speaker.apply_settings()
 	_key.text = ""
 	_key.secret = true
@@ -382,7 +402,7 @@ func _save_tts_choice() -> void:
 	if key == "":
 		key = previous.api_key
 	var provider := "mock" if _mock.button_pressed else "gemini"
-	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "push_to_talk", "gemini", false, _tts_model_value(), _tts_auto.button_pressed, _chirp_key_value())
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, null, "gemini", false, _tts_model_value(), _tts_auto.button_pressed, _chirp_key_value())
 	_refresh_tts_panel()
 	_show_chirp_key_state()
 	Speaker.apply_settings()

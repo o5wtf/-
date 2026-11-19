@@ -24,8 +24,10 @@ var chirp_key: String = ""
 var voice_intonation: bool = true
 ## Голосовой ввод. Выключен, пока игрок сам его не включит.
 var mic_enabled: bool = false
-## push_to_talk | hands_free. Сейчас работает только удержание.
+## push_to_talk | hands_free. По умолчанию удержание кнопки.
 var mic_mode: String = "push_to_talk"
+## Пауза тишины, после которой фраза уходит на распознавание.
+var mic_pause_ms: int = 700
 ## gemini | system. По умолчанию облачное распознавание.
 var stt_backend: String = "gemini"
 
@@ -57,6 +59,8 @@ static func load_current() -> SettingsStore:
 		store.mic_enabled = bool(file.get_value("mic", "enabled"))
 	if file.load(PATH) == OK and file.has_section_key("mic", "mode"):
 		store.mic_mode = "hands_free" if str(file.get_value("mic", "mode")) == "hands_free" else "push_to_talk"
+	if file.load(PATH) == OK and file.has_section_key("mic", "pause_ms"):
+		store.mic_pause_ms = clampi(int(file.get_value("mic", "pause_ms")), 400, 2000)
 	store.stt_backend = "gemini"
 	if file.load(PATH) == OK and str(file.get_value("mic", "stt", "gemini")) == "system":
 		file.set_value("mic", "stt", "gemini")
@@ -68,7 +72,7 @@ static func canonical_engine(engine: String) -> String:
 	return "gemini" if engine.strip_edges() == "gemini" else "system"
 
 
-static func save_values(provider: String, api_key: String, dialogue_model: String, text_scale: float, timing_debug: Variant = null, voice_enabled: Variant = null, voice_engine: Variant = null, voice_intonation: Variant = null, mic_enabled: Variant = null, mic_mode: Variant = null, stt_backend: Variant = null, stt_offline: Variant = null, tts_model: Variant = null, tts_auto: Variant = null, chirp_key: Variant = null) -> void:
+static func save_values(provider: String, api_key: String, dialogue_model: String, text_scale: float, timing_debug: Variant = null, voice_enabled: Variant = null, voice_engine: Variant = null, voice_intonation: Variant = null, mic_enabled: Variant = null, mic_mode: Variant = null, stt_backend: Variant = null, stt_offline: Variant = null, tts_model: Variant = null, tts_auto: Variant = null, chirp_key: Variant = null, mic_pause_ms: Variant = null) -> void:
 	var file := ConfigFile.new()
 	file.load(PATH)
 	file.set_value("llm", "provider", provider)
@@ -96,6 +100,8 @@ static func save_values(provider: String, api_key: String, dialogue_model: Strin
 		file.set_value("mic", "enabled", bool(mic_enabled))
 	if mic_mode != null:
 		file.set_value("mic", "mode", "hands_free" if str(mic_mode) == "hands_free" else "push_to_talk")
+	if mic_pause_ms != null:
+		file.set_value("mic", "pause_ms", clampi(int(mic_pause_ms), 400, 2000))
 	if stt_backend != null:
 		file.set_value("mic", "stt", "gemini")
 	file.save(PATH)

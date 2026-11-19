@@ -76,24 +76,6 @@ func set_emotion(agent_id: String, emotion: String) -> void:
 		state.emotion[agent_id] = emotion
 
 
-func try_manual_contradiction(a: Dictionary, b: Dictionary) -> Dictionary:
-	if not _journal_has(str(a.get("fact_id", "")), str(a.get("form", ""))):
-		return {"ok": false}
-	if not _journal_has(str(b.get("fact_id", "")), str(b.get("form", ""))):
-		return {"ok": false}
-	var found: CaseData.Contradiction = _match_pair(a, b)
-	if found == null:
-		return {"ok": false}
-	var pressure_before := state.pressure.duplicate(true)
-	if not state.contradictions.has(found.id):
-		_resolve()
-	return {
-		"ok": state.contradictions.has(found.id),
-		"contradiction_id": found.id,
-		"pressure_before": pressure_before,
-	}
-
-
 func check_accusation(killer_id: String, motive_id: String, method_id: String) -> Dictionary:
 	return Accusation.check(case_data, state, killer_id, motive_id, method_id)
 
@@ -245,6 +227,7 @@ func _pass_contradictions(events: Array) -> void:
 		if not _contradiction_side_heard(contradiction.fact_b_id, contradiction.fact_b_form):
 			continue
 		state.contradictions.append(contradiction.id)
+		state.contradiction_turns[contradiction.id] = state.turn
 		events.append({
 			"type": "contradiction_registered",
 			"contradiction_id": contradiction.id,
@@ -398,32 +381,6 @@ func _contradiction_side_heard(fact_id: String, form: String) -> bool:
 		return _journal_has(fact_id, "full")
 	if form == "truth":
 		return _journal_has(fact_id, "basic") or _journal_has(fact_id, "full")
-	return false
-
-
-func _match_pair(a: Dictionary, b: Dictionary) -> CaseData.Contradiction:
-	for contradiction in case_data.contradictions:
-		if _sides_match(contradiction, a, b) or _sides_match(contradiction, b, a):
-			return contradiction
-	return null
-
-
-func _sides_match(contradiction: CaseData.Contradiction, left: Dictionary, right: Dictionary) -> bool:
-	return (
-		str(left.get("fact_id", "")) == contradiction.fact_a_id
-		and _forms_match(str(left.get("form", "")), contradiction.fact_a_form)
-		and str(right.get("fact_id", "")) == contradiction.fact_b_id
-		and _forms_match(str(right.get("form", "")), contradiction.fact_b_form)
-	)
-
-
-func _forms_match(journal_form: String, contradiction_form: String) -> bool:
-	if contradiction_form == "lie":
-		return journal_form == "lie"
-	if contradiction_form == "truth_full":
-		return journal_form == "full"
-	if contradiction_form == "truth":
-		return journal_form == "basic" or journal_form == "full"
 	return false
 
 

@@ -11,6 +11,8 @@ var broken_lies: Array[String] = []
 var fact_levels: Dictionary = {}
 var heard: Array[Dictionary] = []
 var contradictions: Array[String] = []
+## Ход, на котором противоречие нашлось. Старые сохранения этого поля не имеют.
+var contradiction_turns: Dictionary = {}
 var talked_to: Array[String] = []
 var accusation: Dictionary = {
 	"killer_ok": false,
@@ -35,6 +37,7 @@ func to_dict() -> Dictionary:
 		"fact_levels": fact_levels.duplicate(true),
 		"heard": heard.duplicate(true),
 		"contradictions": contradictions.duplicate(),
+		"contradiction_turns": contradiction_turns.duplicate(true),
 		"talked_to": talked_to.duplicate(),
 		"accusation": accusation.duplicate(true),
 		"dialogues": dialogues.duplicate(true),
@@ -55,6 +58,7 @@ static func from_dict(data: Dictionary) -> GameState:
 	state.fact_levels = _string_map(data.get("fact_levels", {}))
 	state.heard = _heard_list(data.get("heard", []))
 	state.contradictions = _string_list(data.get("contradictions", []))
+	state.contradiction_turns = _int_map(data.get("contradiction_turns", {}))
 	state.talked_to = _string_list(data.get("talked_to", []))
 	state.accusation = _accusation(data.get("accusation", {}))
 	state.dialogues = (data.get("dialogues", {}) as Dictionary).duplicate(true)

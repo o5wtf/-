@@ -2,7 +2,6 @@ extends Control
 
 signal evidence_requested
 signal notebook_requested
-signal contradiction_requested
 signal suspects_requested
 
 var agent_id: String = ""
@@ -121,9 +120,6 @@ func _ready() -> void:
 	var notebook := UiWidgets.button(UiStrings.NOTEBOOK, "NotebookButton")
 	notebook.pressed.connect(func() -> void: notebook_requested.emit())
 	tools.add_child(notebook)
-	var contradiction := UiWidgets.button(UiStrings.CONTRADICTION, "ContradictionButton")
-	contradiction.pressed.connect(func() -> void: contradiction_requested.emit())
-	tools.add_child(contradiction)
 	var stop_speech := UiWidgets.button(UiStrings.STOP_SPEECH, "StopSpeechButton")
 	stop_speech.pressed.connect(func() -> void: Speaker.stop_and_clear())
 	tools.add_child(stop_speech)

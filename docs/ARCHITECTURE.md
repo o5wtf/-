@@ -101,7 +101,6 @@ func register_statements(agent_id: String, statements: Array[Statement]) -> Arra
 func present_evidence(agent_id: String, evidence_id: String) -> Array[GameEvent]
 func apply_tone(agent_id: String, tone: int) -> Array[GameEvent]
 func set_emotion(agent_id: String, emotion: String) -> void
-func try_manual_contradiction(a: HeardRef, b: HeardRef) -> ManualContradictionResult
 func check_accusation(killer_id: String, motive_id: String, method_id: String) -> AccusationResult
 func pressure_band(agent_id: String) -> String            # calm 0–24 | tense 25–49 | nervous 50–74 | breaking 75–100
 ```
@@ -196,7 +195,7 @@ static func validate(resp: Dictionary, packet: Array[PacketEntry], context: Vali
 ### 3.8 Notebook — диздок, раздел 14
 
 - Хранит услышанные утверждения (`heard` в `GameState`). Для игрока показывает: агент, ход, текст утверждения. Текст — это `content_basic`, `content_full` или `lie_text`, в зависимости от формы.
-- Отдаёт игроку список для ручной кнопки «Противоречие!»: игрок выбирает две записи → `RulesEngine.try_manual_contradiction`.
+- Две вкладки: записи и уже найденные противоречия. Фильтр подозреваемого действует на обе. Противоречия находятся сами, когда обе стороны попали в журнал.
 
 ### 3.9 EvidenceMatcher — диздок, раздел 10
 
@@ -205,7 +204,7 @@ static func validate(resp: Dictionary, packet: Array[PacketEntry], context: Vali
 
 ### 3.10 SaveState — без раздела в диздоке (прототип)
 
-- Автосохранение после каждого состоявшегося хода, ручного противоречия и обвинения в `user://saves/<case_id>.json`: версия формата `1`, id дела, SHA-256 файла дела и `GameState.to_dict()`.
+- Автосохранение после каждого состоявшегося хода и обвинения в `user://saves/<case_id>.json`: версия формата `1`, id дела, SHA-256 файла дела и `GameState.to_dict()`. Поле `contradiction_turns` необязательное: старое сохранение со списком `contradictions` загружается без него.
 - Ключ API в сохранение не пишется.
 - Если хэш дела не совпал, формат чужой или файл повреждён, сохранение не загружается, игра предлагает начать заново.
 - Кнопки «Продолжить» (если файл есть) и «Начать заново».
@@ -220,7 +219,6 @@ signal busy_changed(is_busy: bool)
 func open_case(path: String) -> CaseLoadResult
 func ask(agent_id: String, player_text: String) -> void
 func present(agent_id: String, evidence_id: String) -> void
-func mark_contradiction(a: HeardRef, b: HeardRef) -> ManualContradictionResult
 func accuse(killer_id, motive_id, method_id) -> AccusationResult
 ```
 
@@ -266,13 +264,11 @@ func reset_for_case() -> void
 9. `RulesEngine.apply_tone(A, tone)` → каскад. Тон влияет на давление со следующего хода (диздок, раздел 11).
 10. `RulesEngine.set_emotion(A, emotion)`, если эмоция из списка.
 11. `DialogueState` записывает реплику игрока и ответ (с ремаркой).
-12. `Game` шлёт `agent_replied` и `events`. UI показывает ответ, ремарку состояния, всплывашки («Открыта улика», «Противоречие!»).
+12. `Game` шлёт `agent_replied` и `events`. UI показывает ответ, ремарку состояния, всплывашки («Открыта улика», «Найдено противоречие»).
 13. Если резюме пора обновить, `Summarizer` вызывается уже после показанной реплики, той же моделью. Ошибка не прячет реплику: берётся `Summarizer.apply_fallback`. После отката состояния диалог берётся заново из карты сессии, затем синхронизация и автосохранение.
 14. `SaveState` — автосохранение. `busy_changed(false)`.
 
 Предъявление улики `E` агенту `A`: `RulesEngine.present_evidence(A, E)` → каскад → затем обычный ход с шага 3, где вместо текста игрока стоит пометка события «Игрок предъявляет улику: <title> — <full_text>», чтобы агент отреагировал уже с новым пакетом.
-
-Ручное противоречие: `Notebook` → `RulesEngine.try_manual_contradiction` → события. Запроса к модели нет.
 
 Обвинение: `RulesEngine.check_accusation` → `AccusationResult` с галочками (диздок, раздел 4) → автосохранение.
 

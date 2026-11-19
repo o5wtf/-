@@ -27,8 +27,31 @@ func entries() -> Array[Dictionary]:
 	return rows
 
 
-func contradiction_choices() -> Array[Dictionary]:
-	return entries()
+func found_contradictions(agent_id: String = "") -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	if case_data == null or state == null:
+		return rows
+	for contradiction in case_data.contradictions:
+		if not state.contradictions.has(contradiction.id):
+			continue
+		if agent_id != "" and not _involves(contradiction, agent_id):
+			continue
+		var turn := -1
+		if state.contradiction_turns.has(contradiction.id):
+			turn = int(state.contradiction_turns[contradiction.id])
+		rows.append({
+			"id": contradiction.id,
+			"description": contradiction.description,
+			"turn": turn,
+		})
+	return rows
+
+
+func _involves(contradiction: CaseData.Contradiction, agent_id: String) -> bool:
+	for fact_id in [contradiction.fact_a_id, contradiction.fact_b_id]:
+		if str(case_data.fact_owner.get(fact_id, "")) == agent_id:
+			return true
+	return false
 
 
 static func text_for(fact: CaseData.Fact, form: String) -> String:

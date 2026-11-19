@@ -184,7 +184,6 @@ func test_unlock_conditions() -> void:
 	assert_false(talk_engine.state.unlocked_evidence.has("talk"))
 	talk_engine.note_question("b")
 	assert_true(talk_engine.state.unlocked_evidence.has("talk"))
-	assert_eq(int(talk_engine.state.fatigue["b"]), 2)
 	var shown_case := _case()
 	_evidence(shown_case, "open", [], false)
 	_evidence(shown_case, "any", [], false, {"type": "evidence_shown", "evidence_id": "open"})

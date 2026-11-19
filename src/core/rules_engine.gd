@@ -34,8 +34,6 @@ func get_packet(agent_id: String) -> Array[Dictionary]:
 func note_question(agent_id: String) -> Array:
 	if not state.talked_to.has(agent_id):
 		state.talked_to.append(agent_id)
-	var fatigue := int(state.fatigue.get(agent_id, 0)) + 2
-	state.fatigue[agent_id] = mini(100, fatigue)
 	return _resolve()
 
 
@@ -163,7 +161,6 @@ func _seed_agents() -> void:
 	for agent in case_data.agents:
 		state.pressure[agent.id] = agent.starting_pressure
 		state.emotion[agent.id] = agent.starting_emotion
-		state.fatigue[agent.id] = agent.starting_fatigue
 		if not state.dialogues.has(agent.id):
 			state.dialogues[agent.id] = {}
 		for fact in agent.facts:

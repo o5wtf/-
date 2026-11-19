@@ -98,7 +98,7 @@ def validate(case):
         emo = a.get("starting_emotion", "neutral")
         if emo not in EMOTIONS:
             err(f"агент {aid}: эмоция '{emo}' не из списка {sorted(EMOTIONS)}")
-        for key in ("starting_pressure", "starting_fatigue"):
+        for key in ("starting_pressure",):
             v = a.get(key, 0)
             if not isinstance(v, (int, float)) or not 0 <= v <= 100:
                 err(f"агент {aid}: {key}={v} вне 0–100")

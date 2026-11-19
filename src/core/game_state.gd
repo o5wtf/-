@@ -4,7 +4,6 @@ extends RefCounted
 
 var pressure: Dictionary = {}
 var emotion: Dictionary = {}
-var fatigue: Dictionary = {}
 var unlocked_evidence: Array[String] = []
 var shown: Dictionary = {}
 var broken_lies: Array[String] = []
@@ -30,7 +29,6 @@ func to_dict() -> Dictionary:
 	return {
 		"pressure": pressure.duplicate(true),
 		"emotion": emotion.duplicate(true),
-		"fatigue": fatigue.duplicate(true),
 		"unlocked_evidence": unlocked_evidence.duplicate(),
 		"shown": shown.duplicate(true),
 		"broken_lies": broken_lies.duplicate(),
@@ -51,7 +49,6 @@ static func from_dict(data: Dictionary) -> GameState:
 	var state := GameState.new()
 	state.pressure = _int_map(data.get("pressure", {}))
 	state.emotion = _string_map(data.get("emotion", {}))
-	state.fatigue = _int_map(data.get("fatigue", {}))
 	state.unlocked_evidence = _string_list(data.get("unlocked_evidence", []))
 	state.shown = _shown_map(data.get("shown", {}))
 	state.broken_lies = _string_list(data.get("broken_lies", []))

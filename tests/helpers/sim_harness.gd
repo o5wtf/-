@@ -13,7 +13,6 @@ static func run(case_data: CaseData, tone: int) -> Dictionary:
 	for agent in case_data.agents:
 		state.pressure[agent.id] = Balance.clamp_pressure(agent.starting_pressure + tone)
 		state.talked_to.append(agent.id)
-		state.fatigue[agent.id] = mini(100, agent.starting_fatigue + 2)
 	var guard := 0
 	while guard < 80:
 		guard += 1

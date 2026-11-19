@@ -136,7 +136,7 @@ static func _validate_agent(agent: Dictionary, agent_ids: Dictionary, errors: Ar
 			"emotion_unknown",
 			"агент %s: эмоция '%s' не из списка %s" % [agent_id, _show(emotion), _py_list(EMOTIONS)]
 		))
-	for key in ["starting_pressure", "starting_fatigue"]:
+	for key in ["starting_pressure"]:
 		var value: Variant = agent.get(key, 0)
 		if not _is_number(value) or not _in_unit_interval(value):
 			errors.append(error(

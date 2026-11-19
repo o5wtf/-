@@ -57,7 +57,6 @@ class Agent:
 	var background: String = ""
 	var starting_pressure: int = 0
 	var starting_emotion: String = "neutral"
-	var starting_fatigue: int = 0
 	## male | female | пусто. Нужен только как запасной выбор голоса.
 	var gender: String = ""
 	## Имя заранее заданного голоса Gemini TTS. Пусто — выбор по gender.

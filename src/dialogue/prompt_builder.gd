@@ -17,7 +17,6 @@ const EMOTIONS: PackedStringArray = [
 	"calm", "neutral", "nervous", "scared", "sad", "angry", "controlled", "contemptuous",
 ]
 const EMPTY_PACKET := "(ничего конкретного по делу ты сообщить не можешь — уходи от ответа)"
-const FATIGUE_TEXT := "Ты устал от допроса, отвечаешь короче и раздражённее."
 
 
 static func build_turn(
@@ -102,8 +101,6 @@ static func _turn_prompt(
 	var pressure_value := int(state.pressure.get(agent.id, 0))
 	var emotion := str(state.emotion.get(agent.id, "neutral"))
 	var state_line := "ТВОЁ СОСТОЯНИЕ: %s. Эмоция: %s." % [pressure_text(pressure_value), emotion]
-	if int(state.fatigue.get(agent.id, 0)) >= 50:
-		state_line += " " + FATIGUE_TEXT
 	var parts: PackedStringArray = PackedStringArray()
 	parts.append(state_line)
 	parts.append("")

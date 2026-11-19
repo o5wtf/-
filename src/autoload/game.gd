@@ -357,7 +357,6 @@ func _restore(snapshot: Dictionary) -> void:
 	var fresh := GameState.from_dict(snapshot)
 	state.pressure = fresh.pressure
 	state.emotion = fresh.emotion
-	state.fatigue = fresh.fatigue
 	state.unlocked_evidence = fresh.unlocked_evidence
 	state.shown = fresh.shown
 	state.broken_lies = fresh.broken_lies

@@ -54,7 +54,6 @@ func test_network_error_restores_state() -> void:
 	assert_eq(kinds, ["offline"])
 	assert_eq(Game.state.to_dict(), before)
 	assert_eq(Game.state.heard.size(), 0)
-	assert_eq(int(Game.state.fatigue.get("a", 0)), 0)
 	mock.free()
 
 

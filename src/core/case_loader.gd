@@ -86,7 +86,6 @@ static func _agent(raw: Dictionary) -> CaseData.Agent:
 	agent.background = _string(raw.get("background"))
 	agent.starting_pressure = _int(raw.get("starting_pressure", 0))
 	agent.starting_emotion = _string(raw.get("starting_emotion", "neutral"))
-	agent.starting_fatigue = _int(raw.get("starting_fatigue", 0))
 	agent.gender = _string(raw.get("gender"))
 	agent.tts_voice = _string(raw.get("tts_voice"))
 	agent.voice_style = _string(raw.get("voice_style"))

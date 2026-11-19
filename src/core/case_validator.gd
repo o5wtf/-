@@ -98,7 +98,7 @@ static func _inspect(raw: Dictionary) -> Dictionary:
 			if contradiction_body.get("fact_%s_form" % side) == "lie":
 				lie_facts[contradiction_body.get("fact_%s_id" % side)] = true
 	for fact_id in facts:
-		_validate_fact(str(fact_id), facts[fact_id], evidence_ids, lie_facts, errors)
+		_validate_fact(str(fact_id), facts[fact_id], facts, evidence_ids, lie_facts, errors)
 	for contradiction_id in contradiction_ids:
 		_validate_contradiction(contradiction_id, contradiction_ids[contradiction_id], facts, errors)
 	for evidence_id in evidence_ids:
@@ -136,7 +136,7 @@ static func _validate_agent(agent: Dictionary, agent_ids: Dictionary, errors: Ar
 			"emotion_unknown",
 			"агент %s: эмоция '%s' не из списка %s" % [agent_id, _show(emotion), _py_list(EMOTIONS)]
 		))
-	for key in ["starting_pressure", "starting_fatigue"]:
+	for key in ["starting_pressure"]:
 		var value: Variant = agent.get(key, 0)
 		if not _is_number(value) or not _in_unit_interval(value):
 			errors.append(error(
@@ -162,6 +162,7 @@ static func _validate_agent(agent: Dictionary, agent_ids: Dictionary, errors: Ar
 static func _validate_fact(
 	fact_id: String,
 	fact: Dictionary,
+	facts: Dictionary,
 	evidence_ids: Dictionary,
 	lie_facts: Dictionary,
 	errors: Array[Dictionary]
@@ -172,13 +173,14 @@ static func _validate_fact(
 			errors.append(error("fact_content_empty", "%s: пустое %s" % [where, key]))
 	var basic: Variant = fact.get("pressure_for_basic")
 	var full: Variant = fact.get("pressure_for_full")
-	if not _is_number(basic) or not _is_number(full):
-		errors.append(error("pressure_not_number", "%s: пороги давления не числа" % where))
-	elif _as_float(full) < _as_float(basic):
-		errors.append(error(
-			"pressure_order",
-			"%s: pressure_for_full (%s) < pressure_for_basic (%s)" % [where, _show(full), _show(basic)]
-		))
+	if basic != null or full != null:
+		if not _is_number(basic) or not _is_number(full):
+			errors.append(error("pressure_not_number", "%s: пороги давления не числа" % where))
+		elif _as_float(full) < _as_float(basic):
+			errors.append(error(
+				"pressure_order",
+				"%s: pressure_for_full (%s) < pressure_for_basic (%s)" % [where, _show(full), _show(basic)]
+			))
 	var related := _as_array(fact.get("related_evidence_ids", []))
 	for evidence_id in related:
 		if not evidence_ids.has(evidence_id):
@@ -234,8 +236,6 @@ static func _validate_fact(
 			errors.append(error("cannot_lie_flag", "%s: cannot_lie, но is_lie=true" % where))
 		if not _falsy(fact.get("lie_text")):
 			errors.append(error("lie_text_forbidden", "%s: cannot_lie, но lie_text заполнен" % where))
-	if not _falsy(is_lie) and breaks.is_empty():
-		errors.append(error("breaks_lie_on_missing", "%s: is_lie=true, но breaks_lie_on не задан" % where))
 	if _falsy(is_lie) and not breaks.is_empty():
 		errors.append(error("breaks_lie_on_unexpected", "%s: у факта без лжи задан breaks_lie_on" % where))
 	if breaks.has("evidence") and related.is_empty():
@@ -248,6 +248,12 @@ static func _validate_fact(
 			"breaks_lie_no_contradiction",
 			"%s: breaks_lie_on=contradiction, но нет противоречия с этим фактом в форме lie" % where
 		))
+	for prior_id in _as_array(fact.get("requires_broken_lies", [])):
+		if not facts.has(prior_id):
+			errors.append(error(
+				"requires_broken_unknown",
+				"%s: requires_broken_lies ссылается на неизвестный факт %s" % [where, _show(prior_id)]
+			))
 
 
 static func _validate_contradiction(
@@ -325,7 +331,8 @@ static func _validate_evidence(
 		_show(evidence_id),
 		agent_ids,
 		evidence_ids,
-		contradiction_ids
+		contradiction_ids,
+		facts
 	))
 
 

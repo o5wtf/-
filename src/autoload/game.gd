@@ -176,6 +176,29 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 	speech_style = ""
 	speech_line = ""
 	var statements: Array = []
+	var reader := _read_choice(result)
+	if not reader.reply_complete():
+		_abort_turn(snapshot, turn_started, turn_model, tally, "bad_response", "Ответ оборвался до целой реплики.")
+		return
+	var options := TurnOptions.build(case_data, state, agent_id)
+	var plan := TurnOptions.plan(case_data, state, agent_id, options, reader.chosen())
+	_log_choice(agent_id, options, plan)
+	if bool(plan.get("restart", false)):
+		turn_events.append_array(_engine.commit_plan(agent_id, plan))
+		packet = _engine.get_packet(agent_id)
+		var restarted := PromptBuilder.build_turn(case_data, state, agent_id, packet, dialogue, player_text, event_note)
+		LlmTiming.note_request(tally, "regen", "admit")
+		result = await _generate(_with_suffix(restarted, _admit_note(plan)))
+		turn_model = str(result.get("model", turn_model))
+		if _is_network_error(result):
+			_abort_turn(snapshot, turn_started, turn_model, tally, str(result.get("error", "")), str(result.get("message", "")))
+			return
+		if not _read_choice(result).reply_complete():
+			_abort_turn(snapshot, turn_started, turn_model, tally, "bad_response", "Повторная реплика оборвалась.")
+			return
+		report = _validate_result(result, packet, agent_id, dialogue, player_text, turn_config.local_fixes)
+	else:
+		turn_events.append_array(_engine.commit_plan(agent_id, plan))
 	if report["ok"] and result.get("ok", false):
 		reply = str(report["reply"])
 		remark = str(report["remark"])
@@ -186,14 +209,9 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 		var gemini := store.voice_engine == "gemini"
 		speech_style = SpeechStyle.compose(agent.voice_style, str(report.get("speech_tone", "")), str(report.get("pace", "")), store.voice_intonation)
 		speech_line = VocalTags.for_backend(str(report.get("spoken_reply", reply)), gemini, store.voice_intonation)
-		for item in report["mentioned_evidence"]:
-			last_mentioned_evidence.append(str(item))
-		last_requested_evidence = str(report.get("requested_evidence", ""))
 	else:
-		reply = ResponseValidator.fallback_reply(int(state.pressure.get(agent_id, 0)))
-		remark = "молчит"
-		tone = 0
-		emotion = str(state.emotion.get(agent_id, agent.starting_emotion))
+		_abort_turn(snapshot, turn_started, turn_model, tally, "bad_response", "Целый ответ не принят.")
+		return
 	state.turn += 1
 	if not statements.is_empty():
 		turn_events.append_array(_engine.register_statements(agent_id, statements))
@@ -219,6 +237,49 @@ func _turn(agent_id: String, player_text: String, event_note: String, evidence_i
 	_sync_dialogues()
 	_autosave()
 	_publish_turn_timing(text_ms, turn_model, tally)
+
+
+func _read_choice(result: Dictionary) -> TurnChoice:
+	var reader := TurnChoice.new()
+	var raw := str(result.get("raw_text", ""))
+	if raw == "" and result.get("json") is Dictionary:
+		raw = JSON.stringify(result.get("json"))
+	var index := 0
+	while index < raw.length():
+		reader.push(raw.substr(index, 24))
+		index += 24
+	reader.finish()
+	return reader
+
+
+func _admit_note(plan: Dictionary) -> String:
+	var truths := PackedStringArray()
+	for line in plan.get("admit", []):
+		if str(line) != "":
+			truths.append(str(line))
+	var mention := ""
+	for evidence_id in plan.get("unlock", []):
+		var item: CaseData.EvidenceItem = case_data.evidence_by_id.get(str(evidence_id)) as CaseData.EvidenceItem
+		if item != null:
+			mention += " Скажи, что существует «%s»." % item.title
+	return "ЭТОТ ОТВЕТ ЗАМЕНЯЕТ ПРЕДЫДУЩИЙ, ЕГО НЕ ПОКАЗЫВАЮТ И НЕ ОЗВУЧИВАЮТ. Признай в этой реплике: %s. Не повторяй старую ложь.%s" % [" ".join(truths), mention]
+
+
+func _log_choice(agent_id: String, options: Array, plan: Dictionary) -> void:
+	if not SettingsStore.load_current().developer:
+		return
+	var picked: Array = plan.get("picked", [])
+	var shown: PackedStringArray = PackedStringArray()
+	for number in picked:
+		shown.append(str(number))
+	print("choice agent=%s offered=%d picked=%s decision=%s unlock=%s break=%s" % [
+		agent_id,
+		options.size(),
+		",".join(shown),
+		str(plan.get("decision", "")),
+		",".join(plan.get("unlock", [])),
+		",".join(plan.get("break_lies", [])),
+	])
 
 
 func _autosave() -> void:
@@ -287,7 +348,8 @@ func _validate_result(result: Dictionary, packet: Array, agent_id: String, dialo
 		"leak_max_stems": _leak_max_stems,
 		"log_leaks": _log_leaks,
 		"local_fixes": local_fixes,
-		"evidence_keys": PromptBuilder.evidence_keys(case_data, state),
+		"evidence_keys": PromptBuilder.report_evidence_keys(case_data, state, agent_id),
+		"notebook_ids": PromptBuilder.notebook_ids(case_data, state),
 	})
 
 
@@ -357,7 +419,6 @@ func _restore(snapshot: Dictionary) -> void:
 	var fresh := GameState.from_dict(snapshot)
 	state.pressure = fresh.pressure
 	state.emotion = fresh.emotion
-	state.fatigue = fresh.fatigue
 	state.unlocked_evidence = fresh.unlocked_evidence
 	state.shown = fresh.shown
 	state.broken_lies = fresh.broken_lies
@@ -365,6 +426,8 @@ func _restore(snapshot: Dictionary) -> void:
 	state.heard = fresh.heard
 	state.contradictions = fresh.contradictions
 	state.contradiction_turns = fresh.contradiction_turns
+	state.evidence_mentions = fresh.evidence_mentions
+	state.topic_touches = fresh.topic_touches
 	state.talked_to = fresh.talked_to
 	state.accusation = fresh.accusation
 	state.dialogues = fresh.dialogues

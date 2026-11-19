@@ -43,6 +43,8 @@ class Fact:
 	var pressure_for_basic: int = 0
 	var pressure_for_full: int = 0
 	var requires_evidence: bool = false
+	## Ложь открывается только после того, как сломаны эти факты.
+	var requires_broken_lies: Array[String] = []
 	## null, строка или список: pressure | evidence | contradiction.
 	var breaks_lie_on: Variant = null
 
@@ -57,7 +59,6 @@ class Agent:
 	var background: String = ""
 	var starting_pressure: int = 0
 	var starting_emotion: String = "neutral"
-	var starting_fatigue: int = 0
 	## male | female | пусто. Нужен только как запасной выбор голоса.
 	var gender: String = ""
 	## Имя заранее заданного голоса Gemini TTS. Пусто — выбор по gender.

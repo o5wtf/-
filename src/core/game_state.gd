@@ -4,7 +4,6 @@ extends RefCounted
 
 var pressure: Dictionary = {}
 var emotion: Dictionary = {}
-var fatigue: Dictionary = {}
 var unlocked_evidence: Array[String] = []
 var shown: Dictionary = {}
 var broken_lies: Array[String] = []
@@ -13,6 +12,10 @@ var heard: Array[Dictionary] = []
 var contradictions: Array[String] = []
 ## Ход, на котором противоречие нашлось. Старые сохранения этого поля не имеют.
 var contradiction_turns: Dictionary = {}
+## Улики, которые нужный персонаж сам назвал. Старые сохранения поля не имеют.
+var evidence_mentions: Array[String] = []
+## Сколько раз персонаж уже касался темы закрытой улики. Старые сохранения поля не имеют.
+var topic_touches: Dictionary = {}
 var talked_to: Array[String] = []
 var accusation: Dictionary = {
 	"killer_ok": false,
@@ -30,7 +33,6 @@ func to_dict() -> Dictionary:
 	return {
 		"pressure": pressure.duplicate(true),
 		"emotion": emotion.duplicate(true),
-		"fatigue": fatigue.duplicate(true),
 		"unlocked_evidence": unlocked_evidence.duplicate(),
 		"shown": shown.duplicate(true),
 		"broken_lies": broken_lies.duplicate(),
@@ -38,6 +40,8 @@ func to_dict() -> Dictionary:
 		"heard": heard.duplicate(true),
 		"contradictions": contradictions.duplicate(),
 		"contradiction_turns": contradiction_turns.duplicate(true),
+		"evidence_mentions": evidence_mentions.duplicate(),
+		"topic_touches": topic_touches.duplicate(true),
 		"talked_to": talked_to.duplicate(),
 		"accusation": accusation.duplicate(true),
 		"dialogues": dialogues.duplicate(true),
@@ -51,7 +55,6 @@ static func from_dict(data: Dictionary) -> GameState:
 	var state := GameState.new()
 	state.pressure = _int_map(data.get("pressure", {}))
 	state.emotion = _string_map(data.get("emotion", {}))
-	state.fatigue = _int_map(data.get("fatigue", {}))
 	state.unlocked_evidence = _string_list(data.get("unlocked_evidence", []))
 	state.shown = _shown_map(data.get("shown", {}))
 	state.broken_lies = _string_list(data.get("broken_lies", []))
@@ -59,6 +62,8 @@ static func from_dict(data: Dictionary) -> GameState:
 	state.heard = _heard_list(data.get("heard", []))
 	state.contradictions = _string_list(data.get("contradictions", []))
 	state.contradiction_turns = _int_map(data.get("contradiction_turns", {}))
+	state.evidence_mentions = _string_list(data.get("evidence_mentions", []))
+	state.topic_touches = _int_map(data.get("topic_touches", {}))
 	state.talked_to = _string_list(data.get("talked_to", []))
 	state.accusation = _accusation(data.get("accusation", {}))
 	state.dialogues = (data.get("dialogues", {}) as Dictionary).duplicate(true)

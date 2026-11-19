@@ -32,6 +32,7 @@ static func validate(resp: Variant, packet: Array, context: Dictionary) -> Dicti
 		"spoken_reply": "",
 		"mentioned_evidence": [] as Array[String],
 		"requested_evidence": "",
+		"cited_facts": [] as Array[String],
 	}
 	if resp is not Dictionary:
 		_violate(report, "пустая реплика")
@@ -122,6 +123,7 @@ static func validate(resp: Variant, packet: Array, context: Dictionary) -> Dicti
 	var allowed_evidence := _allowed_evidence_keys(context)
 	report["mentioned_evidence"] = _filter_evidence(body["mentioned_evidence"], allowed_evidence)
 	report["requested_evidence"] = _filter_requested(body["requested_evidence"], allowed_evidence)
+	report["cited_facts"] = _filter_citations(body.get("cited_facts", []), context, report, local_fixes)
 	return report
 
 
@@ -172,6 +174,10 @@ static func _normalize(body: Dictionary) -> Dictionary:
 			copy["mentioned_evidence"] = []
 		if not copy.has("requested_evidence"):
 			copy["requested_evidence"] = null
+		if copy.get("cited_facts") is String:
+			copy["cited_facts"] = [copy["cited_facts"]]
+		elif not copy.has("cited_facts") or copy["cited_facts"] == null:
+			copy["cited_facts"] = []
 	var tone: Variant = copy.get("player_tone", 0)
 	if tone is String and str(tone).is_valid_float():
 		copy["player_tone"] = int(float(tone))
@@ -187,7 +193,7 @@ static func _has_types(body: Dictionary) -> bool:
 		return false
 	if body["reply"] is not String or body["remark"] is not String or body["emotion"] is not String:
 		return false
-	if body["stated"] is not Array or body["mentioned_evidence"] is not Array:
+	if body["stated"] is not Array or body["mentioned_evidence"] is not Array or body.get("cited_facts") is not Array:
 		return false
 	var requested: Variant = body["requested_evidence"]
 	return requested == null or requested is String
@@ -238,6 +244,8 @@ static func _fill_defaults(body: Dictionary, context: Dictionary) -> void:
 		body["mentioned_evidence"] = []
 	if not body.has("requested_evidence"):
 		body["requested_evidence"] = null
+	if body.get("cited_facts") is not Array:
+		body["cited_facts"] = []
 
 
 static func _log_fix(report: Dictionary, message: String) -> void:
@@ -447,6 +455,30 @@ static func _allowed_evidence_keys(context: Dictionary) -> Dictionary:
 		for key in keys:
 			allowed[str(key)] = true
 	return allowed
+
+
+static func _filter_citations(value: Variant, context: Dictionary, report: Dictionary, local_fixes: bool) -> Array[String]:
+	var allowed := {}
+	var keys: Variant = context.get("notebook_ids", [])
+	if keys is PackedStringArray or keys is Array:
+		for fact_id in keys:
+			allowed[str(fact_id)] = true
+	var result: Array[String] = []
+	if value is not Array:
+		return result
+	for item in value:
+		var fact_id := str(item)
+		if fact_id == "" or fact_id == "none":
+			continue
+		if not allowed.has(fact_id):
+			if local_fixes:
+				_log_fix(report, "drop cited=%s" % fact_id)
+			else:
+				_violate(report, "cited_facts вне блокнота")
+			continue
+		if not result.has(fact_id):
+			result.append(fact_id)
+	return result
 
 
 static func _filter_evidence(raw: Array, allowed: Dictionary) -> Array[String]:

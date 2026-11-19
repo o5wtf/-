@@ -98,7 +98,7 @@ def validate(case):
         emo = a.get("starting_emotion", "neutral")
         if emo not in EMOTIONS:
             err(f"агент {aid}: эмоция '{emo}' не из списка {sorted(EMOTIONS)}")
-        for key in ("starting_pressure", "starting_fatigue"):
+        for key in ("starting_pressure",):
             v = a.get(key, 0)
             if not isinstance(v, (int, float)) or not 0 <= v <= 100:
                 err(f"агент {aid}: {key}={v} вне 0–100")
@@ -124,10 +124,11 @@ def validate(case):
             if not f.get(key):
                 err(f"{p}: пустое {key}")
         pb, pf = f.get("pressure_for_basic"), f.get("pressure_for_full")
-        if not isinstance(pb, (int, float)) or not isinstance(pf, (int, float)):
-            err(f"{p}: пороги давления не числа")
-        elif pf < pb:
-            err(f"{p}: pressure_for_full ({pf}) < pressure_for_basic ({pb})")
+        if pb is not None or pf is not None:
+            if not isinstance(pb, (int, float)) or not isinstance(pf, (int, float)):
+                err(f"{p}: пороги давления не числа")
+            elif pf < pb:
+                err(f"{p}: pressure_for_full ({pf}) < pressure_for_basic ({pb})")
         rel = f.get("related_evidence_ids", [])
         for e in rel:
             if e not in ev_ids:
@@ -156,8 +157,6 @@ def validate(case):
                 err(f"{p}: cannot_lie, но is_lie=true")
             if f.get("lie_text"):
                 err(f"{p}: cannot_lie, но lie_text заполнен")
-        if is_lie and not bl:
-            err(f"{p}: is_lie=true, но breaks_lie_on не задан")
         if not is_lie and bl:
             err(f"{p}: у факта без лжи задан breaks_lie_on")
         if "evidence" in bl and not rel:
@@ -199,11 +198,7 @@ def validate(case):
                 return
         t = cond.get("type")
         if t == "pressure_on_agent":
-            if cond.get("agent_id") not in agent_ids:
-                err(f"{where}: агент {cond.get('agent_id')} не найден")
-            g = cond.get("gte")
-            if not isinstance(g, (int, float)) or not 0 <= g <= 100:
-                err(f"{where}: gte={g} вне 0–100")
+            return
         elif t == "dialogue_with":
             if cond.get("agent_id") not in agent_ids:
                 err(f"{where}: агент {cond.get('agent_id')} не найден")
@@ -214,6 +209,14 @@ def validate(case):
                 err(f"{where}: улика требует предъявления самой себя")
             if "agent_id" in cond and cond["agent_id"] not in agent_ids:
                 err(f"{where}: агент {cond['agent_id']} не найден")
+        elif t == "evidence_mentioned":
+            if cond.get("agent_id") not in agent_ids:
+                err(f"{where}: агент {cond.get('agent_id')} не найден")
+            if cond.get("evidence_id") not in ev_ids:
+                err(f"{where}: улика {cond.get('evidence_id')} не найдена")
+        elif t == "lie_broken":
+            if cond.get("fact_id") not in facts:
+                err(f"{where}: факт {cond.get('fact_id')} не найден")
         elif t == "inconsistency_created":
             if "contradiction_id" in cond and cond["contradiction_id"] not in contr_ids:
                 err(f"{where}: противоречие {cond['contradiction_id']} не найдено")
@@ -254,15 +257,16 @@ def eval_cond(cond, st):
     if "OR" in cond:
         return any(eval_cond(c, st) for c in cond["OR"])
     t = cond["type"]
-    if t == "pressure_on_agent":
-        return st["p"][cond["agent_id"]] >= cond["gte"]
     if t == "dialogue_with":
         return True  # игрок говорит со всеми
     if t == "evidence_shown":
         return cond["evidence_id"] in st["shown_any"]
+    if t == "evidence_mentioned":
+        return True
+    if t == "lie_broken":
+        return cond.get("fact_id") in st.get("broken", set())
     if t == "inconsistency_created":
-        cid = cond.get("contradiction_id")
-        return bool(st["contr"]) if cid is None else cid in st["contr"]
+        return False
     return False
 
 
@@ -277,10 +281,10 @@ def simulate(case, tone):
     ev_agents = {}
     for eid, e in ev.items():
         ev_agents[eid] = set(e.get("related_agent_ids", []))
-    st = {"p": {aid: min(100, a.get("starting_pressure", 0) + tone) for aid, a in agents.items()},
-          "shown_any": set(), "contr": set()}
-    shown = set()   # (evidence, agent)
     unlocked, broken, level = set(), set(), {}
+    st = {"p": {aid: min(100, a.get("starting_pressure", 0) + tone) for aid, a in agents.items()},
+          "shown_any": set(), "contr": set(), "broken": broken}
+    shown = set()   # (evidence, agent)
     log = []
 
     def bump(aid, n, why):
@@ -323,12 +327,9 @@ def simulate(case, tone):
             p = st["p"][aid]
             if f.get("is_lie") and fid not in broken:
                 bl = breaks_list(f)
-                hit = ("pressure" in bl and p >= f["pressure_for_full"]) or \
-                      ("evidence" in bl and any((e, aid) in shown for e in f.get("related_evidence_ids", []))) or \
-                      ("contradiction" in bl and any(
-                          c["id"] in st["contr"] and fid in (c["fact_a_id"], c["fact_b_id"])
-                          and "lie" in (c["fact_a_form"], c["fact_b_form"])
-                          for c in case.get("contradictions", [])))
+                prior = f.get("requires_broken_lies") or []
+                ready = all(item in broken for item in prior)
+                hit = ready and ("evidence" in bl and any((e, aid) in shown for e in f.get("related_evidence_ids", [])))
                 if hit:
                     broken.add(fid)
                     log.append(f"ложь сломана: {fid}")
@@ -336,9 +337,12 @@ def simulate(case, tone):
                     continue
                 continue
             new = None
-            if p >= f["pressure_for_full"] and ev_ok(fid):
+            prior = f.get("requires_broken_lies") or []
+            if any(item not in broken for item in prior):
+                new = None
+            elif ev_ok(fid):
                 new = "full"
-            elif (p >= f["pressure_for_basic"] and ev_ok(fid)) or fid in broken:
+            elif fid in broken:
                 new = "basic"
             if new and level.get(fid) != new and not (level.get(fid) == "full"):
                 level[fid] = new

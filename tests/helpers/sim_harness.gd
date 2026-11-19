@@ -13,7 +13,7 @@ static func run(case_data: CaseData, tone: int) -> Dictionary:
 	for agent in case_data.agents:
 		state.pressure[agent.id] = Balance.clamp_pressure(agent.starting_pressure + tone)
 		state.talked_to.append(agent.id)
-		state.fatigue[agent.id] = mini(100, agent.starting_fatigue + 2)
+	_assume_mentions(case_data, state)
 	var guard := 0
 	while guard < 80:
 		guard += 1
@@ -30,6 +30,25 @@ static func run(case_data: CaseData, tone: int) -> Dictionary:
 		if engine.simulation_signature() == before:
 			break
 	return snapshot(case_data, state, tone)
+
+
+static func _assume_mentions(case_data: CaseData, state: GameState) -> void:
+	for evidence in case_data.evidence:
+		if _mentions(evidence.unlock_condition, evidence.id):
+			state.evidence_mentions.append(evidence.id)
+
+
+static func _mentions(cond: Variant, evidence_id: String) -> bool:
+	if cond is not Dictionary:
+		return false
+	var body := cond as Dictionary
+	for op in ["AND", "OR"]:
+		if body.has(op) and body[op] is Array:
+			for sub in body[op]:
+				if _mentions(sub, evidence_id):
+					return true
+			return false
+	return str(body.get("type", "")) == "evidence_mentioned" and str(body.get("evidence_id", "")) == evidence_id
 
 
 static func snapshot(case_data: CaseData, state: GameState, tone: int) -> Dictionary:

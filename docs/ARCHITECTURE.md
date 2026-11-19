@@ -96,7 +96,7 @@ class_name RulesEngine
 func _init(case_data: CaseData, state: GameState) -> void
 func start_new() -> Array[GameEvent]                       # стартовые значения агентов, улики без условия
 func get_packet(agent_id: String) -> Array[PacketEntry]   # что модели разрешено знать сейчас (раздел 8)
-func note_question(agent_id: String) -> Array[GameEvent]  # dialogue_with, усталость +2
+func note_question(agent_id: String) -> Array[GameEvent]  # dialogue_with
 func register_statements(agent_id: String, statements: Array[Statement]) -> Array[GameEvent]
 func present_evidence(agent_id: String, evidence_id: String) -> Array[GameEvent]
 func apply_tone(agent_id: String, tone: int) -> Array[GameEvent]
@@ -112,7 +112,7 @@ func pressure_band(agent_id: String) -> String            # calm 0–24 | tense 
   1. Открыть улики, чьи условия выполнены (раздел 15 диздока).
   2. Для каждого факта (агенты и их факты по порядку):
      - если это несломанная ложь — проверить `breaks_lie_on` (список — «любое из»). Если ложь сломалась — отметить; уровень этого факта пересчитывается на следующем проходе;
-     - иначе пересчитать уровень: Full, если выполнены условия Full; Basic, если выполнены условия Basic или ложь сломана; уровень только растёт.
+     - иначе пересчитать уровень: Full, если требование улики выполнено или его нет; Basic, если ложь сломана, а улика ещё нужна. Пороги давления уровень не поднимают.
   3. Для каждого противоречия по порядку: если обе стороны услышаны — зафиксировать и сразу применить давление (раздел 11).
 
   Давление за предъявление улики применяется в момент предъявления. Этот порядок совпадает с `tools/validate_case.py --simulate`, на этом держится тест на совпадение с эталоном (этап 3 плана).
@@ -122,7 +122,7 @@ func pressure_band(agent_id: String) -> String            # calm 0–24 | tense 
 
 Только данные, без логики. Метод `to_dict()` / `from_dict()` для сохранения.
 Поля:
-- `pressure{agent: int}`, `emotion{agent: String}`, `fatigue{agent: int}`;
+- `pressure{agent: int}`, `emotion{agent: String}`;
 - `unlocked_evidence[]`, `shown{evidence_id: [agent_id]}`, `broken_lies[]`, `fact_levels{fact_id: closed|basic|full}`;
 - `heard[]` (`{agent_id, fact_id, form, turn}`), `contradictions[]`, `talked_to[]`;
 - `accusation{killer_ok, motive_ok, method_ok, attempts}`;
@@ -255,7 +255,7 @@ func reset_for_case() -> void
 
 1. UI → `Game.ask(A, text)`. UI блокирует ввод (`busy_changed(true)`).
 2. `EvidenceMatcher` проверяет текст. Если нашлась улика, UI уже показал подсказку до отправки, и игрок мог её предъявить (тогда сначала идёт поток «Предъявление», ниже).
-3. `RulesEngine.note_question(A)` → отметка «был диалог», усталость +2 → каскад (могли открыться улики с `dialogue_with`).
+3. `RulesEngine.note_question(A)` → отметка «был диалог» → каскад (могли открыться улики с `dialogue_with`).
 4. `RulesEngine.get_packet(A)` → пакет фактов с ключами `k1…kn`.
 5. `PromptBuilder.build_turn(...)` → системная инструкция, текст хода, схема с перечнем ключей пакета и `propertyOrdering`.
 6. `LLM.client.generate(request)`. Ошибка сети или лимита → `llm_error`, состояние откатывается, конец хода. Повторный `ask` во время `is_busy` ничего не делает.
@@ -285,7 +285,7 @@ func reset_for_case() -> void
 | 8 Раскрытие фактов и ложь | RulesEngine.get_packet, ResponseValidator |
 | 9 Контекст и промпт | PromptBuilder, DialogueState, Summarizer, ResponseValidator |
 | 10 UX допроса | экраны UI, EvidenceMatcher, Notebook |
-| 11 Давление, эмоция, усталость | Balance, RulesEngine |
+| 11 Давление и эмоция | Balance, RulesEngine |
 | 12 Платформа и ИИ | LLMClient, GeminiClient, LLMConfig, SpeechBackend, экспорт |
 | 13 Схема агента | CaseData, CaseValidator, PromptBuilder |
 | 14 Противоречия | RulesEngine, Notebook |

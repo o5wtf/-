@@ -3,7 +3,7 @@ extends TestCase
 const SCENES := {
 	"res://src/main.tscn": ["NewCaseButton", "ContinueButton", "RestartButton", "SettingsButton"],
 	"res://ui/screens/main_menu.tscn": ["NewCaseButton", "ContinueButton", "RestartButton", "SettingsButton"],
-	"res://ui/screens/settings.tscn": ["KeyField", "ShowKeyButton", "TestConnectionButton", "ModelField", "ScaleSlider", "MockCheck", "TimingDebug", "VoiceEnabled", "ToneEnabled", "VoiceEngine", "VoiceModel", "VoiceAuto", "ChirpHint", "ChirpKeyField", "VoiceModelNote", "VoiceCheckButton", "VoiceStatusLabel", "TurnLogLabel", "VoiceLogLabel", "MicDiagLabel", "MicEnabled", "MicMode", "PauseSlider", "PauseValue", "PlayLastMicButton", "SaveButton", "BackButton"],
+	"res://ui/screens/settings.tscn": ["KeyField", "ShowKeyButton", "TestConnectionButton", "ModelField", "ScaleSlider", "MockCheck", "TimingDebug", "DeveloperMode", "VoiceEnabled", "ToneEnabled", "VoiceEngine", "VoiceModel", "VoiceAuto", "ChirpHint", "ChirpKeyField", "VoiceModelNote", "VoiceCheckButton", "VoiceStatusLabel", "TurnLogLabel", "VoiceLogLabel", "MicDiagLabel", "MicEnabled", "MicMode", "PauseSlider", "PauseValue", "PlayLastMicButton", "SaveButton", "BackButton"],
 	"res://ui/screens/briefing.tscn": ["TitleLabel", "BriefingLabel", "StartButton"],
 	"res://ui/screens/suspects.tscn": ["List"],
 	"res://ui/screens/interrogation.tscn": ["SendButton", "PromptField", "EvidenceButton", "NotebookButton", "HintYesButton", "RetryButton", "TurnTimingLabel", "StopSpeechButton", "VoiceErrorLabel", "VoiceRetryButton", "MicButton", "MicLevel", "MicStateLabel", "MicHintLabel", "MicSettingsButton", "SttRetryButton"],
@@ -52,6 +52,13 @@ func test_layout_modes_skip_phone() -> void:
 	assert_eq(UiLayout.mode_for_size(Vector2(800, 1280)), "medium")
 	assert_eq(UiLayout.mode_for_size(Vector2(999, 700)), "medium")
 	assert_eq(UiLayout.mode_for_size(Vector2(640, 400)), "medium")
+
+
+func test_developer_pressure_sits_next_to_the_remark() -> void:
+	var plain := UiStrings.state_line("tense", "angry", 42, false)
+	assert_false(plain.contains("давление"))
+	assert_true(plain.contains("напряжён"))
+	assert_true(UiStrings.state_line("tense", "angry", 42, true).contains("давление 42"))
 
 
 func test_remarks_have_no_digits() -> void:

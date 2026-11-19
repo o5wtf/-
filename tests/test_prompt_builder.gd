@@ -4,7 +4,7 @@ const REAL_CASE := "res://cases/rain_over_shadow.json"
 
 
 func test_turn_template_key_lines() -> void:
-	var built := _sample_request(0, 0)
+	var built := _sample_request(0)
 	var system := str(built["system"])
 	var user := str(built["user"])
 	for line in [
@@ -27,24 +27,26 @@ func test_turn_template_key_lines() -> void:
 	for line in [
 		"ТВОЁ СОСТОЯНИЕ: Ты спокоен и уверен в себе. Эмоция: neutral.",
 		"ЧТО ТЫ МОЖЕШЬ СКАЗАТЬ:",
-		"k1 [ПРАВДА]: Краткая версия видна",
+		"k1 [ПРАВДА]: Полная версия теперь видна",
 		"k2 [ЛОЖЬ]: Я этого не делал совсем",
 		"УЛИКИ, КОТОРЫЕ ТЕБЕ ПОКАЗАЛИ:",
 		"нет",
 		"УЛИКИ, ИЗВЕСТНЫЕ СЛЕДОВАТЕЛЮ (только названия):",
 		"e1 — Записка на столе",
+		"БЛОКНОТ СЛЕДОВАТЕЛЯ:",
+		"пусто",
 		"РАНЕЕ В РАЗГОВОРЕ: —",
 		"ПОСЛЕДНИЕ РЕПЛИКИ:",
 		"ВОПРОС СЛЕДОВАТЕЛЯ: Что вы видели?",
 	]:
 		assert_true(user.contains(line), "нет строки промпта хода")
-	assert_false(user.contains(PromptBuilder.FATIGUE_TEXT))
+	assert_false(user.contains("Ты устал от допроса"))
 	assert_false(user.contains("ПОЛНАЯ ВЕРСИЯ СКРЫТА"))
 	assert_false(user.contains("ПРАВДА MUST LIE"))
 	assert_false(user.contains("ЗАКРЫТАЯ ПОЛНАЯ"))
 
 
-func test_pressure_and_fatigue_texts() -> void:
+func test_pressure_texts() -> void:
 	assert_eq(PromptBuilder.pressure_text(0), "Ты спокоен и уверен в себе")
 	assert_eq(PromptBuilder.pressure_text(24), "Ты спокоен и уверен в себе")
 	assert_eq(PromptBuilder.pressure_text(25), "Ты напряжён, но держишься")
@@ -53,9 +55,9 @@ func test_pressure_and_fatigue_texts() -> void:
 	assert_eq(PromptBuilder.pressure_text(74), "Ты заметно нервничаешь, отвечаешь неровно")
 	assert_eq(PromptBuilder.pressure_text(75), "Ты на грани, тебе трудно держать себя в руках")
 	assert_eq(PromptBuilder.pressure_text(100), "Ты на грани, тебе трудно держать себя в руках")
-	var tired := _sample_request(80, 50)
+	var tired := _sample_request(80, "Следователь предъявляет улику «Записка на столе»: На бумаге одно слово.")
 	assert_true(str(tired["user"]).contains(PromptBuilder.pressure_text(80)))
-	assert_true(str(tired["user"]).contains(PromptBuilder.FATIGUE_TEXT))
+	assert_false(str(tired["user"]).contains("Ты устал от допроса"))
 	assert_true(str(tired["user"]).contains("[СОБЫТИЕ: Следователь предъявляет улику «Записка на столе»: На бумаге одно слово.]"))
 
 
@@ -78,7 +80,7 @@ func test_packet_lines_and_empty_packet() -> void:
 
 
 func test_schema_enums_match_packet_and_evidence() -> void:
-	var built := _sample_request(0, 0)
+	var built := _sample_request(0)
 	var schema: Dictionary = built["schema"]
 	var properties: Dictionary = schema["properties"]
 	assert_eq(schema["required"], ["player_tone", "reply", "remark", "emotion", "stated", "mentioned_evidence", "requested_evidence", "tone"])
@@ -146,7 +148,7 @@ func test_real_case_prompts_do_not_leak() -> void:
 			if engine.state.unlocked_evidence.is_empty():
 				assert_eq(evidence_enum, ["none"], "enum улик")
 			else:
-				assert_eq(evidence_enum.size(), engine.state.unlocked_evidence.size(), "enum улик")
+				assert_true(evidence_enum.size() >= engine.state.unlocked_evidence.size(), "enum улик")
 				assert_false(evidence_enum.has("none"), "enum улик")
 
 
@@ -261,19 +263,18 @@ func _assert_case_hidden(data: CaseData, state: GameState, agent: CaseData.Agent
 			_forbid(prompt, allowed, fact.lie_text, "other_secret")
 
 
-func _sample_request(pressure_value: int, fatigue_value: int) -> Dictionary:
+func _sample_request(pressure_value: int, event_note: String = "") -> Dictionary:
 	var data := _sample_case()
 	var state := GameState.new()
 	var engine := RulesEngine.new(data, state)
 	engine.start_new()
 	state.pressure["ira"] = pressure_value
-	state.fatigue["ira"] = fatigue_value
 	var packet: Array = engine.get_packet("ira")
 	# Пакет собран до подмены давления: для строк шаблона берём фактический пакет движка,
 	# а тексты состояния читаются из GameState в момент сборки.
 	if pressure_value >= 75:
 		state.pressure["ira"] = pressure_value
-	return PromptBuilder.build_turn(data, state, "ira", packet, DialogueState.new(), "Что вы видели?", "" if fatigue_value < 50 else "Следователь предъявляет улику «Записка на столе»: На бумаге одно слово.")
+	return PromptBuilder.build_turn(data, state, "ira", packet, DialogueState.new(), "Что вы видели?", event_note)
 
 
 func _sample_case() -> CaseData:
@@ -290,12 +291,15 @@ func _sample_case() -> CaseData:
 	var petr := _agent("petr", "Пётр", "дворник", "Подметает двор.", "Молчит.", "ЧУЖОЙ СЕКРЕТ ПЕТРА ДЛИННЫЙ")
 	data.agents = [ira, petr]
 	data.agent_by_id = {"ira": ira, "petr": petr}
-	_fact(data, ira, "visible", 0, 100, "Краткая версия видна", "ПОЛНАЯ ВЕРСИЯ СКРЫТА ОТ BASIC", false, "", null)
+	_fact(data, ira, "visible", 0, 100, "Краткая версия видна", "Полная версия теперь видна", false, "", null)
 	_fact(data, ira, "must", 0, 100, "ПРАВДА MUST LIE BASIC", "ПРАВДА MUST LIE FULL", true, "Я этого не делал совсем", "evidence")
 	_fact(data, ira, "slip", 0, 100, "Кажется, в коридоре кто-то был", "ПОЛНАЯ ОГОВОРКА СКРЫТА", true, "Никого не видела", "evidence")
 	var slip: CaseData.Fact = data.fact_by_id["slip"]
 	slip.lie_type = "can_lie"
 	_fact(data, ira, "closed", 100, 100, "ЗАКРЫТАЯ КРАТКАЯ ВЕРСИЯ", "ЗАКРЫТАЯ ПОЛНАЯ ВЕРСИЯ ФАКТА", false, "", null)
+	var closed: CaseData.Fact = data.fact_by_id["closed"]
+	closed.requires_evidence = true
+	closed.related_evidence_ids = ["note"]
 	_fact(data, petr, "foreign", 0, 0, "ЧУЖОЙ ФАКТ ПЕТРА КРАТКО", "ЧУЖОЙ ФАКТ ПЕТРА ПОЛНОСТЬЮ", false, "", null)
 	var evidence := CaseData.EvidenceItem.new()
 	evidence.id = "note"

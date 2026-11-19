@@ -8,7 +8,6 @@ func test_roundtrip_restores_progress() -> void:
 	assert_true(Game.open_case(FIXTURE).ok, "фикстура не открылась")
 	Game.state.pressure["a"] = 12
 	Game.state.emotion["a"] = "angry"
-	Game.state.fatigue["a"] = 4
 	if not Game.state.unlocked_evidence.has("ev"):
 		Game.state.unlocked_evidence.append("ev")
 	if not Game.state.contradictions.has("c1"):
@@ -29,7 +28,6 @@ func test_roundtrip_restores_progress() -> void:
 	assert_true(Game.continue_case(FIXTURE).ok)
 	assert_eq(int(Game.state.pressure["a"]), 12)
 	assert_eq(str(Game.state.emotion["a"]), "angry")
-	assert_eq(int(Game.state.fatigue["a"]), 4)
 	assert_true(Game.state.unlocked_evidence.has("ev"))
 	assert_true(Game.state.contradictions.has("c1"))
 	assert_eq(Game.state.heard.size(), 1)
@@ -40,6 +38,32 @@ func test_roundtrip_restores_progress() -> void:
 	assert_eq(restored.summarized_count, 1)
 	assert_eq(restored.messages.size(), 2)
 	SaveState.discard(Game.state.case_id)
+
+
+func test_old_save_ignores_fatigue() -> void:
+	assert_true(Game.open_case(FIXTURE).ok, "фикстура не открылась")
+	var case_id := Game.state.case_id
+	var body: Dictionary = Game.state.to_dict()
+	body["pressure"] = {"a": 12}
+	body["fatigue"] = {"a": 40}
+	_write(case_id, JSON.stringify({
+		"format": 1,
+		"case_id": case_id,
+		"case_version_hash": Game.state.case_version_hash,
+		"state": body,
+	}))
+	var loaded := Game.continue_case(FIXTURE)
+	assert_true(loaded.ok)
+	assert_eq(int(Game.state.pressure["a"]), 12)
+	assert_false(Game.state.to_dict().has("fatigue"))
+	assert_true(SaveState.write_state(Game.state))
+	var text := FileAccess.get_file_as_string(SaveState.slot_path(case_id))
+	assert_false(text.contains("fatigue"))
+	var parsed: Variant = JSON.parse_string(JSON.stringify(body))
+	var again := GameState.from_dict(parsed)
+	assert_eq(int(again.pressure["a"]), 12)
+	assert_false(again.to_dict().has("fatigue"))
+	SaveState.discard(case_id)
 
 
 func test_autosave_after_turn_and_not_after_network_error() -> void:

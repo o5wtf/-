@@ -12,6 +12,7 @@ var _loading: bool = false
 var _scale: HSlider
 var _mock: CheckBox
 var _timing: CheckBox
+var _developer: CheckBox
 var _voice: CheckBox
 var _intonation: CheckBox
 var _engine: OptionButton
@@ -99,6 +100,12 @@ func _ready() -> void:
 	_timing.text = UiStrings.TIMING_DEBUG
 	_timing.custom_minimum_size = Vector2(0, 48)
 	scroll_box.add_child(_timing)
+	_developer = CheckBox.new()
+	_developer.name = "DeveloperMode"
+	_developer.text = UiStrings.DEVELOPER
+	_developer.custom_minimum_size = Vector2(0, 48)
+	_developer.toggled.connect(_on_developer_toggled)
+	scroll_box.add_child(_developer)
 	_voice = CheckBox.new()
 	_voice.name = "VoiceEnabled"
 	_voice.text = UiStrings.VOICE_ENABLED
@@ -239,6 +246,7 @@ func _load_fields() -> void:
 	_scale.value = store.text_scale
 	_mock.button_pressed = store.provider == "mock"
 	_timing.button_pressed = store.timing_debug
+	_developer.button_pressed = store.developer
 
 
 func _on_pause_changed(value: float) -> void:
@@ -257,13 +265,24 @@ func _toggle_key() -> void:
 		_show.text = UiStrings.SHOW_KEY
 
 
+func _on_developer_toggled(pressed: bool) -> void:
+	if _loading:
+		return
+	var previous := SettingsStore.load_current()
+	var provider := "mock" if _mock.button_pressed else previous.provider
+	var key := _key.text.strip_edges()
+	if key == "":
+		key = previous.api_key
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, null, null, null, null, null, null, null, null, null, null, null, pressed)
+
+
 func _save() -> void:
 	var previous := SettingsStore.load_current()
 	var key := _key.text.strip_edges()
 	if key == "":
 		key = previous.api_key
 	var provider := "mock" if _mock.button_pressed else "gemini"
-	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "hands_free" if _mic_mode.selected == 1 else "push_to_talk", "gemini", false, _tts_model_value(), _tts_auto.button_pressed, _chirp_key_value(), int(_pause.value))
+	SettingsStore.save_values(provider, key, _selected_model(), _scale.value, _timing.button_pressed, _voice.button_pressed, _engine_value(), _intonation.button_pressed, _mic.button_pressed, "hands_free" if _mic_mode.selected == 1 else "push_to_talk", "gemini", false, _tts_model_value(), _tts_auto.button_pressed, _chirp_key_value(), int(_pause.value), _developer.button_pressed)
 	Speaker.apply_settings()
 	_key.text = ""
 	_key.secret = true

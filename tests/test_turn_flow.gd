@@ -21,7 +21,7 @@ func test_question_records_lie_then_truth_unlocks_evidence() -> void:
 	await Game.ask("b", "Что вы видели?")
 	assert_true(_heard("b", "fb", "basic"))
 	assert_true(Game.state.contradictions.has("c1"))
-	assert_true(Game.state.unlocked_evidence.has("ev"))
+	assert_false(Game.state.unlocked_evidence.has("ev"))
 	var restored := GameState.from_dict(Game.state.to_dict())
 	assert_eq(restored.heard.size(), Game.state.heard.size())
 	assert_true(restored.contradictions.has("c1"))
@@ -36,6 +36,7 @@ func test_present_evidence_raises_pressure_and_breaks_lie() -> void:
 	mock.enqueue(_reply("k1", "basic", "Я это уже говорил."))
 	await Game.ask("b", "Что вы видели?")
 	var before := int(Game.state.pressure["a"])
+	Game.state.unlocked_evidence.append("ev")
 	mock.enqueue(_reply("", "", "Мне нечего добавить к бумаге."))
 	await Game.present("a", "ev")
 	assert_true(int(Game.state.pressure["a"]) > before)
@@ -54,7 +55,6 @@ func test_network_error_restores_state() -> void:
 	assert_eq(kinds, ["offline"])
 	assert_eq(Game.state.to_dict(), before)
 	assert_eq(Game.state.heard.size(), 0)
-	assert_eq(int(Game.state.fatigue.get("a", 0)), 0)
 	mock.free()
 
 
